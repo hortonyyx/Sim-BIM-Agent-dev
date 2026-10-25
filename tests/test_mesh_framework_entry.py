@@ -37,7 +37,9 @@ async def _exercise(tmp_path):
         'source_refs': ['synthetic']}
     tasks = [{'task_id': 'compare', 'candidate': 'candidate_01', 'observation_ids': ['mesh_001'],
               'question': 'Inspect one original section and compare the supplied geometry.',
-              'budget': {'model_calls': 3, 'tool_calls': 2}}]
+              # Two measurement requests, plus the existing two-call answer
+              # reserve (initial answer and optional repair).
+              'budget': {'model_calls': 4, 'tool_calls': 2}}]
     parent = [
         _response('p1', 'build_parametric_bim', {'plan_json': json.dumps(plan)}),
         _response('p2', 'view_mesh'),

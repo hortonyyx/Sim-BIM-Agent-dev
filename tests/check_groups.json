@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_architectural_incidence.py": {
+      "group": "targeted",
+      "reason": "Shared source junctions retain support incidence and node-local numerical residuals across frames, permutations and template anchor sharing"
+    },
     "tests/test_bim_sdk.py": {
       "group": "targeted",
       "reason": "Python SDK preserves existing admission, readonly, tool failure, image bytes and evidence-bound complete handoff; explicit edge construction keeps hosts"
