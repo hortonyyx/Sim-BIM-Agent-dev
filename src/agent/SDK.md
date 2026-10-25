@@ -119,6 +119,32 @@ supporting files. Incomplete/stale handoffs and existing output directories are
 rejected. No additional model-authored copy, schema validator or hash script is
 needed. Publication is not independent architectural acceptance.
 
+For ordinary drawing inputs, bind each relevant source image to its actual floor
+with a current overlay before reviewing it:
+
+```python
+candidate = bim.call("build_parametric_bim", plan_json=plan).require_ok()["candidate"]
+overlay = bim.call("overlay_candidate", candidate=candidate, image=image_name,
+                   floor_id=floor_id, x_anchors=x_anchors, y_anchors=y_anchors,
+                   basis=calibration_basis)
+print(overlay)  # open the returned image and compare it with the original
+# Only after actual inspection; record unresolved points in issues/outcome.
+published = bim.finish_to(new_output_directory, candidate, reviews=[
+    {"kind": "plan", "image": image_name, "floor_id": floor_id,
+     "outcome": "consistent", "summary": actual_plan_findings, "issues": []},
+    {"kind": "building", "outcome": "consistent",
+     "summary": actual_building_findings, "issues": []},
+])
+```
+
+Anchors map original image pixels to world coordinates; this is not automatic
+registration. Read `bim.describe("overlay_candidate")` for their exact format.
+Review each required image/floor scope. Calibration alone does not establish
+coverage. Use `uncertain` with concrete issues for unresolved points; a
+`needs_revision` review cannot establish new completed coverage. Changed source
+geometry, original images, calibration or overlay evidence invalidate affected
+review evidence. Do not manufacture a review merely to finish.
+
 Runs are prepared through `src.agent.bim_inputs.prepare_bim_inputs`, from only the
 authorized original inputs; the SDK constructor never copies a previous result.
 Admission and export time belong in end-to-end measurements.

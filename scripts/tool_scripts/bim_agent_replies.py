@@ -342,7 +342,7 @@ def compact_reply(run: Path, tool: str, result: dict, *, full_result: dict | Non
                     'matched_openings', 'all_readings_consistent', 'comparison_summary',
                     'saved_reviews', 'process_review',
                     'error', 'error_stage', 'error_type', 'tool_name', 'repair_hint', 'remaining_seconds',
-                    'plan_input', 'plan_revision', 'parametric', 'draft', 'draft_sha256', 'plan_sha256',
+                    'plan_input', 'plan_revision', 'regularization', 'parametric', 'draft', 'draft_sha256', 'plan_sha256',
                     'source_plan_selection', 'drawing_differences', 'building_precision', 'counts'):
             if key in reply and _reply_bytes({**bounded, key: reply[key]}) <= 24000:
                 bounded[key] = reply[key]
