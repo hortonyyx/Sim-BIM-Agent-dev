@@ -151,8 +151,9 @@ async def execute(args) -> dict:
         max_total_truncations=args.max_total_truncations,
         summary_every=args.summary_every)
     context_values = {"active_window_messages": args.context_window,
-        "append_state_history": (args.provider == "opencode-go" and args.model == "claude-haiku-5-5"
-            and args.context_window is None),
+        # Preserve sent state in every new token-managed conversation. Moving
+        # even an unchanged state to the tail rewrites the previous prefix.
+        "append_state_history": args.context_window is None,
         "compact_at_tokens": args.compact_at_tokens,
         "large_result_bytes": args.large_result_bytes, "max_images": args.max_images,
         "image_history_batches": getattr(args, "image_history_batches", None),

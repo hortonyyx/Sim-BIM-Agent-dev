@@ -72,6 +72,13 @@ async def _exercise(tmp_path):
         '--seconds', '300', '--no-token-limit', '--image-history-batches', '1'])
     receipt = await runtime_entry.execute(args)
     assert receipt['status'] == 'completed', receipt
+    # The production entry uses stable state history for scripted/native paths
+    # as well as subscriptions; the resumed run below must retain this policy.
+    with EventStore(out, run_id=out.name, task_id='coordinator',
+                   budget_limit=runtime_entry.RunLimits(model_calls=12, tool_calls=20,
+                       seconds=300, tokens=None).ledger_limit()) as saved_run:
+        _, checkpoint, _ = saved_run.latest_checkpoint()
+        assert checkpoint['config']['context_policy']['append_state_history'] is True
     assert receipt['finalization']['completion_valid'] is True
     assert receipt['finalization']['delivery']['complete_building'] is True
     assert receipt['completion']['mesh_review']['fidelity'] == 'not_evaluated'

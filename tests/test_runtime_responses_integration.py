@@ -15,7 +15,7 @@ from PIL import Image
 from src.agent.runtime_entry import parser, runtime_model_profile
 from src.agent.runtime_roles.config import load_roles
 from src.agent_runtime.connections import resolve_connection, validate_connection_model
-from src.agent_runtime.context import ContextPolicy
+from src.agent_runtime.context import ContextPolicy, StateEntry
 from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION as ROUTE, provider_parameters
 from test_agent_runtime import MESSAGES, runtime
@@ -97,6 +97,87 @@ def test_native_checkpoint_restart_preserves_items_and_does_not_repeat_write(tmp
         assert (first["output"][0] in body["input"]) is not truncated
         assert result["truncations"] == int(truncated)
         resumed.store.validate()
+
+
+@pytest.mark.parametrize("state_change", ["unchanged", "changed", "cleared"])
+@pytest.mark.parametrize("recovery", [None, "durable_response", "checkpoint"])
+def test_sent_state_is_a_stable_prefix_with_current_semantics_after_recovery(tmp_path, state_change, recovery):
+    """State belongs before its response, including a response replayed after a crash."""
+    limits = RunLimits(model_calls=3, tool_calls=2, seconds=90, tokens=500000)
+    replies = [native(("write_once", "save", {"value": 1})),
+               native(("read_once", "view", {})), native(text="Done")]
+
+    def configured(responses, tools=None):
+        engine = engine_for(tmp_path, responses, limits=limits, tools=tools)
+        engine.context_policy = ContextPolicy(append_state_history=True)
+
+        def update(active, event, raw):
+            previous = next((s for s in active.context.state if s.key == "probe-state"), None)
+            if previous is None:
+                active.context.set_state(StateEntry(key="probe-state", category="constraint", value=1,
+                    epistemic_status="computed", source_refs=(active._event_source(event),), revision=1))
+            elif state_change != "unchanged":
+                active.context.set_state(previous.model_copy(update={"revision": 2,
+                    "value": 2 if state_change == "changed" else 1,
+                    "active": state_change != "cleared"}))
+        engine.context_update = update
+        return engine
+
+    engine = configured(replies)
+    if recovery:
+        def crash(boundary, active):
+            responses = sum(e.payload.event_type == "model_response" for e in active.store.events)
+            if ((recovery == "durable_response" and boundary == "after_response" and responses == 2)
+                    or (recovery == "checkpoint" and boundary == "after_checkpoint"
+                        and len(active.tools.calls) == 2 and not active.pending_response_id)):
+                raise InjectedCrash("state snapshot recovery")
+        engine.fault_hook = crash
+    with engine.store:
+        if recovery:
+            with pytest.raises(InjectedCrash):
+                asyncio.run(engine.run(MESSAGES))
+        else:
+            result = asyncio.run(engine.run(MESSAGES))
+    if recovery:
+        engine = configured([replies[-1]], tools=engine.tools)
+        with engine.store:
+            result = asyncio.run(engine.run(MESSAGES, resume=True))
+
+    assert result["status"] == "completed"
+    assert result["model_calls"] == 3 and result["tool_calls"] == len(engine.tools.calls) == 2
+    # Re-open solely for verified evidence and projection checks, no live calls.
+    from src.agent_runtime.store import EventStore
+    with EventStore(tmp_path / "run", run_id="run-test", task_id="task", budget_limit=limits.ledger_limit()) as store:
+        requests = [e for e in store.events if e.payload.event_type == "adapter_request"]
+        bodies = [store.resolve(e.payload.final_request_body) for e in requests]
+        for previous, current in zip(bodies, bodies[1:]):
+            assert current["input"][:len(previous["input"])] == previous["input"]
+
+        def states(body):
+            texts = [block.get("text", "") for item in body["input"] if item.get("role") == "user"
+                     for block in item.get("content", []) if block.get("type") == "input_text"]
+            return [json.loads(text[text.index("["):]) for text in texts
+                    if text.startswith("Current runtime state (machine generated;")]
+
+        assert states(bodies[0]) == []
+        assert len(states(bodies[1])) == 1 and states(bodies[1])[0][0]["value"] == 1
+        final_states = states(bodies[2])
+        assert len(final_states) == (1 if state_change == "unchanged" else 2)
+        assert final_states[-1] == ([] if state_change == "cleared" else [{
+            "key": "probe-state", "value": 2 if state_change == "changed" else 1,
+            "epistemic_status": "computed", "revision": 2 if state_change == "changed" else 1}])
+        # A checkpoint reload and repeated request replay cannot add snapshots.
+        from src.agent_runtime.context import ContextManager
+        context = ContextManager.load(store, engine.context.dump(), policy=engine.context_policy)
+        before = context.full_history()
+        for request in requests:
+            context.commit_request_state(request)
+        assert context.full_history() == before
+        first = context.project(consume_retrievals=False)
+        second = context.project(consume_retrievals=False)
+        assert first.messages == second.messages and context.full_history() == before
+        assert first.messages == before[0]  # unchanged latest state needs no new tail
+        store.validate()
 
 
 def test_missing_usage_stops_without_executing_write_or_fallback(tmp_path):

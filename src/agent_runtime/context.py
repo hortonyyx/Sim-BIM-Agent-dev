@@ -90,9 +90,11 @@ class ContextPolicy(ContractModel):
     # default so existing checkpoint configuration comparisons stay identical.
     state_item_fields: dict[NonEmptyStr, tuple[NonEmptyStr, ...]] = Field(
         default_factory=dict, exclude_if=lambda value: not value)
-    # Signed native histories bind thinking to its original request prefix.
+    # Sent state is part of the request prefix for caching and signed histories.
     # Commit actually sent state snapshots before their response, then append
     # only changed state. Ordinary projections and estimators stay read-only.
+    # Keep the serialized legacy default: old checkpoints omit this field.
+    # Production entry enables it for new token-managed conversations.
     append_state_history: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("pinned_tags")
