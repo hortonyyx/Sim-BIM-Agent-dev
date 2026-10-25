@@ -25,6 +25,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
+from src.agent.geometry.ring_failure_diagnostics import ring_failure_diagnostic
+
 SEAM_M = 0.00002
 EPS = 1e-8
 DEFAULT_ARCHITECTURAL_POLICY = {
@@ -382,7 +384,8 @@ def regularize_architectural_plan(plan, *, policy=None):
             frame = frames[name]
             for path, ring in ring_records:
                 if len(ring) < 3 or not Polygon(ring).is_valid or Polygon(ring).area <= EPS:
-                    record_rejection('invalid_ring', f'templates.{name}.{path}', 'input ring must be a valid positive-area polygon')
+                    record_rejection('invalid_ring', f'templates.{name}.{path}', 'input ring must be a valid positive-area polygon',
+                        geometry_diagnostic=ring_failure_diagnostic(ring, epsilon=EPS))
                     continue
                 points = [_local(p, frame) for p in ring]
                 edges = []
@@ -481,7 +484,15 @@ def regularize_architectural_plan(plan, *, policy=None):
                            adopted_offset_m=g['mapping'][d]) for g,d in (edges[index-1], edges[index])]))
                 continue
             if not polygon.is_valid or polygon.area <= EPS or any(math.dist(a,b)<=EPS for a,b in zip(rebuilt,rebuilt[1:]+rebuilt[:1])):
-                record_rejection('unsafe_polygon_change', f'templates.{name}.{path}', 'anchor adoption collapses or invalidates a polygon')
+                diagnostic = ring_failure_diagnostic(rebuilt, source_ring=ring, epsilon=EPS)
+                diagnostic['full_ring_audit_pointer'] = f"/changes/{len(audit['changes'])}"
+                # Retain the complete failed construction separately from its
+                # bounded error summary. SDK display already folds this audit
+                # collection; applied=false must not be read as an adopted edit.
+                audit['changes'].append(dict(type='rejected_ring_adoption', path=f'templates.{name}.{path}',
+                    applied=False, source_ring=copy.deepcopy(ring), attempted_ring=copy.deepcopy(rebuilt)))
+                record_rejection('unsafe_polygon_change', f'templates.{name}.{path}', 'anchor adoption collapses or invalidates a polygon',
+                    geometry_diagnostic=diagnostic)
                 continue
             ring[:] = rebuilt
         finish_stage('ring_adoption', ['apertures', 'vertical', 'contacts'])
