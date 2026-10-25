@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_bim_sdk.py": {
+      "group": "targeted",
+      "reason": "Python SDK preserves existing admission, readonly, tool failure, image bytes and evidence-bound complete handoff; explicit edge construction keeps hosts"
+    },
     "tests/test_mesh_section_replies.py": {
       "group": "targeted",
       "reason": "Small section previews preserve complete exact segments within wire byte budgets and retain immutable report/PNG bindings"
