@@ -1,5 +1,6 @@
 """Construction properties independent of any historical building coordinates."""
 import copy
+import itertools
 import math
 
 import pytest
@@ -107,3 +108,36 @@ def test_unrelated_rounded_aperture_is_rejected_but_an_explicit_edge_span_is_val
     moved = adopted['templates']['main']['doors'][0]
     assert math.dist(moved['p1'],moved['p2']) == pytest.approx(1.)
     assert moved['source_refs'] == door['source_refs']
+
+
+@pytest.mark.parametrize('delta', [0., 1e-9, 3e-9, 7.5e-9, 1.1e-8])
+def test_numerical_incidence_preserves_source_residual_and_is_order_stable(delta, tmp_path):
+    raw = junction_plan()
+    for i, space in enumerate(raw['templates']['main']['spaces']):
+        space['polygon'][0] = [.524+i*delta, .34]
+    assert export_source_proposal(expand_parametric_proposal(raw), tmp_path/'original')['source_geometry_ready']
+    expected = None
+    for order in itertools.permutations(range(3)):
+        plan = copy.deepcopy(raw)
+        plan['templates']['main']['spaces'] = [plan['templates']['main']['spaces'][i] for i in order]
+        before = copy.deepcopy(plan)
+        adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+        assert plan == before
+        shapes = {space['id']: space['polygon'] for space in adopted['templates']['main']['spaces']}
+        assert audit['observed_max_vertex_displacement_m'] <= .1
+        for old in raw['templates']['main']['spaces']:
+            assert_parallel(old['polygon'], shapes[old['id']])
+        if 0 < delta < 1e-8:
+            # Near incidence is not exact incidence: the nanometre residuals
+            # remain, instead of forcing distinct directions to collapse.
+            for i in (1, 2):
+                assert shapes[str(i)][0][0]-shapes['0'][0][0] == pytest.approx(i*delta, abs=1e-12)
+        if expected is None:
+            expected = shapes
+            assert export_source_proposal(expand_parametric_proposal(adopted), tmp_path/'adopted')['source_geometry_ready']
+        else:
+            for identity, ring in shapes.items():
+                assert Polygon(expected[identity]).hausdorff_distance(Polygon(ring)) < 1e-9
+        for change in audit['changes']:
+            if change['type'] == 'shared_incidence_anchors':
+                assert all(node['max_source_spread_m'] <= 1e-8 for node in change['nodes'])
