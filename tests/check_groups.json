@@ -2,6 +2,18 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_bim_modeling.py": {
+      "group": "targeted",
+      "reason": "Explicit region/shared-edge construction preserves geometry and requested widths; clearance reports have bounded interpretation"
+    },
+    "tests/test_source_enclosure_intent.py": {
+      "group": "targeted",
+      "reason": "Enclosure intent binds only uniquely selected adopted source boundaries, keeps old evidence and digest gates and virtual display semantics"
+    },
+    "tests/test_bim_sdk_construction.py": {
+      "group": "targeted",
+      "reason": "Optional construction check reuses source policy/kernel without rendering; one-call publication requires a real intact native handoff"
+    },
     "tests/test_source_enclosure_intent.py": {
       "group": "targeted",
       "reason": "Explicit enclosure intent binds unique adopted boundaries without guessed digests; preserves evidence, reciprocal/opening checks, real roof walls and virtual display semantics"

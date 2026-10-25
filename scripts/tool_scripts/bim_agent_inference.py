@@ -233,6 +233,7 @@ def _vertical_extent(vertices) -> tuple[float, float] | None:
 def _door_fact(opening: dict, boundaries: dict, connections: dict) -> dict:
     result = {key: opening.get(key) for key in
               ("id", "host_boundary_id", "space_ids", "exterior", "connectivity")}
+    result["host_geometry_type"] = boundaries.get(opening.get("host_boundary_id"), {}).get("geometry_type")
     aperture = _segment(opening.get("vertices"))
     vertical = _vertical_extent(opening.get("vertices", []))
     if vertical is not None:
@@ -264,6 +265,21 @@ def _door_fact(opening: dict, boundaries: dict, connections: dict) -> dict:
             "exactly_centered_numerically": midpoint_distance <= _CENTERED_TOLERANCE_M,
             "endpoint_perpendicular_offset_m": offsets,
             "connection_records": connections.get(opening["id"], [])}
+
+
+def door_width_summary(doors: list[dict], *, limit=4) -> dict:
+    """Expose small actual apertures without imposing a clearance policy."""
+    measured = sorted((row for row in doors if row.get("host_geometry_type") == "wall"
+                       and row.get("height_m", 0) > 0 and isinstance(row.get("width_m"), (int, float))),
+                      key=lambda row: (row["width_m"], row["id"]))
+    return {"door_count": len(doors), "measured_count": len(measured),
+            "unmeasured_count": len(doors) - len(measured),
+            "width_range_m": ([measured[0]["width_m"], measured[-1]["width_m"]] if measured else None),
+            "smallest_measured_doors": [{key: row[key] for key in
+                ("id", "space_ids", "host_boundary_id", "width_m", "endpoints_xy") if key in row}
+                for row in measured[:limit]],
+            "omitted_measured_count": max(0, len(measured) - limit),
+            "meaning": "Wall-aperture XY spans; not minimum clear width, usable-route or regulatory approval. Horizontal/unknown hosts are unmeasured."}
 
 
 def _window_fact(opening: dict, spaces: dict) -> dict:

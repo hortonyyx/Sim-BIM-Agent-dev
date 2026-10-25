@@ -225,6 +225,33 @@ class BimSession:
         return [{"name": name, "description": tool.get("description", "").splitlines()[0]}
                 for name, tool in self._definitions().items()]
 
+    def check_plan(self, plan: dict):
+        """Optional kernel check with .source/.report, no candidate or rendering.
+
+        Useful inside ordinary construction code before the intended save;
+        it is not a mandatory extra step or a substitute for building/review.
+        """
+        self._ensure_open()
+        from src.agent.construction_check import check_parametric_plan
+        return check_parametric_plan(self._server.toolkit, plan)
+
+    def finish_to(self, output_directory, candidate: str, *, reviews=None, inferences=None):
+        """Finish normally and publish the same bound source/viewer in one call.
+
+        The output directory must not exist. A failed or incomplete original
+        finish cannot publish; no automatic review, repair or render occurs.
+        """
+        self._ensure_open()
+        from src.agent.sdk_delivery import publication_target, publish_finished
+        publication_target(self.run, output_directory)
+        arguments = {"candidate": candidate}
+        if reviews is not None:
+            arguments["reviews_json"] = reviews
+        if inferences is not None:
+            arguments["inferences_json"] = inferences
+        reply = self.call("finish_bim", **arguments)
+        return publish_finished(self.run, candidate, reply, output_directory)
+
     def describe(self, name: str):
         if name not in self._definitions():
             raise ValueError(f"tool is unavailable in this session: {name}")

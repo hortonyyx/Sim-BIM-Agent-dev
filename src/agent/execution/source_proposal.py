@@ -124,14 +124,13 @@ def _require_vertical_continuity(source: dict, policy: str | None) -> None:
     source["validation"]["scope"] += "; explicit decisions for identified vertical stacks"
 
 
-def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | None = None,
-                           mesh_path: Path | None = None,
-                           vertical_continuity_policy: str | None = None) -> dict:
-    """Write a direct agent geometry proposal to a new, inspectable source-BIM directory.
+def compile_source_proposal(proposal: dict, *, provenance: dict | None = None,
+                            vertical_continuity_policy: str | None = None) -> tuple[dict | None, dict]:
+    """Compile with the ordinary source kernel, without files, images or approval.
 
-    ``proposal`` contains legacy v1/v2 corrected geometry plus the agent's
-    assumptions and unresolved items.  The output is always a new directory;
-    this function neither reads nor creates correction acceptance/run records.
+    The exporter below uses this exact implementation. A returned source can
+    contain severe findings; callers must inspect the report. This does not
+    perform run admission, architectural adoption, visual review or delivery.
     """
     started = checkpoint = perf_counter()
     timings = {}
@@ -140,8 +139,7 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
         now = perf_counter()
         timings[name] = now - checkpoint
         checkpoint = now
-    out_dir = Path(out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=False)
+    source = None
     report: dict = {
         "mode": "agent_geometry_proposal",
         "status": "not_evaluated",
@@ -160,7 +158,6 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
     }
     try:
         raw_proposal = _json_bytes(proposal, indent=2)
-        (out_dir / "proposal.json").write_bytes(raw_proposal)
         report["proposal_sha256"] = hashlib.sha256(raw_proposal).hexdigest()
         geometry, assumptions, unresolved, enclosure = _validate_proposal(proposal)
         if provenance is not None:
@@ -253,17 +250,43 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
         }
         report["source_model_sha256"] = source["source_model_sha256"]
 
-        (out_dir / "source_model.json").write_bytes(_json_bytes(source, indent=2))
-        stage("source_metadata_and_save_seconds")
-        display = source_view_geometry(source)
-        (out_dir / "display_geometry.json").write_bytes(_json_bytes(display, indent=2))
-        stage("display_geometry_seconds")
+        stage("source_metadata_seconds")
+    except Exception as exc:
+        source = None
+        report.update(status="error", source_geometry_ready=False, error=f"{type(exc).__name__}: {exc}")
+    report["timings"] = {**timings, "compile_total_seconds": perf_counter() - started}
+    return source, report
 
-        viewer = build_source_viewer_html(
-            display, source_geometry_ready=report["source_geometry_ready"],
-            assumptions=assumptions, unresolved=unresolved, mesh_path=mesh_path)
-        (out_dir / "viewer.html").write_text(viewer, encoding="utf-8", newline="\n")
-        stage("viewer_seconds")
+
+def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | None = None,
+                           mesh_path: Path | None = None,
+                           vertical_continuity_policy: str | None = None) -> dict:
+    """Compile and save a new inspectable candidate; never claim visual approval."""
+    started = perf_counter()
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=False)
+    source, report = compile_source_proposal(proposal, provenance=provenance,
+        vertical_continuity_policy=vertical_continuity_policy)
+    timings = report.pop("timings")
+    try:
+        # Failed but serializable declarations remain inspectable as before.
+        (out_dir / "proposal.json").write_bytes(_json_bytes(proposal, indent=2))
+        if source is not None:
+            checkpoint = perf_counter()
+            (out_dir / "source_model.json").write_bytes(_json_bytes(source, indent=2))
+            timings["source_metadata_and_save_seconds"] = (
+                timings["source_metadata_seconds"] + perf_counter() - checkpoint)
+            checkpoint = perf_counter()
+            display = source_view_geometry(source)
+            (out_dir / "display_geometry.json").write_bytes(_json_bytes(display, indent=2))
+            timings["display_geometry_seconds"] = perf_counter() - checkpoint
+            checkpoint = perf_counter()
+            viewer = build_source_viewer_html(display,
+                source_geometry_ready=report["source_geometry_ready"],
+                assumptions=report["agent_assumptions"], unresolved=report["unresolved"],
+                mesh_path=mesh_path)
+            (out_dir / "viewer.html").write_text(viewer, encoding="utf-8", newline="\n")
+            timings["viewer_seconds"] = perf_counter() - checkpoint
     except Exception as exc:
         report.update(status="error", source_geometry_ready=False, error=f"{type(exc).__name__}: {exc}")
     report["timings"] = {**timings, "export_total_seconds": perf_counter() - started}

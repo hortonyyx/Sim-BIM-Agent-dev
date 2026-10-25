@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from src.agent.execution.source_proposal import export_source_proposal
+from src.agent.execution.source_proposal import export_source_proposal, compile_source_proposal
 
 
 def _proposal():
@@ -26,6 +26,26 @@ def _proposal():
         "assumptions": ["<墙体位置由平面推断>"],
         "unresolved": ["<b>未确认门状态</b>"],
     }
+
+
+@pytest.mark.parametrize("bad_host", [False, True])
+def test_preview_and_export_use_identical_source_kernel_without_rendering(tmp_path, monkeypatch, bad_host):
+    from src.agent.execution import source_proposal as module
+    proposal = _proposal()
+    if bad_host:
+        proposal["geometry"]["openings"][0]["other_space_id"] = "missing"
+    before = copy.deepcopy(proposal)
+    exported = export_source_proposal(proposal, tmp_path / "saved")
+    expected = json.loads((tmp_path / "saved/source_model.json").read_bytes())
+    def forbidden(*args, **kwargs):
+        pytest.fail("the construction check must not render a source")
+    monkeypatch.setattr(module, "source_view_geometry", forbidden)
+    monkeypatch.setattr(module, "build_source_viewer_html", forbidden)
+    source, checked = compile_source_proposal(proposal)
+    assert json.loads(json.dumps(source)) == expected
+    assert checked["source_geometry_ready"] == exported["source_geometry_ready"] == (not bad_host)
+    assert checked["source_validation"] == exported["source_validation"]
+    assert proposal == before
 
 
 def test_direct_proposal_exports_independent_source_bim_with_openings(tmp_path):

@@ -11,7 +11,7 @@ import hashlib
 import json
 
 from scripts.tool_scripts.bim_agent_inference import (
-    _source, audit_inference_candidate,
+    _source, audit_inference_candidate, door_width_summary,
 )
 from scripts.tool_scripts.bim_agent_review_scope import compact_review_scope, review_scope
 
@@ -48,6 +48,15 @@ def _bound_summary(reply):
         return len(json.dumps(reply, ensure_ascii=False).encode("utf-8"))
     if size() <= 2500:
         return reply
+    reply["scope"] = "Current-source facts only; not drawing fidelity, architecture, continuity completeness or delivery acceptance."
+    doors = reply.get("door_geometry")
+    if doors is not None:
+        doors["smallest_measured_doors"] = [
+            {key: row[key] for key in ("id", "width_m") if key in row}
+            for row in doors["smallest_measured_doors"][:1]]
+        doors["omitted_measured_count"] = doors["measured_count"] - len(doors["smallest_measured_doors"])
+        doors.pop("meaning", None)  # Scope and the full bound facts retain the interpretation.
+        doors.pop("door_count", None)  # Exactly measured_count + unmeasured_count.
     cores = reply["continuous_space_facts"]
     cores.pop("volumes", None)
     cores["omitted_volume_count"] = cores["declared_spanning_volume_count"]
@@ -84,6 +93,7 @@ def _bound_summary(reply):
         reply["entity_diff"].pop("entity_scope", None)
         reply["entity_diff"].pop("previous_source_model_sha256", None)
         reply.pop("source_file", None)
+        reply.pop("source_file_sha256", None)  # Retained in hash-bound facts_file.
     return reply
 
 
@@ -267,6 +277,8 @@ def attach_save_facts(toolkit, result, parent=None, feedback_parent=None, feedba
             "audit_file": summary["audit_file"], "counts": summary["counts"], "entity_diff": diff,
             "continuous_space_facts": cores, "affected_opening_hosts": affected,
             "saved_source_check": checks, "review_scope": material_scope,
+            "door_geometry": {**door_width_summary(audit["doors"]),
+                              "all_doors_pointer": "/doors"},
         }
         full_path = toolkit.candidate_path(candidate) / "save_facts.json"
         if hashlib.sha256(path.read_bytes()).hexdigest() != file_hash:
@@ -296,6 +308,8 @@ def attach_save_facts(toolkit, result, parent=None, feedback_parent=None, feedba
         result["save_facts"] = compact_reply(
             toolkit.run, "mesh_save_facts", _bound_summary(compact),
             full_result={**complete, "inference_audit": audit}, force=True)
+        # Exact file/hash references already locate the complete record.
+        result["save_facts"].pop("details_read", None)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         result["save_facts"] = {
             "schema_version": "mesh_save_facts_v1", "status": "unavailable", "candidate": candidate,

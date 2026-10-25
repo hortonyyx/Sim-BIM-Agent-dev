@@ -1,8 +1,8 @@
 # Python BIM tools
 
 Use ordinary Python to prepare shared coordinates, loops and templates, then call
-the existing domain tools. This interface starts no model and supplies no new
-geometry rules. It uses the same input admission, build checks and finish contract
+the existing domain tools. This interface starts no model. It uses the same
+input admission, build checks and finish contract
 as the MCP server. The caller's runtime owns filesystem permissions and budgets;
 this library is not a Python sandbox. Use one writer per run.
 
@@ -60,6 +60,64 @@ Use normal `finish_bim` after the intended edits and actual architectural review
 For mesh, supply its current `mesh_review` with inspected overlay IDs. No wrapper
 automatically retries writes, approves views, repairs geometry, calls finish or
 spawns a worker. Failed drafts remain available through the normal patch tools.
+
+## Construct shared regions and explicit openings
+
+`src.agent.modeling` supplies four ordinary Python functions. They work in the
+same metre-based coordinate frame; they do not read images or decide architecture.
+
+```python
+from shapely.geometry import box
+from src.agent.modeling import region, shared_edges, shared_opening, clearance_report
+
+hall = region(box(0, 0, 7, 2))
+room = region(box(0, 2, 4, 6))
+edges = shared_edges(hall, room)  # inspect all actual shared straight segments
+door = shared_opening(hall, room, edge=0, offset=1.2, width=0.9)
+# Merge **hall / **room into normal parametric space records, and **door into a
+# door record with explicit id, space, other_space, z and source_refs.
+print(clearance_report(hall, width=0.9))
+```
+
+`region(*parts, subtract=...)` returns existing polygon/holes fields. Empty or
+disconnected results and touching holes are rejected; no small part is discarded.
+`shared_opening` preserves the requested width or reports a conflict. Never shrink
+it with `min(width, available_length)`. Reconsider the space/entrance organization
+if the intended opening cannot fit. `clearance_report` is a circular passage-body
+probe at **your supplied width**, including approximation limits; it cannot certify
+entry-to-exit access, regulations or building quality.
+
+Construct shared regions/openings in a common local frame before applying the
+same transform. Independently transformed/subdivided rings can acquire tiny
+floating-point gaps; these helpers do not weld, snap or search for a nearby wall.
+Declare the existing `modelling.frames` when architectural reference-line adoption
+uses local axes. Preserve the actual relationship to source images/mesh.
+
+## Optional construction check and one-call delivery
+
+Inside an ordinary Python script, `bim.check_plan(plan)` compiles with the current
+run's adoption and source rules without allocating a candidate, exporting a
+viewer or rendering plan images. It returns `.source`, `.report`, `.geometry_ready`
+and `.receipt_file`; printing it shows findings and a complete receipt pointer.
+Use it when testing construction alternatives or measuring the resulting source.
+It is **optional**: checking and then saving performs compilation twice, so do not
+insert it as a compulsory step for every save. A successful check is not a review
+or a promise that a later save meets current budgets and delivery requirements.
+
+Once the intended candidate has been inspected and required fixes are complete:
+
+```python
+published = bim.finish_to(new_output_directory, candidate, reviews=final_reviews)
+print(published)
+```
+
+This calls the normal `finish_bim` and verifies its exact completed handoff, then
+publishes the same source/viewer bytes to a **new** directory outside the native
+run. It does not review, repair or render again. The directory contains
+`source_model.json`, `delivery.html`, `publication.json` and the native viewer's
+supporting files. Incomplete/stale handoffs and existing output directories are
+rejected. No additional model-authored copy, schema validator or hash script is
+needed. Publication is not independent architectural acceptance.
 
 Runs are prepared through `src.agent.bim_inputs.prepare_bim_inputs`, from only the
 authorized original inputs; the SDK constructor never copies a previous result.

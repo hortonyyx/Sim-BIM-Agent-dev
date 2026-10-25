@@ -25,48 +25,27 @@ def _delivery_scope(manifest: dict, delivery: dict) -> dict:
     return {"complete_building": delivery["floor_completeness"]["complete_building"]}
 
 
-def completed_building_handoff(engine) -> dict | None:
-    """Attest the last explicit finish against the exact files it handed off.
+def attest_finished_handoff(run: Path, result: dict, candidate: str) -> dict | None:
+    """Verify one explicit finish's saved artifacts for any runtime adapter.
 
-    The single-model and role coordinator entrypoints opt into this hook.
-    Other MCP clients may keep working after finish_bim. A later write, failed/unknown finish,
-    incomplete building, or changed artifact never becomes task completion.
+    This reads evidence only; it cannot select, finish, repair or approve a BIM.
+    The caller must supply the result of its actual successful finish call.
     """
-    if engine.role.read_only:
-        return None
-    event = next((e for e in reversed(engine.store.events)
-        if e.payload.event_type == "tool_execution" and e.payload.repeatability != "read_only"), None)
-    if event is None or event.payload.tool_name != "finish_bim" or event.payload.outcome != "succeeded":
-        return None
-    from scripts.tool_scripts.bim_agent_saved_result import result_metadata
+    from scripts.tool_scripts.bim_agent_saved_result import full_result_metadata
     from src.agent.geometry.source_model import _digest
     try:
-        raw = engine.store.resolve(event.payload.raw_result)
-        if raw.get("isError"):
-            return None
-        result = result_metadata(raw)
-        if "delivery_artifact_sha256" not in result:
-            # A very large handoff may be entirely projected by compact_reply.
-            # Its immutable full record remains the completion authority.
-            report = (engine.tools.run_directory / result["details_file"]).resolve()
-            if report.parent != (engine.tools.run_directory / "tool_reports").resolve():
-                return None
-            saved = report.read_bytes()
-            if hashlib.sha256(saved).hexdigest() != result["details_sha256"]:
-                return None
-            result = json.loads(saved)
-        candidate = result.get("candidate")
+        run = Path(run).resolve()
+        result = full_result_metadata({"structuredContent": result}, run)
         if (not isinstance(candidate, str) or Path(candidate).name != candidate
-                or event.payload.full_arguments.get("candidate") != candidate):
+                or candidate in {".", ".."} or result.get("candidate") != candidate):
             return None
-        run = engine.tools.run_directory
         expected = result.get("delivery_artifact_sha256", {})
         manifest = json.loads((run / "inputs.json").read_bytes())
         names = {"inputs.json", "delivery_selection.json", "delivery.json", "delivery.html",
                  f"{candidate}/source_model.json", f"{candidate}/viewer.html"}
         if manifest.get("mesh_input") and (run / candidate / "mesh_review.json").is_file():
             names.add(f"{candidate}/mesh_review.json")
-        if set(expected) != names:
+        if set(expected) != names or any(not (run / name).resolve().is_relative_to(run) for name in names):
             return None
         contents = {name: (run / name).read_bytes() for name in names}
         if any(hashlib.sha256(contents[name]).hexdigest() != expected[name] for name in names):
@@ -89,15 +68,37 @@ def completed_building_handoff(engine) -> dict | None:
             return None
         if manifest.get("mesh_input"):
             from scripts.tool_scripts.bim_agent_mesh_review import mesh_review_status
-            # The seventh handoff artifact binds the self-reported judgment;
-            # its source/mesh/overlay evidence must still be current as well.
             if mesh_review_status(Toolkit(run), candidate) != delivery.get("mesh_review"):
                 return None
-        return {"origin": "domain_tool", "tool_name": "finish_bim", "event_id": event.event_id,
-                "candidate": candidate, "source_model_sha256": source_hash,
-                "artifact_sha256": expected,
+        return {"origin": "domain_tool", "tool_name": "finish_bim", "candidate": candidate,
+                "source_model_sha256": source_hash, "artifact_sha256": expected,
                 **({"scope_basis": scope["scope_basis"], "mesh_review": scope["mesh_review"]}
                    if manifest.get("mesh_input") else {})}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def completed_building_handoff(engine) -> dict | None:
+    """Attest the last explicit finish against the exact files it handed off.
+
+    The single-model and role coordinator entrypoints opt into this hook.
+    Other MCP clients may keep working after finish_bim. A later write, failed/unknown finish,
+    incomplete building, or changed artifact never becomes task completion.
+    """
+    if engine.role.read_only:
+        return None
+    event = next((e for e in reversed(engine.store.events)
+        if e.payload.event_type == "tool_execution" and e.payload.repeatability != "read_only"), None)
+    if event is None or event.payload.tool_name != "finish_bim" or event.payload.outcome != "succeeded":
+        return None
+    from scripts.tool_scripts.bim_agent_saved_result import result_metadata
+    try:
+        raw = engine.store.resolve(event.payload.raw_result)
+        if raw.get("isError"):
+            return None
+        attested = attest_finished_handoff(engine.tools.run_directory, result_metadata(raw),
+            event.payload.full_arguments.get("candidate"))
+        return {**attested, "event_id": event.event_id} if attested is not None else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
