@@ -164,6 +164,70 @@ def test_equivalent_local_diagnostics_share_a_plan_but_keep_every_finding_and_lo
         'located_ids': ['F1:office', 'F2:office', 'F3:office']}]
 
 
+def _unbuilt_door(identity='roof-door', owner='F3:office', other=None):
+    return {'id': identity, 'reason': 'opening does not connect the declared spaces',
+            'record': {'id': identity, 'kind': 'door', 'space_id': owner,
+                       'other_space_id': other, 'p1': [0, 0], 'p2': [1, 0], 'z': [6, 8]}}
+
+
+def test_unbuilt_roof_door_uses_saved_owner_without_global_plan_feedback():
+    source = _small_source()
+    source['unbuilt_openings'] = [_unbuilt_door()]
+    source['validation']['findings'] = [
+        {'code': 'source.opening_unbuilt', 'opening_id': 'roof-door', 'severity': 'severe'}]
+    original = copy.deepcopy(source)
+    selected = select_plan_feedback(source, source)
+    assert selected['changed_floor_ids'] == []
+    assert selected['selected_floor_ids'] == ['F3']
+    assert selected['abnormal_floor_ids'] == ['F3']
+    assert all(row['floor_ids'] == ['F3'] and not row['unlocated']
+               for row in selected['diagnostic_locations'])
+    assert selected['findings'] == source['validation']['findings'] + source['unbuilt_openings']
+    assert source == original
+    first = select_plan_feedback(source)
+    assert first['selected_floor_ids'] == ['F1', 'F3']
+    assert first['represented_by'] == {'F2': 'F1'}
+
+
+@pytest.mark.parametrize('uncertain', ['unknown_owner', 'unknown_other', 'cross_floor',
+    'mismatched_id', 'conflicting_duplicate', 'missing_record', 'identity_collision',
+    'z_other_floor', 'z_outside_space'])
+def test_uncertain_unbuilt_ownership_keeps_all_floors(uncertain):
+    source = _small_source()
+    door = _unbuilt_door()
+    source['unbuilt_openings'] = [door]
+    if uncertain == 'unknown_owner': door['record']['space_id'] = 'missing-space'
+    elif uncertain == 'unknown_other': door['record']['other_space_id'] = 'missing-space'
+    elif uncertain == 'cross_floor': door['record']['other_space_id'] = 'F1:office'
+    elif uncertain == 'mismatched_id': door['record']['id'] = 'different-id'
+    elif uncertain == 'conflicting_duplicate': source['unbuilt_openings'].append(_unbuilt_door(owner='F1:office'))
+    elif uncertain == 'missing_record': door.pop('record')
+    elif uncertain == 'z_other_floor': door['record']['z'] = [3, 5]
+    elif uncertain == 'z_outside_space':
+        next(row for row in source['spaces'] if row['id'] == 'F3:office')['height'] = 1
+    else:
+        door['id'] = door['record']['id'] = 'F1'
+    source['validation']['findings'] = [
+        {'code': 'source.opening_unbuilt', 'opening_id': door['id'], 'severity': 'severe'}]
+    original = copy.deepcopy(source)
+    selected = select_plan_feedback(source, source)
+    assert set(selected['selected_floor_ids']) == {'F1', 'F2', 'F3'}
+    assert selected['diagnostic_locations'][0]['unlocated']
+    assert selected['represented_by'] == {}
+    assert selected['findings'] == source['validation']['findings'] + source['unbuilt_openings']
+    assert source == original
+
+
+@pytest.mark.parametrize('z', [None, ['unknown', 8], [float('nan'), 8]])
+def test_unbuilt_missing_reliable_z_still_uses_explicit_owner(z):
+    source = _small_source()
+    door = _unbuilt_door()
+    door['record']['z'] = z
+    source['unbuilt_openings'] = [door]
+    source['validation']['findings'] = [{'code': 'source.opening_unbuilt', 'opening_id': door['id']}]
+    assert select_plan_feedback(source, source)['selected_floor_ids'] == ['F3']
+
+
 @pytest.mark.parametrize('difference', ['value', 'evidence_context', 'source_ref', 'cross_floor', 'global'])
 def test_diagnostic_groups_do_not_hide_distinct_or_unbound_evidence(tmp_path, monkeypatch, difference):
     source = _small_source()

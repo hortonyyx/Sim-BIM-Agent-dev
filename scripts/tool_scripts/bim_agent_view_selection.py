@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 
 from src.agent.geometry.source_floor_selection import select_source_floor, select_source_floor_openings
@@ -92,6 +93,12 @@ def _diagnostic_tokens(source, floor_id):
     return tokens
 
 
+def _finite_interval(value):
+    return (isinstance(value, (list, tuple)) and len(value) == 2
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                    and math.isfinite(x) for x in value) and value[0] < value[1])
+
+
 def select_plan_feedback(source, parent=None, *, preferred_floor_ids=(), additional_findings=(),
                          view_context_by_floor=None):
     floors = {f['id']: f for f in source['floors']}
@@ -132,6 +139,41 @@ def select_plan_feedback(source, parent=None, *, preferred_floor_ids=(), additio
         retain(boundary['id'], lookup.get(boundary['space_id'], set()))
     for opening in source['openings']:
         retain(opening['id'], set().union(*(lookup.get(sid, set()) for sid in opening['space_ids'])))
+    # Rejected openings are absent from source.openings, but their validation
+    # findings still name the opening ID. Bind that ID only through the saved
+    # declaration's explicit, known owners; never infer a floor from its name.
+    spaces_by_id = {space['id']: space for space in source['spaces']}
+    unbuilt_scopes = {}
+    for opening in source.get('unbuilt_openings', []):
+        identity, record = opening.get('id'), opening.get('record')
+        if not isinstance(identity, str) or not identity:
+            continue
+        scope = None
+        if isinstance(record, dict) and record.get('id') == identity and identity not in lookup:
+            owners = [record.get('space_id')]
+            if record.get('other_space_id') is not None:
+                owners.append(record['other_space_id'])
+            if all(isinstance(owner, str) and owner in spaces_by_id for owner in owners):
+                located = set().union(*(lookup[owner] for owner in owners))
+                # Multi-floor/spanning or conflicting declarations stay global.
+                if len(located) == 1:
+                    scope = located
+                    z = record.get('z')
+                    if _finite_interval(z):
+                        for owner in [*(spaces_by_id[sid] for sid in owners), floors[next(iter(scope))]]:
+                            bottom, height = owner.get('z_floor'), owner.get('height')
+                            if (isinstance(bottom, (int, float)) and isinstance(height, (int, float))
+                                    and _finite_interval([bottom, bottom + height])
+                                    and (z[0] < bottom or z[1] > bottom + height)):
+                                scope = None
+                                break
+        if identity in unbuilt_scopes and unbuilt_scopes[identity] != scope:
+            scope = None
+        unbuilt_scopes[identity] = scope
+    unresolved_unbuilt = {identity for identity, scope in unbuilt_scopes.items() if scope is None}
+    for identity, scope in unbuilt_scopes.items():
+        if scope is not None:
+            retain(identity, scope)
     def strings(value):
         if isinstance(value, str):
             yield value
@@ -143,8 +185,10 @@ def select_plan_feedback(source, parent=None, *, preferred_floor_ids=(), additio
     ungroupable = set(failures)
     diagnostic_records = []
     for index, finding in enumerate(findings):
-        identities = sorted({value for value in strings(finding) if value in lookup})
-        located = set().union(*(lookup[value] for value in identities))
+        values = set(strings(finding))
+        identities = sorted(values & lookup.keys())
+        located = (set() if values & unresolved_unbuilt else
+                   set().union(*(lookup[value] for value in identities)))
         abnormal.update(located or floors)
         affected = located or set(floors)
         if len(located) != 1:
