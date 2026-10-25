@@ -139,13 +139,13 @@ class BimSession:
         # The caller cannot mutate the cached authority through a returned dict.
         return json.loads(_json(self._definitions()[name]))
 
-    def call(self, name: str, **arguments) -> ToolReply:
+    def call(self, tool_name: str, /, **arguments) -> ToolReply:
         """Call the normal tool. JSON-suffixed parameters also accept dict/list.
 
         Returned image paths must actually be viewed before claiming a visual
         review. No build/finish, repair, model call or retry happens implicitly.
         """
-        definition = self.describe(name)
+        definition = self.describe(tool_name)
         submitted = json.loads(_json(arguments))
         properties = definition.get("inputSchema", {}).get("properties", {})
         encoded = {key: (_json(value) if key in properties and key.endswith("_json")
@@ -155,11 +155,11 @@ class BimSession:
         receipt_path = self._receipts / f"{identity}.json"
         started = time.time()
         clock = time.perf_counter()
-        record = {"schema": "bim_sdk_call_v1", "tool": name, "arguments": encoded,
+        record = {"schema": "bim_sdk_call_v1", "tool": tool_name, "arguments": encoded,
                   "started_epoch": started, "execution": "existing_enabled_bim_tool",
                   "model_called_by_sdk": False}
         try:
-            result = self._runner.run(self._server.call_tool(name, encoded))
+            result = self._runner.run(self._server.call_tool(tool_name, encoded))
             from mcp.types import CallToolResult
             if isinstance(result, CallToolResult):
                 content, data, error = result.content, result.structuredContent, bool(result.isError)

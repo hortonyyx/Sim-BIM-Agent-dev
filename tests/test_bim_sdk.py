@@ -92,6 +92,27 @@ def test_readonly_sdk_cannot_write_and_bad_geometry_stays_rejected(tmp_path, mon
         assert list((run / "parametric_drafts").glob("draft_*.json"))
 
 
+def test_named_image_argument_reaches_original_tool_in_python_and_cli(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+    from src.agent.sdk import main
+
+    _, run, _ = _prepare(tmp_path, monkeypatch, images=True)
+    with BimSession(run) as session:
+        reply = session.call("view_image", name="plan.png", coordinate_grid=False)
+        reply.require_ok()
+        assert reply.images
+        receipt = json.loads(Path(reply.receipt_file).read_text(encoding="utf-8"))
+        assert receipt["tool"] == "view_image"
+        assert receipt["arguments"] == {"name": "plan.png", "coordinate_grid": False}
+    arguments = tmp_path / "image_args.json"
+    arguments.write_text(json.dumps({"name": "plan.png", "coordinate_grid": False}), encoding="utf-8")
+    capsys.readouterr()
+    assert main(["--run", str(run), "call", "view_image", "--arguments", str(arguments)]) == 0
+    cli_reply = json.loads(capsys.readouterr().out)
+    assert not cli_reply["is_error"]
+    assert cli_reply["images"][0]["sha256"] == reply.images[0]["sha256"]
+
+
 def test_budget_rejection_is_failure_in_python_and_cli(tmp_path, monkeypatch):
     from src.agent.sdk import main
 
