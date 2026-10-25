@@ -42,24 +42,17 @@ def missing(template):
     return expected.difference(actual.buffer(1e-7)).area
 
 
-def test_complete_partition_is_rejected_before_shared_corners_split():
+def test_complete_partition_uses_one_constructed_junction_without_repair(tmp_path):
     plan = junction_plan()
     before = copy.deepcopy(plan)
     assert missing(plan['templates']['main']) == 0
-    with pytest.raises(ArchitecturalRegularizationError) as caught:
-        regularize_architectural_plan(plan, policy=POLICY)
-    audit = caught.value.audit
-    rows = audit['rejections']
-    assert len(rows) == 2 and {r['code'] for r in rows} == {'shared_junction_split'}
-    node = next(r for r in rows if r['observed_point'] == [.524, .34])
-    assert node['max_adopted_separation_m'] > .08
-    assert len(node['vertices']) == 3 and node['scope'] == ['projection']
-    assert {v['normalized_vertex_pointer'] for v in node['vertices']} == {
-        '/templates/main/spaces/0/polygon/0', '/templates/main/spaces/1/polygon/0',
-        '/templates/main/spaces/2/polygon/0'}
-    assert node['frame']['origin'] == [0, 0] and node['numerical_tolerance_m'] == 1e-8
-    assert 'adopted_sha256' not in audit and plan == before
-    assert {r['blocked_by'] for r in audit['not_assessed']} == {'shared_junctions'}
+    adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+    assert plan == before and audit['rejections'] == []
+    assert missing(adopted['templates']['main']) == 0
+    assert [s['polygon'][0] for s in adopted['templates']['main']['spaces']] == [[.5, .3]] * 3
+    assert any(row['type'] == 'shared_incidence_anchors' for row in audit['changes'])
+    result = export_source_proposal(expand_parametric_proposal(adopted), tmp_path / 'source')
+    assert result['source_geometry_ready'], result
 
 
 def test_explicit_common_frame_repairs_partition_and_keeps_opening_host(tmp_path):
@@ -103,12 +96,12 @@ def test_source_tolerated_numerical_wedge_is_not_a_new_rejection(tmp_path):
         space['polygon'] = ring
     adopted, _ = regularize_architectural_plan(plan, policy=POLICY)
     points = [s['polygon'][0] for s in adopted['templates']['main']['spaces']]
-    assert max(math.dist(a, b) for a in points for b in points) > 1e-8
+    assert max(math.dist(a, b) for a in points for b in points) <= 1e-8
     assert missing(adopted['templates']['main']) == 0
     assert export_source_proposal(expand_parametric_proposal(adopted), tmp_path / 'source')['source_geometry_ready']
 
 
-def test_rotated_frame_reports_source_coordinates_and_accepts_explicit_shared_origin():
+def test_rotated_frame_constructs_shared_incidence_without_changing_the_frame():
     plan = junction_plan()
     yaw = 31
     angle = math.radians(yaw)
@@ -122,10 +115,11 @@ def test_rotated_frame_reports_source_coordinates_and_accepts_explicit_shared_or
     for space in t['spaces']:
         space['polygon'] = list(map(world, space['polygon']))
     framed(plan, origin, yaw)
-    with pytest.raises(ArchitecturalRegularizationError) as caught:
-        regularize_architectural_plan(plan, policy=POLICY)
-    assert any(math.dist(row['observed_point'], world([.524, .34])) < 1e-8
-               for row in caught.value.audit['rejections'])
+    adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+    assert missing(adopted['templates']['main']) == 0
+    assert all(math.dist(space['polygon'][0], world([.5, .3])) < 1e-8
+               for space in adopted['templates']['main']['spaces'])
+    assert audit['frames']['main']['origin'] == origin
     framed(plan, world([.524, .34]), yaw)
     adopted, _ = regularize_architectural_plan(plan, policy=POLICY)
     assert missing(adopted['templates']['main']) == 0
@@ -146,7 +140,7 @@ def test_hole_rings_and_same_frame_different_templates_do_not_false_merge():
         assert missing(t) == 0
 
 
-def test_hole_corner_split_is_reported_with_the_hole_pointer():
+def test_hole_corner_keeps_its_shared_incidence_and_hole(tmp_path):
     outer = [[-3, -3], [4, -3], [4, 4], [-3, 4]]
     hole = [[.524, .34], [1.524, 2.34], [-1.476, 2.34]]
     shape = Polygon(outer, [hole])
@@ -154,14 +148,14 @@ def test_hole_corner_split_is_reported_with_the_hole_pointer():
              shape.intersection(box(.524, -10, 10, 10))]
     raw = junction_plan()
     raw['templates']['main'] = dict(footprint=dict(vertices=outer, holes=[hole]),
-        spaces=[dict(id=str(i), role='office', polygon=[list(p) for p in part.exterior.coords][:-1])
+        spaces=[dict(id=str(i), role='office', polygon=[list(p) for p in part.exterior.coords][:-1],
+                     source_refs=['synthetic partition around a declared hole'])
                 for i, part in enumerate(parts)])
     assert missing(raw['templates']['main']) == 0
-    with pytest.raises(ArchitecturalRegularizationError) as caught:
-        regularize_architectural_plan(raw, policy=POLICY)
-    node, = caught.value.audit['rejections']
-    assert node['code'] == 'shared_junction_split' and node['observed_point'] == [.524, .34]
-    assert '/templates/main/footprint/holes/0/0' in {v['normalized_vertex_pointer'] for v in node['vertices']}
+    adopted, _ = regularize_architectural_plan(raw, policy=POLICY)
+    t = adopted['templates']['main']
+    assert len(t['footprint']['holes']) == 1 and missing(t) == 0
+    assert export_source_proposal(expand_parametric_proposal(adopted), tmp_path / 'source')['source_geometry_ready']
 
 
 def test_different_height_sections_do_not_bind_same_xy_corners():
@@ -204,15 +198,14 @@ def test_spanning_membership_defers_to_full_source_validation(membership, tmp_pa
     assert 'unknown spanning space external' in result['error']
 
 
-def test_excluded_repeat_spanning_does_not_disable_local_failure_locator():
+def test_excluded_repeat_spanning_does_not_disable_local_incidence():
     raw = junction_plan()
     raw['repeats'] = [dict(id='replaced', template='main', id_prefix='F', start=1, count=1,
         z=0, height=3, source_refs=['replaced declaration'], exclude_ids=['F1'],
         spanning_space_ids=['external'])]
-    with pytest.raises(ArchitecturalRegularizationError) as caught:
-        regularize_architectural_plan(raw, policy=POLICY)
-    assert {row['code'] for row in caught.value.audit['rejections']} == {'shared_junction_split'}
-    assert not any(row.get('scope') == 'shared junction locator' for row in caught.value.audit['not_assessed'])
+    adopted, audit = regularize_architectural_plan(raw, policy=POLICY)
+    assert missing(adopted['templates']['main']) == 0
+    assert not any(row.get('scope') == 'shared junction locator' for row in audit['not_assessed'])
 
 
 def test_generic_adapter_preserves_spanning_context_and_original_source_ids(tmp_path):
@@ -247,7 +240,7 @@ def test_unused_template_does_not_add_a_source_rejection(tmp_path):
     raw['templates']['used'] = single(rectangle(10, 10, 4, 4))['templates']['main']
     raw['instances'][0]['template'] = 'used'
     adopted, _ = regularize_architectural_plan(raw, policy=POLICY)
-    assert missing(adopted['templates']['main']) > 0  # Kept declaration is not compiled into this source.
+    assert missing(adopted['templates']['main']) == 0
     assert export_source_proposal(expand_parametric_proposal(adopted), tmp_path / 'source')['source_geometry_ready']
 
 
@@ -273,7 +266,11 @@ def _result(value):
     return value.structuredContent
 
 
-def test_formal_mcp_failure_preserves_input_and_has_visible_repair_coordinates(tmp_path):
+def test_formal_mcp_guard_still_reports_a_broken_incidence_construction(tmp_path, monkeypatch):
+    # Inject the former independent-offset behavior: the downstream safety
+    # guard and bounded, inspectable MCP failure must remain operative.
+    from src.agent.geometry import architectural_incidence
+    monkeypatch.setattr(architectural_incidence, 'adopt_shared_incidence', lambda *a, **k: None)
     from tests.test_bim_agent_tools import _run_with_one_image, _parametric_file_hashes
     from scripts.tool_scripts.run_bim_agent import build_tool_server
     run = _run_with_one_image(tmp_path)
@@ -299,7 +296,9 @@ def test_formal_mcp_failure_preserves_input_and_has_visible_repair_coordinates(t
     assert recovered['value']['code'] == 'shared_junction_split'
 
 
-def test_large_failure_keeps_bounded_representatives_and_exact_full_report(tmp_path):
+def test_large_failure_keeps_bounded_representatives_and_exact_full_report(tmp_path, monkeypatch):
+    from src.agent.geometry import architectural_incidence
+    monkeypatch.setattr(architectural_incidence, 'adopt_shared_incidence', lambda *a, **k: None)
     from scripts.tool_scripts.bim_agent_parametric import _shared_junction_feedback
     from scripts.tool_scripts.bim_agent_replies import compact_reply, read_report
     from types import SimpleNamespace

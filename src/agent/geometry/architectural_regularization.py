@@ -413,7 +413,7 @@ def regularize_architectural_plan(plan, *, policy=None):
         finish_stage('input_rings', ['ring_adoption', 'apertures', 'vertical', 'contacts'])
         for fid, groups in families.items():
             for group in groups:
-                mapping, targets, tangent_shifts = {}, {}, {}
+                mapping, targets, tangent_shifts, representatives = {}, {}, {}, {}
                 n = group['normal']
                 tangent = [-n[1], n[0]]
                 if tangent[0] < -EPS or (abs(tangent[0]) <= EPS and tangent[1] < 0):
@@ -428,6 +428,7 @@ def regularize_architectural_plan(plan, *, policy=None):
                             action='retain identities; reject collapsed rings or changed volume contacts'))
                     targets[target] = anchor
                     mapping.update({value: target for value in cluster})
+                    representatives.update({value: anchor for value in cluster})
                     cluster_values = set(cluster)
                     along = [sum(v*w for v,w in zip(tangent, point))
                              for d,a,b in group['endpoints'] if d in cluster_values for point in (a,b)]
@@ -442,6 +443,9 @@ def regularize_architectural_plan(plan, *, policy=None):
                             tangent_shift_m=tangent_shift))
                 group['mapping'] = mapping
                 group['tangent_shifts'] = tangent_shifts
+                group['representatives'] = representatives
+        from src.agent.geometry.architectural_incidence import adopt_shared_incidence
+        adopt_shared_incidence(records, adopted['templates'], frames, audit, epsilon=EPS)
         for name, path, ring, points, edges in records:
             rebuilt = []
             for i, point in enumerate(points):
