@@ -254,7 +254,7 @@ def expand_parametric_proposal(plan: dict, *, expansion_audit: dict | None = Non
     plan = normalize_parametric_primitives(plan)
     fields(plan, ('templates', 'instances', 'assumptions', 'unresolved'),
            ('connections', 'schema_version', 'mesh_frame', 'boundary_curves', 'repeats',
-            'core_connections', 'continuous_spaces', 'separated_spaces'))
+            'core_connections', 'continuous_spaces', 'separated_spaces', 'enclosure_declaration'))
     json.dumps(plan, allow_nan=False)
     schema_version = plan.get('schema_version', '2')
     if schema_version not in ('2', 'source_polygon_v1'):
@@ -435,6 +435,10 @@ def expand_parametric_proposal(plan: dict, *, expansion_audit: dict | None = Non
         proposal['mesh_frame'] = validate_mesh_frame(copy.deepcopy(plan['mesh_frame']))
     if 'boundary_curves' in plan:
         proposal['geometry']['boundary_curves'] = copy.deepcopy(plan['boundary_curves'])
+    if 'enclosure_declaration' in plan:
+        if not isinstance(plan['enclosure_declaration'], dict):
+            raise ValueError('enclosure_declaration must be an object')
+        proposal['enclosure_declaration'] = copy.deepcopy(plan['enclosure_declaration'])
     if separations:
         proposal['geometry']['vertical_separations'] = separations
     if expansion_audit is not None and continuity:

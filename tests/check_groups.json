@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_source_enclosure_intent.py": {
+      "group": "targeted",
+      "reason": "Explicit enclosure intent binds unique adopted boundaries without guessed digests; preserves evidence, reciprocal/opening checks, real roof walls and virtual display semantics"
+    },
     "tests/test_bim_sdk_presentation.py": {
       "group": "targeted",
       "reason": "SDK default presentation keeps every rejection, status and evidence binding while preserving complete programmatic replies, receipts and original images"

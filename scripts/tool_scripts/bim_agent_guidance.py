@@ -1425,6 +1425,31 @@ space_intents accepts room/shaft/cabinet/component. Narrow geometry-only
 blade/parapet spaces require a semantic correction or an explicit omission;
 component is a diagnostic intent, not a supported solid-component constructor.
 Never widen/delete a genuine shaft simply to clear this diagnostic.
+Real open-air roof/terrace/courtyard volumes can retain physical perimeter walls
+without inventing an occupied room. A space role does not assign occupancy or
+thermal loads. Preserve major visible enclosure instead of treating every
+nonoccupied boundary as expendable trim. Both parametric plans and generic
+proposals accept top-level enclosure_declaration, for example:
+{"schema_version":"source_enclosure_intent_v1",
+ "spaces":[{"space_id":"R:deck","enclosure":"semi_open",
+   "evidence_kind":"inferred","source_refs":["supplied roof view"],
+   "assumptions":["Uncovered maintenance area inferred from the visible perimeter"]}],
+ "boundaries":[{"boundary":{"space_id":"R:deck","geometry_type":"ceiling"},
+   "condition":"open","scope":"whole","evidence_kind":"inferred",
+   "source_refs":["supplied roof view"],"assumptions":["No overhead enclosure inferred"]}]}.
+Use actual expanded space IDs; ordinary Python loops can repeat declarations.
+The tool resolves each boundary selector uniquely after geometry adoption and
+binds its exact source digest. An ambiguous wall selector rejects; use
+boundary:{"boundary_id":"<actual source boundary ID>"} for an exact side.
+scope partial additionally requires explicit world-coordinate vertices.
+condition unknown preserves uncertainty; it does not mean open. Evidence_kind
+observed/manual_annotation/example retain their usual meanings; inferred requires
+both source_refs and explicit assumptions. Declare both sides of a shared open
+region; the tool never invents the counterpart or overrides an existing opening.
+The result is source_bim_v3 with logical volumes, real enclosure and evidence
+preserved. Do not strip these fields or claim a v2-only consumer supports them.
+The older source_enclosure_input_v1 still requires the exact pre-enclosure source
+digest; intent is the authoring path when that digest is not yet available.
 For native mesh with this policy, a thin horizontal contact partition is advisory:
 one roof can contact several lower rooms in narrow regions without a geometric
 defect. Do not reshape solely to eliminate that warning. Real overlaps, missing

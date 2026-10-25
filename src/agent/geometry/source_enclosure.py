@@ -24,7 +24,7 @@ from src.agent.geometry.source_model import _digest
 _INPUT_SCHEMA = "source_enclosure_input_v1"
 _SOURCE_SCHEMA = "source_bim_v2"
 _OUTPUT_SCHEMA = "source_bim_v3"
-_EVIDENCE_KINDS = {"observed", "manual_annotation", "example"}
+_EVIDENCE_KINDS = {"observed", "manual_annotation", "example", "inferred"}
 _SPACE_ENCLOSURES = {"enclosed", "semi_open", "open"}
 _CONDITIONS = {"open", "unknown"}
 
@@ -52,7 +52,9 @@ def _evidence(row: dict, *, target: str) -> dict:
         _fail(f"{target}: requires source_refs or assumptions")
     kind = row.get("evidence_kind")
     if kind not in _EVIDENCE_KINDS:
-        _fail(f"{target}: evidence_kind must be observed, manual_annotation, or example")
+        _fail(f"{target}: evidence_kind must be observed, manual_annotation, example, or inferred")
+    if kind == "inferred" and (not refs or not assumptions):
+        _fail(f"{target}: inferred enclosure requires both source_refs and explicit assumptions")
     return {"source_refs": refs, "assumptions": assumptions, "evidence_kind": kind}
 
 

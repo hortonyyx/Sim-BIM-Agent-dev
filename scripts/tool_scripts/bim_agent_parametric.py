@@ -18,7 +18,7 @@ from src.agent.geometry.parametric_proposal import expand_parametric_proposal
 
 PATCH_ROOTS = frozenset({"templates", "instances", "repeats", "connections",
     "core_connections", "continuous_spaces", "separated_spaces", "assumptions", "unresolved", "schema_version",
-    "mesh_frame", "boundary_curves", "modelling", "primitive_frames"})
+    "mesh_frame", "boundary_curves", "modelling", "primitive_frames", "enclosure_declaration"})
 _DRAFT = re.compile(r"draft_[0-9]+\.json\Z")
 
 

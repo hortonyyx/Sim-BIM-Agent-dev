@@ -561,6 +561,10 @@ def build_source_bim(geom: CorrectedGeometry, *, capability_profile="rectangular
     bind_vertical_continuity_review(payload)
     payload["source_model_sha256"] = _digest(payload)
     if enclosure_declaration is not None:
+        if (isinstance(enclosure_declaration, dict)
+                and enclosure_declaration.get("schema_version") == "source_enclosure_intent_v1"):
+            from src.agent.geometry.source_enclosure_intent import apply_source_enclosure_intent
+            return apply_source_enclosure_intent(payload, enclosure_declaration)
         from src.agent.geometry.source_enclosure import apply_source_enclosure
         return apply_source_enclosure(payload, enclosure_declaration)
     return payload
@@ -625,6 +629,13 @@ def _display_parts(source):
     result = {}
     for boundary in source["boundaries"]:
         bid, vertices = boundary["id"], boundary["vertices"]
+        # A materialized v2 source can already explicitly declare a wholly
+        # virtual boundary. Keep its logical surface and opening identities,
+        # but never manufacture opaque physical fill merely because it lacks
+        # the more expressive v3 enclosure_regions sidecar.
+        if source["schema_version"] == "source_bim_v2" and boundary.get("kind") == "virtual":
+            result[bid] = []
+            continue
         if boundary["geometry_type"] == "wall":
             origin = vertices[0][:2]
             direction, _ = _frame(origin, vertices[1][:2])
