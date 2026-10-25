@@ -41,6 +41,14 @@ with BimSession(run_directory) as bim:
 
 `reply.data` is the tool's structured result; `reply.texts` contains additional
 messages; `reply.images` contains image paths, hashes and MIME types.
+Printing a reply (including the CLI) shows a compact presentation: repeated input
+declarations, implementation inventories and regularization change logs have
+file or JSON pointers instead of full copies. Errors, warnings, rejection
+evidence and current domain checks remain visible. `reply.data` and the receipt
+at `reply.receipt_file` retain the complete returned result; image bytes are
+unchanged. `reply.presentation()` returns the same display object as JSON text.
+Remaining execution allowance is a hard run limit, not a refinement budget:
+the task's delivery target may be shorter and takes precedence.
 `reply.require_ok()` raises on tool errors only. A saved source, clear machine
 check, or returned image does not certify architectural quality. Inspect the saved
 result against the inputs, combine concrete necessary repairs, and recheck affected
