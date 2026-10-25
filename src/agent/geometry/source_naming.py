@@ -105,12 +105,20 @@ def build_public_names(source: dict) -> dict:
         for bid in source["opening_hosts"][opening["id"]]:
             groups[(bid, opening["kind"])].append(opening)
     for (bid, kind), rows in groups.items():
-        a, b = walls[bid]
-        dx, dy = b[0]-a[0], b[1]-a[1]
-        def opening_key(o):
-            vs = o["vertices"]
-            along = min((v[0]-a[0])*dx + (v[1]-a[1])*dy for v in vs)
-            return round(along, 6), min(v[2] for v in vs), geometry_key(vs), o["id"]
+        if bid not in boundaries:
+            raise ValueError(f"opening host boundary is unknown or unsupported: {bid}")
+        if bid in walls:
+            a, b = walls[bid]
+            dx, dy = b[0]-a[0], b[1]-a[1]
+            def opening_key(o):
+                vs = o["vertices"]
+                along = min((v[0]-a[0])*dx + (v[1]-a[1])*dy for v in vs)
+                return round(along, 6), min(v[2] for v in vs), geometry_key(vs), o["id"]
+        else:
+            # Horizontal apertures have no perimeter-wall direction. Only their
+            # display ordering changes; hosts, vertices and source IDs stay intact.
+            def opening_key(o):
+                return geometry_key(o["vertices"]), o["id"]
         token = {"window": "Win", "door": "Door", "open": "Opening"}[kind]
         for i, o in enumerate(sorted(rows, key=opening_key), 1):
             sides.setdefault(o["id"], {})[bid] = f"{boundaries[bid]}_{token}{i}"

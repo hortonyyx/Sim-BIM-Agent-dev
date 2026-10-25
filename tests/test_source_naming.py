@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 
+import pytest
 
 from src.agent.correction.schema import CorrectedGeometry
 from src.agent.execution.source_proposal import export_source_proposal
@@ -96,6 +97,53 @@ def test_names_survive_record_order_ring_start_and_winding():
     for hosts in s["opening_hosts"].values():
         hosts.reverse()
     assert build_public_names(s) == original["public_names"]
+
+
+def horizontal_aperture_source():
+    geometry = {"schema_version": "2", "footprint_x": [0, 3], "footprint_y": [0, 3],
+                "floors": [], "windows": [], "openings": []}
+    for i in range(2):
+        geometry["floors"].append({"name": f"level-{i}", "z_floor": 3*i, "ceiling_height": 3,
+            "cells": [{"id": f"stairs-{i}", "role": "stairwell", "x": [0, 3], "y": [0, 3]}]})
+    s = build_source_bim(CorrectedGeometry.model_validate(geometry), capability_profile="orthogonal_polygon")
+    ceiling = next(b["id"] for b in s["boundaries"] if b["space_id"] == "stairs-0" and b["geometry_type"] == "ceiling")
+    floor = next(b["id"] for b in s["boundaries"] if b["space_id"] == "stairs-1" and b["geometry_type"] == "floor")
+    for oid, x in [("north", 1.75), ("south", .25)]:
+        s["openings"].append({"id": oid, "kind": "open", "host_boundary_id": ceiling,
+            "space_ids": ["stairs-0", "stairs-1"], "exterior": False,
+            "vertices": [[x, .5, 3], [x+.5, .5, 3], [x+.5, 1, 3], [x, 1, 3]],
+            "connectivity": "open", "source_refs": ["synthetic horizontal aperture"]})
+        s["opening_hosts"][oid] = [ceiling, floor]
+        s["connections"].append({"opening_id": oid, "kind": "open", "space_ids": ["stairs-0", "stairs-1"], "exterior": False, "state": "open"})
+    from src.agent.geometry.source_model import _digest
+    s["source_model_sha256"] = _digest({k: v for k, v in s.items() if k != "source_model_sha256"})
+    return s
+
+
+def test_horizontal_apertures_have_stable_both_side_names_and_render_without_mutation():
+    from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
+
+    s = horizontal_aperture_source()
+    before = copy.deepcopy(s)
+    names = build_public_names(s)
+    assert s == before
+    assert set(names["opening_sides"]["south"].values()) == {"Z01_Ceiling_Opening1", "Z02_Floor_Opening1"}
+    assert set(names["opening_sides"]["north"].values()) == {"Z01_Ceiling_Opening2", "Z02_Floor_Opening2"}
+    rendered = build_viewer_html(source_view_geometry(s), title="Horizontal aperture regression")
+    assert "Z01_Ceiling_Opening1" in rendered and "Z02_Floor_Opening1" in rendered
+    assert s == before
+    s["openings"].reverse()
+    for opening in s["openings"]:
+        opening["vertices"].reverse()
+        s["opening_hosts"][opening["id"]].reverse()
+    assert build_public_names(s) == names
+
+
+def test_unknown_opening_host_is_not_accepted_by_horizontal_name_fallback():
+    s = horizontal_aperture_source()
+    s["opening_hosts"]["south"] = ["missing-floor"]
+    with pytest.raises(ValueError, match="unknown or unsupported.*missing-floor"):
+        build_public_names(s)
 
 
 def test_concave_ring_has_six_ccw_walls_from_southernmost_westernmost():
