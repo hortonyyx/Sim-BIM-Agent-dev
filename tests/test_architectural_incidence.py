@@ -14,7 +14,7 @@ from src.agent.geometry.architectural_regularization import (
 from src.agent.geometry.parametric_proposal import expand_parametric_proposal
 from src.agent.execution.source_proposal import export_source_proposal
 from tests.test_architectural_junctions import junction_plan
-from tests.test_architectural_regularization import single
+from tests.test_architectural_regularization import single, rectangle
 
 
 def assert_partition(template):
@@ -141,3 +141,36 @@ def test_numerical_incidence_preserves_source_residual_and_is_order_stable(delta
         for change in audit['changes']:
             if change['type'] == 'shared_incidence_anchors':
                 assert all(node['max_source_spread_m'] <= 1e-8 for node in change['nodes'])
+
+
+@pytest.mark.parametrize('offset', [0., 1e-9, 1e-7, 1e-6, 1e-5, 1.9e-5, 2.1e-5])
+@pytest.mark.parametrize('node_delta', [0., 3e-9])
+def test_node_residual_is_not_replaced_by_another_templates_line_cluster(offset, node_delta, tmp_path):
+    raw = junction_plan()
+    for i, space in enumerate(raw['templates']['main']['spaces']):
+        space['polygon'][0] = [.524+i*node_delta, .34]
+    raw['templates']['other'] = single(rectangle(.524-offset, 10.024, 2, 2))['templates']['main']
+    raw['instances'].append(dict(id='F2', template='other', z=10, height=3))
+    assert export_source_proposal(expand_parametric_proposal(raw), tmp_path/'original')['source_geometry_ready']
+    expected = None
+    for template_order in itertools.permutations(('main', 'other')):
+        for space_order in itertools.permutations(range(3)):
+            plan = copy.deepcopy(raw)
+            plan['templates'] = {name:plan['templates'][name] for name in template_order}
+            plan['templates']['main']['spaces'] = [plan['templates']['main']['spaces'][i] for i in space_order]
+            before = copy.deepcopy(plan)
+            adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+            assert plan == before
+            assert audit['observed_max_vertex_displacement_m'] <= .1
+            shapes = {s['id']: s['polygon'] for s in adopted['templates']['main']['spaces']}
+            for i in (1, 2):
+                assert shapes[str(i)][0][0]-shapes['0'][0][0] == pytest.approx(i*node_delta, abs=1e-12)
+                assert shapes[str(i)][0][1] == pytest.approx(shapes['0'][0][1], abs=1e-12)
+            for original in raw['templates']['main']['spaces']:
+                assert_parallel(original['polygon'], shapes[original['id']])
+            if expected is None:
+                expected = shapes
+                assert export_source_proposal(expand_parametric_proposal(adopted), tmp_path/'adopted')['source_geometry_ready']
+            else:
+                for identity, polygon in shapes.items():
+                    assert Polygon(expected[identity]).hausdorff_distance(Polygon(polygon)) < 1e-9
