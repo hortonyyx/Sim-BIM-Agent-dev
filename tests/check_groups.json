@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_bim_sdk_presentation.py": {
+      "group": "targeted",
+      "reason": "SDK default presentation keeps every rejection, status and evidence binding while preserving complete programmatic replies, receipts and original images"
+    },
     "tests/test_architectural_incidence.py": {
       "group": "targeted",
       "reason": "Shared source junctions retain support incidence and node-local numerical residuals across frames, permutations and template anchor sharing"
