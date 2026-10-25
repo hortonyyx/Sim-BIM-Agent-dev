@@ -2,13 +2,17 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_drawing_source_precision.py": {
+      "group": "targeted",
+      "reason": "Bound architectural adoption for ordinary drawing sources preserves pixel and historical precision policies"
+    },
+    "tests/test_parametric_drawing_coverage.py": {
+      "group": "targeted",
+      "reason": "Current actual-source plan reviews bind parametric floors to admitted drawings through native finish"
+    },
     "tests/test_bim_modeling.py": {
       "group": "targeted",
       "reason": "Explicit region/shared-edge construction preserves geometry and requested widths; clearance reports have bounded interpretation"
-    },
-    "tests/test_source_enclosure_intent.py": {
-      "group": "targeted",
-      "reason": "Enclosure intent binds only uniquely selected adopted source boundaries, keeps old evidence and digest gates and virtual display semantics"
     },
     "tests/test_bim_sdk_construction.py": {
       "group": "targeted",

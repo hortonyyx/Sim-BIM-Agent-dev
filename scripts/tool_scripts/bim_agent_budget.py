@@ -15,7 +15,7 @@ def _read(path):
     return json.loads(path.read_bytes())
 
 
-def candidate_floor_images(run, candidate, seen=None):
+def candidate_floor_images(run, candidate, seen=None, *, toolkit=None):
     seen = set() if seen is None else seen
     if candidate in seen:
         return {}
@@ -42,6 +42,12 @@ def candidate_floor_images(run, candidate, seen=None):
             data = _read(assembly_path)
             for row in data.get("floors", []):
                 mapping.setdefault(row["image"], []).append(row["floor_id"])
+    if toolkit is not None:
+        # Validate against this candidate's scope, never inherit an ancestor's
+        # review-derived mapping merely because floor IDs survived an edit.
+        from scripts.tool_scripts.bim_agent_process_reviews import reviewed_floor_images
+        for image, ids in reviewed_floor_images(toolkit, source).items():
+            mapping.setdefault(image, []).extend(ids)
     return {image: sorted(set(ids) & floors) for image, ids in mapping.items() if set(ids) & floors}
 
 
@@ -57,7 +63,7 @@ def saved_floor_status(toolkit, candidate=None):
             # A deadline can interrupt file writes. Never let a torn last save
             # prevent handing off an earlier complete candidate (sm25 hard stop).
             _read(path.with_name("proposal.json"))
-            mapping = candidate_floor_images(toolkit.run, path.parent.name)
+            mapping = candidate_floor_images(toolkit.run, path.parent.name, toolkit=toolkit)
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
             unreadable.append(dict(candidate=path.parent.name, reason=str(error)))
             continue
@@ -68,7 +74,7 @@ def saved_floor_status(toolkit, candidate=None):
     if (toolkit.run / "seed/source_model.json").is_file():
         try:
             _read(toolkit.run / "seed/proposal.json")
-            mappings["seed"] = candidate_floor_images(toolkit.run, "seed")
+            mappings["seed"] = candidate_floor_images(toolkit.run, "seed", toolkit=toolkit)
             saved.insert(0, "seed")
             seed_report = toolkit.run / "seed/report.json"
             if seed_report.is_file() and _read(seed_report).get("source_geometry_ready"):
@@ -77,7 +83,7 @@ def saved_floor_status(toolkit, candidate=None):
             unreadable.append(dict(candidate="seed", reason=str(error)))
     covered = set().union(*(set(mappings[name]) for name in ready)) if ready else set()
     complete = [name for name in saved if name in ready and expected and set(expected) <= set(mappings[name])]
-    chosen_images = set(candidate_floor_images(toolkit.run, candidate)) if candidate else set()
+    chosen_images = set(candidate_floor_images(toolkit.run, candidate, toolkit=toolkit)) if candidate else set()
     return dict(expected_floor_plan_images=expected,
         floor_scope_source=toolkit.manifest.get("floor_scope_source", "not_declared"),
         saved_draft_images=sorted(covered), missing_draft_images=sorted(set(expected) - covered),

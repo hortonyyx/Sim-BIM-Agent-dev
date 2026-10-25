@@ -70,6 +70,11 @@ def prepare_parametric_plan(toolkit, plan, *, draft_path):
         "proposal_sha256": _hash(expand_parametric_proposal(adopted)),
         "adopted": _save(toolkit, draft_path.with_suffix(".adopted.json"), adopted),
         "audit": _save(toolkit, draft_path.with_suffix(".regularization.json"), audit)}
+    from scripts.tool_scripts.bim_agent_source_precision import reference_line_policy
+    if reference_line_policy(toolkit.manifest):
+        original = {"file": _path(toolkit, draft_path).relative_to(Path(toolkit.run).resolve()).as_posix(),
+                    "sha256": _sha(_path(toolkit, draft_path))}
+        reference.update(original=original, effective=copy.deepcopy(original))
     return adopted, reference
 
 
@@ -190,4 +195,7 @@ def prepare_source_proposal(toolkit, proposal, *, parent=None):
         "adopted_sha256": _hash(adopted), "proposal_sha256": _hash(adopted),
         "adopted": _save(toolkit, path.with_suffix(".adopted.json"), adopted),
         "audit": _save(toolkit, path.with_suffix(".regularization.json"), audit)}
+    from scripts.tool_scripts.bim_agent_source_precision import reference_line_policy
+    if reference_line_policy(toolkit.manifest):
+        reference["effective"] = _save(toolkit, path.with_suffix(".effective.json"), effective)
     return adopted, reference

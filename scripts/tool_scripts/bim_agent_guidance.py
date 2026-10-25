@@ -127,8 +127,8 @@ adding or removing a divider.
 
 5. RESOLVE THE DIFFERENCES. drawing_differences compares ink with declared
 walls/openings; zero covers only its stated scope. New drawing runs declare
-inputs.lite_bim_grid_step_m=0.1: builds, local plan revisions and assembly use the
-same 10 cm grid automatically, including XYZ and explicit fine dimensions. Submit
+inputs.lite_bim_grid_step_m=0.1: pixel-plan builds, local plan revisions and assembly
+use the same 10 cm grid automatically, including XYZ and explicit fine dimensions. Submit
 original observations; code retains their original/adopted values. Do not add a
 Lite flag or rewrite coordinates just to request this policy. Shared coordinates
 and hosted openings move together; room, host or connectivity changes reject the
@@ -137,9 +137,13 @@ Endpoint preparation retains its reported tolerance (at most 0.30 m); assembly
 aligns eligible cross-floor offsets below 0.30 m. Remaining near faces or room
 parts narrower than 0.60 m reject. Read the regularization summary and saved
 trace, then repair rejected objects from evidence; check the source and overlay.
-Direct BIM geometry edits must remain on the run grid; use revise_plan_bim for
-automatic regularization. Historical manifests without the grid field retain
-their recorded earlier policy.
+New source_precision_policy=architectural_reference_lines_v1 runs also adopt direct
+parametric/generic architectural parameters on the same 0.1 m scale using declared
+modelling.frames or primitive frames. Rotations and intersections retain derived
+world decimals; never round individual vertices. Read the parametric reference for
+local frames and source_polygon_v1. Pixel-plan routes still use their construction
+grid. Curved XY adoption is not assessed by this policy. Historical manifests retain
+their recorded policy; a model cannot add a flag to waive precision checks.
 
 6. HEIGHTS FROM ELEVATIONS. Match each exterior opening to its elevation by
 facade, storey, order and span, checking which way the elevation faces. Read
@@ -438,6 +442,12 @@ For example, after inspecting a plan result, carry on the next normal action:
 [{"kind":"plan","candidate":"candidate_01","image":"floor.png","floor_id":"F1",
 "outcome":"consistent","summary":"<actual findings from overlay>","issues":[]}].
 Plan entries need a full actual-source overlay for that candidate/image/floor.
+For an ordinary parametric/generic candidate, call overlay_candidate with the
+admitted plan image, actual floor ID and explicit original-image x/y calibration,
+inspect its returned image, then carry this same kind=plan review. This validated
+local scope supplies floor-image coverage without a pixel-plan construction record;
+calibration alone, reference-only notes and stale reviews do not. Required plan
+images and the separate building judgment still apply.
 Elevation entries use kind=elevation,reading_id; building entries use kind=building.
 For tools with candidate, that is the default reviewed candidate; otherwise specify
 it in each plan/building entry. Outcomes: consistent has no issues; uncertain has

@@ -58,17 +58,22 @@ def check_parametric_plan(toolkit, submitted: dict) -> PlanCheck:
     report = {"source_geometry_ready": False}
     audit = None
     try:
-        policy = toolkit.manifest.get("architectural_modelling_policy")
-        if policy is not None:
-            from src.agent.geometry.architectural_regularization import regularize_architectural_plan
-            plan, audit = regularize_architectural_plan(plan, policy=policy)
+        from scripts.tool_scripts.bim_agent_architectural import prepare_parametric_plan
+        draft_folder = Path(toolkit.run) / "sdk" / "checks"
+        draft_folder.mkdir(parents=True, exist_ok=True)
+        draft_path = draft_folder / f"draft_{uuid.uuid4().hex}.json"
+        with draft_path.open("xb") as stream:
+            stream.write(raw)
+        plan, regularization = prepare_parametric_plan(toolkit, plan, draft_path=draft_path)
+        if regularization is not None:
+            audit = json.loads((Path(toolkit.run) / regularization["audit"]["file"]).read_bytes())
         proposal = expand_parametric_proposal(plan)
         if "mesh_frame" in proposal:
             from src.agent.geometry.mesh_bim_frame import validate_mesh_frame
             frame = validate_mesh_frame(proposal["mesh_frame"])
             if frame["mesh_sha256"] != toolkit.manifest.get("mesh_input", {}).get("sha256"):
                 raise ValueError("candidate mesh_frame must refer to the admitted original mesh")
-        rejection = reject_source_proposal(toolkit, proposal)
+        rejection = reject_source_proposal(toolkit, proposal, architectural_regularization=regularization)
         source, report = compile_source_proposal(proposal,
             vertical_continuity_policy=toolkit.manifest.get("vertical_continuity_policy"))
         if rejection is not None:

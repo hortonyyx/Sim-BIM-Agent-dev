@@ -170,6 +170,88 @@ def _records(toolkit):
     return result
 
 
+def _plan_physical_scope(source, floor_id):
+    """The same storey projection as source views, including spanning spaces.
+
+    Z determines membership but is not compared as a plan dimension. Holes,
+    physical/virtual enclosure and projected openings cannot reuse old ink checks.
+    """
+    from src.agent.geometry.source_floor_selection import select_source_floor, select_source_floor_openings, _Z_EPS
+    from src.agent.runtime_roles.assembly_review import _ring
+    floor, spaces = select_source_floor(source, floor_id)
+    ids = {space["id"] for space in spaces}
+    lo, hi = floor["z_floor"], floor["z_floor"] + floor["height"]
+    def xy(vertices):
+        return sorted({tuple(round(float(v), 8) for v in p[:2]) for p in vertices})
+    def surface(row):
+        return {"xy": xy(row["vertices"]), "holes": sorted(_ring(h) for h in row.get("holes", []))}
+    boundaries = {}
+    for boundary in source["boundaries"]:
+        if boundary["space_id"] not in ids:
+            continue
+        heights = [point[2] for point in boundary["vertices"]]
+        if boundary["geometry_type"] == "wall":
+            if min(hi, max(heights)) - max(lo, min(heights)) <= _Z_EPS:
+                continue
+        elif not lo - _Z_EPS <= heights[0] <= hi + _Z_EPS:
+            continue
+        boundaries[boundary["id"]] = {**surface(boundary), "kind": boundary["kind"],
+            "geometry_type": boundary["geometry_type"], "enclosure": boundary.get("enclosure", "physical"),
+            "regions": [{**surface(region), "condition": region["condition"]}
+                        for region in boundary.get("enclosure_regions", [])]}
+    openings = {row["id"]: {**surface(row), "kind": row["kind"], "space_ids": sorted(row["space_ids"])}
+                for row in select_source_floor_openings(source, floor, spaces)}
+    return {"spaces": {row["id"]: {"polygon": _ring(row["polygon"]),
+                "holes": sorted(_ring(h) for h in row.get("holes", [])),
+                "enclosure": row.get("enclosure", "enclosed")} for row in spaces},
+            "boundaries": boundaries, "openings": openings}
+
+
+def _validate_plan_review(toolkit, source, row):
+    """One current-scope predicate for local review and drawing-floor coverage."""
+    view = _read_file(toolkit, row["evidence_file"], "image_overlays")
+    if hashlib.sha256((toolkit.run / row["evidence_file"]).read_bytes()).hexdigest() != row["evidence_sha256"]:
+        raise ValueError("reviewed overlay record changed")
+    if _picture_hash(toolkit, view) != row["picture_sha256"]:
+        raise ValueError("reviewed overlay picture changed")
+    original_source = _source(toolkit, row["candidate"])
+    if (view.get("mode") != "source_image_overlay"
+            or view.get("candidate") != row["candidate"]
+            or view.get("image") != row["image"] or view.get("floor_id") != row["floor_id"]
+            or view.get("source_model_sha256") != original_source["source_model_sha256"]
+            or view.get("box_original_pixels") != [0, 0, *view.get("original_size", [])]):
+        raise ValueError("reviewed overlay does not bind the actual original candidate/image/floor")
+    state = _plan_state(toolkit, source, row["floor_id"], row["image"])
+    if (view.get("image_sha256") != state["image_sha256"]
+            or view.get("anchors") != {axis: state["calibration"][axis + "_anchors"] for axis in ("x", "y")}):
+        raise ValueError("reviewed overlay image or calibration changed")
+    return (row["state_sha256"] == _hash(state)
+            and _plan_physical_scope(original_source, row["floor_id"])
+            == _plan_physical_scope(source, row["floor_id"]))
+
+
+def reviewed_floor_images(toolkit, source):
+    """Actual source-overlay reviews can bind ordinary parametric/generic floors.
+
+    This is scope coverage, never an independent drawing-fidelity judgment.
+    No calibration, reference-only note or stale/needs-revision review suffices.
+    """
+    from src.agent.geometry.source_image_overlay import _source_hash
+    _source_hash(source)
+    latest = {row["scope"]: row for row in _records(toolkit)}
+    mapping = {}
+    for row in latest.values():
+        if row["kind"] != "plan" or row["outcome"] not in {"consistent", "uncertain"}:
+            continue
+        try:
+            valid = _validate_plan_review(toolkit, source, row)
+        except (OSError, ValueError, KeyError, TypeError):
+            valid = False
+        if valid:
+            mapping.setdefault(row["image"], []).append(row["floor_id"])
+    return mapping
+
+
 def carry_reviews(toolkit, reviews_json, candidate=""):
     """Save explicit prior observations alongside the next normal action."""
     if reviews_json:
@@ -288,12 +370,7 @@ def process_status(toolkit, candidate):
         valid, reason = False, None
         try:
             if row["kind"] == "plan":
-                view = _read_file(toolkit, row["evidence_file"], "image_overlays")
-                if hashlib.sha256((toolkit.run / row["evidence_file"]).read_bytes()).hexdigest() != row["evidence_sha256"]:
-                    raise ValueError("reviewed overlay record changed")
-                if _picture_hash(toolkit, view) != row["picture_sha256"]:
-                    raise ValueError("reviewed overlay picture changed")
-                valid = row["state_sha256"] == _hash(_plan_state(toolkit, source, row["floor_id"], row["image"]))
+                valid = _validate_plan_review(toolkit, source, row)
                 if valid:
                     floor_coverage.add(row["floor_id"])
             elif row["kind"] == "elevation":

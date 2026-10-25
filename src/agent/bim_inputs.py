@@ -27,6 +27,9 @@ IMPLEMENTATION_FILES = (
     'scripts/tool_scripts/bim_agent_facade_checks.py',
     'scripts/tool_scripts/bim_agent_feedback.py',
     'scripts/tool_scripts/bim_agent_budget.py',
+    'scripts/tool_scripts/bim_agent_architectural.py',
+    'scripts/tool_scripts/bim_agent_source_precision.py',
+    'src/agent/geometry/architectural_regularization.py',
     'src/agent/correction/schema.py',
     'src/agent/geometry/source_model.py',
     'src/agent/roles.py',
@@ -221,6 +224,12 @@ def prepare_bim_inputs(run: Path, *, images_path: Path | None, mesh_path: Path |
         # This is a run policy, not a claim extracted from scope or model JSON.
         # Historical manifests without it retain their original behaviour.
         manifest["lite_bim_grid_step_m"] = DEFAULT_LITE_GRID_M
+        from src.agent.geometry.architectural_regularization import DEFAULT_ARCHITECTURAL_POLICY
+        from scripts.tool_scripts.bim_agent_source_precision import REFERENCE_LINES_POLICY
+        # Pixel plans retain their construction grid. Direct source declarations
+        # adopt architectural parameters in their declared local reference frame.
+        manifest["source_precision_policy"] = REFERENCE_LINES_POLICY
+        manifest["architectural_modelling_policy"] = dict(DEFAULT_ARCHITECTURAL_POLICY)
     if building_input:
         manifest["building_input"] = building_input
     if plan_recovery:

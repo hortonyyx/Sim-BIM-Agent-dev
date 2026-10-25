@@ -1374,10 +1374,13 @@ class Toolkit:
         from scripts.tool_scripts.bim_agent_regularization import reject_source_proposal
         from scripts.tool_scripts.bim_agent_architectural import (
             prepare_source_proposal, validate_build_regularization)
+        from scripts.tool_scripts.bim_agent_source_precision import reference_line_policy
+        pixel_construction = (reference_line_policy(self.manifest)
+                              and (plan_input is not None or plan_assembly is not None))
         try:
             if architectural_regularization is not None:
                 validate_build_regularization(self, proposal, architectural_regularization)
-            else:
+            elif not pixel_construction:
                 proposal, architectural_regularization = prepare_source_proposal(self, proposal, parent=parent)
         except ValueError as error:
             rejection = {"source_geometry_ready": False, "status": "rejected",
@@ -1389,7 +1392,8 @@ class Toolkit:
             self.log(action, rejection)
             return saved_result(rejection, audit_written=True)
         rejection = reject_source_proposal(
-            self, proposal, plan_assembly=plan_assembly, parent=parent)
+            self, proposal, plan_assembly=plan_assembly, parent=parent,
+            architectural_regularization=architectural_regularization if not pixel_construction else None)
         if rejection is not None:
             saved_result(rejection, audit_written=True)
             self.log(action, rejection)

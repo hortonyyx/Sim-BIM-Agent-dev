@@ -178,7 +178,8 @@ def source_grid_report(source, grid_step_m):
             "coordinate_count": len(coordinates), "violations": violations}
 
 
-def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None):
+def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None,
+                           architectural_regularization=None):
     """Prepare a source-only hard-rule refusal before allocating a candidate.
 
     The caller is Toolkit.build. This helper never edits a source or the input
@@ -186,6 +187,8 @@ def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None
     path; only a successfully constructed source is checked here.
     """
     grid_step = selected_grid_step(toolkit.manifest)
+    from scripts.tool_scripts.bim_agent_source_precision import validate_reference_line_adoption
+    adopted_precision = validate_reference_line_adoption(toolkit, proposal, architectural_regularization)
     if selected_rule(toolkit.manifest) == LEGACY_RULE:
         return None
     from src.agent.execution.source_proposal import _validate_proposal
@@ -217,7 +220,7 @@ def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None
             report = apply_cross_storey_skip_policy(report, regularization)
     report = classify_source_precision(report, toolkit.manifest)
     grid = None
-    if grid_step is not None:
+    if grid_step is not None and adopted_precision is None:
         grid = source_grid_report(source, grid_step)
         if grid["violations"]:
             report["items"].append({

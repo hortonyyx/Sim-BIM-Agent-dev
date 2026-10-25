@@ -269,7 +269,7 @@ def facade_count_report(toolkit, candidate):
     _, source = toolkit.claims().candidate(candidate)
     inventory = facade_inventory(source)
     floor_ids = {row["id"] for row in source["floors"]}
-    mapping = candidate_floor_images(toolkit.run, candidate)
+    mapping = candidate_floor_images(toolkit.run, candidate, toolkit=toolkit)
     latest = {}
     for path in sorted((toolkit.run / "facade_counts").glob("count_*.json")):
         observation = json.loads(path.read_text())
