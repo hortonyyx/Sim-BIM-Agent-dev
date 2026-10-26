@@ -122,6 +122,14 @@ def build_with_views(session, plan, *, drawings=(), mesh_observations=None):
     result = BuildResult(None, rows, receipt_file=str(path))
     started = time.time()
     operation = "build_parametric_bim"
+    failure = None
+
+    def recovery_note():
+        native = ([result.build_reply.receipt_file] if result.build_reply is not None else [])
+        native.extend(reply.receipt_file for reply in result.views)
+        return (f"Saved candidate: {result.candidate}; native receipts: {native}; "
+                f"workflow receipt: {path}. An interrupted operation or journal has an unknown "
+                "outcome; inspect the native state. Do not blindly retry the build.")
 
     def save():
         record = {"schema": "bim_sdk_build_views_v1", "started_epoch": started,
@@ -132,7 +140,9 @@ def build_with_views(session, plan, *, drawings=(), mesh_observations=None):
                   "view_receipts": [reply.receipt_file for reply in result.views],
                   "process_review": result.process_review, "exception": result.exception,
                   "atomic": False, "automatic_review": False, "automatic_retry": False}
-        path.write_text(json.dumps(record, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        temporary.replace(path)
 
     save()
     try:
@@ -153,9 +163,17 @@ def build_with_views(session, plan, *, drawings=(), mesh_observations=None):
             result.process_review = process_status(session._server.toolkit, result.candidate)
         return result
     except BaseException as error:
+        failure = error
         result.exception = {"operation": operation, "type": type(error).__name__,
                             "message": str(error), "outcome": "unknown_inspect_native_receipts_before_retry"}
-        error.add_note(f"Saved candidate: {result.candidate}; workflow receipt: {path}. Do not blindly retry the build.")
+        error.add_note(recovery_note())
         raise
     finally:
-        save()
+        try:
+            save()
+        except BaseException as journal_error:
+            if failure is not None:
+                failure.add_note(f"Workflow journal could not be updated: {journal_error}. " + recovery_note())
+            else:
+                journal_error.add_note(recovery_note())
+                raise

@@ -159,3 +159,38 @@ def test_cli_inline_arguments_are_explicit_and_ambiguous_file_input_is_helpful(t
         main(["--run", str(run), "call", "view_image", "--arguments", args])
     assert caught.value.code == 2 and "file path" in capsys.readouterr().err
     assert len(list((run / "sdk/receipts").glob("*.json"))) == count
+
+
+@pytest.mark.parametrize("native_failure", [False, True])
+def test_workflow_storage_failure_cannot_hide_native_candidate_or_original_error(tmp_path, monkeypatch, native_failure):
+    run = _run(tmp_path)
+    with BimSession(run) as bim:
+        original_write, original_call = Path.write_text, bim.call
+        workflow_writes = 0
+        def failing_write(path, *args, **kwargs):
+            nonlocal workflow_writes
+            if path.parent == run / "sdk/workflows":
+                workflow_writes += 1
+                if workflow_writes > (2 if native_failure else 1):
+                    raise OSError("workflow storage unavailable")
+            return original_write(path, *args, **kwargs)
+        def failing_overlay(tool, **arguments):
+            if tool == "overlay_candidate":
+                raise ValueError("native projection interrupted")
+            return original_call(tool, **arguments)
+        monkeypatch.setattr(Path, "write_text", failing_write)
+        if native_failure:
+            monkeypatch.setattr(bim, "call", failing_overlay)
+        expected = ValueError if native_failure else OSError
+        with pytest.raises(expected) as caught:
+            bim.build(rotated_plan(), drawings=[_drawing()])
+        if native_failure:
+            assert str(caught.value) == "native projection interrupted"
+        notes = " ".join(caught.value.__notes__)
+        assert "candidate_01" in notes and "native receipts:" in notes and "Do not blindly retry" in notes
+        assert "Workflow journal could not be updated" in notes
+        assert len(list(run.glob("candidate_*"))) == 1
+        assert (run / "candidate_01/source_model.json").is_file()
+        # A failed write must leave the previous complete workflow record intact.
+        record = json.loads(next((run / "sdk/workflows").glob("*.json")).read_bytes())
+        assert record["schema"] == "bim_sdk_build_views_v1"
