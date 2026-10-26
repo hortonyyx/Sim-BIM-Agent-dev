@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_bim_sdk_workflow.py": {
+      "group": "targeted",
+      "reason": "Composed native save/views retain partial failures and actual admission policy; explicit inspection and unchanged finish gates remain required"
+    },
     "tests/test_drawing_source_precision.py": {
       "group": "targeted",
       "reason": "Bound architectural adoption for ordinary drawing sources preserves pixel and historical precision policies"

@@ -235,6 +235,24 @@ class BimSession:
         from src.agent.construction_check import check_parametric_plan
         return check_parametric_plan(self._server.toolkit, plan)
 
+    def image(self, image: str, *, box=None, coordinate_grid=True, display_scale=1.0):
+        """Issue original-image evidence once; actually open the returned paths.
+
+        Uses the same image keyword as drawing projections. The underlying
+        view_image tool and its view_id/coordinate/evidence contract are unchanged.
+        """
+        return self.call("view_image", name=image, box=box,
+                         coordinate_grid=coordinate_grid, display_scale=display_scale)
+
+    def build(self, plan: dict, *, drawings=(), mesh_observations=None):
+        """Save once and render explicitly calibrated current views, without review.
+
+        Each drawing specifies image, floor_id, x_anchors, y_anchors and basis.
+        Partial view failure retains the candidate: retry its view, not its build.
+        """
+        from src.agent.sdk_workflow import build_with_views
+        return build_with_views(self, plan, drawings=drawings, mesh_observations=mesh_observations)
+
     def finish_to(self, output_directory, candidate: str, *, reviews=None, inferences=None):
         """Finish normally and publish the same bound source/viewer in one call.
 
@@ -342,7 +360,9 @@ def main(argv=None):
     describe.add_argument("tool")
     call = commands.add_parser("call")
     call.add_argument("tool")
-    call.add_argument("--arguments", type=Path, help="UTF-8 JSON object; omitted means {}")
+    arguments_group = call.add_mutually_exclusive_group()
+    arguments_group.add_argument("--arguments", type=Path, help="Path to a UTF-8 JSON object file")
+    arguments_group.add_argument("--arguments-json", help="Inline JSON object; mutually exclusive with --arguments")
     args = parser.parse_args(argv)
     with BimSession(args.run, readonly=args.readonly) as session:
         if args.command == "catalog":
@@ -350,7 +370,10 @@ def main(argv=None):
         elif args.command == "describe":
             print(_json(session.describe(args.tool)))
         else:
-            arguments = json.loads(args.arguments.read_text(encoding="utf-8-sig")) if args.arguments else {}
+            if args.arguments and str(args.arguments).lstrip().startswith(("{", "[")):
+                parser.error("--arguments expects a file path; use --arguments-json for inline JSON")
+            arguments = (json.loads(args.arguments_json) if args.arguments_json is not None else
+                         json.loads(args.arguments.read_text(encoding="utf-8-sig")) if args.arguments else {})
             if not isinstance(arguments, dict):
                 raise ValueError("arguments must be a JSON object")
             result = session.call(args.tool, **arguments)
