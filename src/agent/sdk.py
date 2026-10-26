@@ -20,81 +20,11 @@ import time
 from typing import Any
 import uuid
 
+from src.agent.sdk_presentation import _display_data
+
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-
-
-def _receipt_pointer(pointer):
-    return {"full_receipt_pointer": "/result/structuredContent" + pointer}
-
-
-def _display_domain_details(value, pointer=""):
-    """Fold known audit bookkeeping, never rejection or diagnostic evidence.
-
-    The normal domain tool has already chosen its checks and projections. This
-    only reduces the printed representation; it does not read or write reports.
-    """
-    if isinstance(value, list):
-        return [_display_domain_details(row, f"{pointer}/{i}") for i, row in enumerate(value)]
-    if not isinstance(value, dict):
-        return value
-    result = {}
-    for key, item in value.items():
-        at = pointer + "/" + key.replace("~", "~0").replace("/", "~1")
-        if (value.get("schema_version") == "architectural_regularization_v1"
-                and key in {"changes", "attempted_changes"} and isinstance(item, list) and item):
-            result[key] = {"count": len(item), **_receipt_pointer(at)}
-        elif key in {"rejections", "diagnostics", "warnings", "errors", "error_details", "blockers"}:
-            # Keep all decisive locations, worst vertices, supports and limits,
-            # including the last finding; there is no output character budget.
-            result[key] = item
-        elif key == "read" and isinstance(item, dict) and set(item) == {"tool", "arguments"} and item.get("tool") == "read_candidate_items" and (
-                item.get("arguments") == {"candidate": "", "collection": "report",
-                    "report_file": value.get("report_file"), "json_pointer": value.get("json_pointer")}
-                and {"report_file", "report_sha256", "json_pointer"} <= value.keys()):
-            # Exact redundant reader instructions; retain the path/hash/pointer.
-            continue
-        else:
-            result[key] = _display_domain_details(item, at)
-    return result
-
-
-def _display_inputs(data, run):
-    """Keep input navigation and scope; move copied declarations to their file."""
-    result = copy.deepcopy(data)
-    implementation = result.get("implementation_sha256")
-    if isinstance(implementation, dict):
-        result["implementation_sha256"] = {
-            "file_count": len(implementation), **_receipt_pointer("/implementation_sha256")}
-    images = result.get("images", {})
-    for name, metadata in (images.items() if isinstance(images, dict) else ()):
-        if isinstance(metadata, dict):
-            metadata["path"] = str(run / "images" / name)
-    for key in ("mesh_input", "building_input", "plan_recovery"):
-        item = result.get(key)
-        if isinstance(item, dict) and isinstance(item.get("frozen_path"), str):
-            item["read_path"] = str(run / item["frozen_path"])
-    building = result.get("building_input")
-    if isinstance(building, dict) and isinstance(building.get("frozen_path"), str) and "declaration" in building:
-        building["declaration"] = {"read_path": building["read_path"],
-            **_receipt_pointer("/building_input/declaration")}
-    return result
-
-
-def _display_data(data, tool_name, receipt_file):
-    if not isinstance(data, dict):
-        return copy.deepcopy(data)
-    if tool_name == "inputs":
-        return _display_inputs(data, Path(receipt_file).parent.parent.parent)
-    from scripts.tool_scripts.bim_agent_replies import COMPACT_TOOLS
-
-    if tool_name not in COMPACT_TOOLS:
-        return copy.deepcopy(data)
-    # These tools already apply the domain projection before the SDK sees them.
-    # Reapplying it to bounded objects would erase their different schema. Keep
-    # that projection, with only the known audit/reader presentation folded.
-    return _display_domain_details(copy.deepcopy(data))
 
 
 def edge_segment(p1, p2, *, offset: float, width: float) -> dict:
@@ -156,7 +86,7 @@ class ToolReply:
                         "硬执行剩余额度（本运行；任务目标可能更短，以任务为准）：", 1)
                     if line.startswith("保守剩余（本运行）：") else line
                     for line in text.split("\n")))
-        return {"data": _display_data(self.data, self.tool_name, self.receipt_file),
+        return {"data": _display_data(self.data, self.tool_name, self.receipt_file, is_error=self.is_error),
                 "texts": texts, "images": copy.deepcopy(self.images), "is_error": self.is_error,
                 "receipt_file": self.receipt_file}
 
