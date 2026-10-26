@@ -83,4 +83,25 @@
 - **两条线的共用与分开**：共用源 BIM、kernel、查看器和自研 runtime；roles、methods（文字）和部分 tools 分开。
 - **桌面发布版**：release-manifest 为 runtime-v24-20261017 / domain-v110-20261018（`b72ea6c7`），只含图纸线和基础 GLB 接收，不含 10-19 以后的 mesh 方法、工具和 SDK。开发主库为 runtime43/domain153。
 
-本轮只整理文档；没有产品代码改动、模型调用、新实验或桌面发布。
+## 7 线路与通用 harness 连通检查
+
+用户随后确认当前聚焦 mesh 线（最终仍是统一的 Agent 产品），并要求检查可作 work model 的线路和已安装的通用 harness。本节只做连通性检查，没有建模运行。共发出 9 次极小模型请求：3 次计 DeepSeek API（用户本次明确要求检查），其余计订阅或 Paratera、Go 的小额用量。
+
+| 项目 | 结论 | 依据 |
+|---|---|---|
+| Codex CLI（Codex 应用自带 0.164.0-alpha.11.1，即近期基准所用的 codex.exe） | 可用 | ChatGPT 登录；`codex doctor` 的认证、websocket 与可达性检查通过；gpt-6.1-sol 与 gpt-6-luna 各一次极小任务，约 11 秒返回 |
+| Sim BIM Agent 自身的订阅授权（OAuth 应用 `oaiapp_…`） | 可用 | `auth status` 显示已登录；订阅目录 7 个模型（gpt-6.1-sol、gpt-6-astra、gpt-6-sol、gpt-6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna）；`smoke_chatgpt_runtime.py --live` 2 次请求通过，计订阅，无付费回退 |
+| DeepSeek API | 可用 | 目录 200（deepseek-flash、deepseek-v4-pro）；deepseek-flash 极小请求 200 |
+| Paratera API | 可用 | 目录 200（82 个模型）；GLM-5.3-Flash 极小请求 200 |
+| OpenCode Go | 可用 | 目录 200（38 个模型）；glm-5.3-flash 请求 200，计 Go 额度。32 token 上限全部用于思考、没有正文，是探针设置所致 |
+| DeepSeek Harness（dsh 0.2.1-rc.2，桌面 44.7.0，`D:\Program_AI\deepseek harness`） | 可用，需在启动环境提供密钥 | `dsh --profile headless` 读不到桌面应用保存的密钥（MISSING_CREDENTIAL）；启动时导出 `DEEPSEEK_API_KEY` 后极小任务成功，默认模型 deepseek-flash |
+| OpenCode CLI 1.18.32 | 部分可用 | 经 DeepSeek API 的极小任务成功，单轮约 4.06 万输入 token；授权里只有 Xiaomi 与 DeepSeek，没有 Go 订阅；`opencode models opencode-go` 仍报 `no such column: project_id` |
+| Claude 会话内的 codex MCP | 不可用 | 配置调用 `codex mcp-server`，两个 codex 版本都已没有这个子命令；跑测试不依赖它 |
+
+对后续对照的影响：
+
+- GPT 系列可以在同一个 Codex runtime 下比较强弱模型（6.1 Sol 对 6-Luna），两组都走订阅。
+- dsh 会读取当前目录的 `.env`。在主库根目录启动会触及其中全部密钥，本次只是因为 `DEEPSEEK_BASE_URL` 被拒才停下。实验工作区不能放 `.env`，密钥只经启动环境传入。
+- 要用 OpenCode 跑 Go 模型，需要先由用户添加 Go 凭据，并处理上述本地库错误。
+
+本轮只整理文档和做连通性检查；没有产品代码改动、建模运行、新实验或桌面发布。
