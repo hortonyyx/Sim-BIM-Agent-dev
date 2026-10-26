@@ -104,6 +104,21 @@ def test_finish_to_requires_real_complete_handoff_and_preserves_bytes(tmp_path, 
         assert (run / "delivery.json").read_bytes() == saved
         finish = session.call("finish_bim", candidate=candidate)
         assert attest_finished_handoff(run, finish.data, candidate)
+        native_delivery = (run / "delivery.json").read_bytes()
+        write_bytes = Path.write_bytes
+        def fail_staged_copy(path, raw):
+            if any(part.startswith(".failed-copy-") for part in path.parts):
+                raise OSError("synthetic publication storage failure")
+            return write_bytes(path, raw)
+        with monkeypatch.context() as scope:
+            scope.setattr(Path, "write_bytes", fail_staged_copy)
+            with pytest.raises(OSError, match="synthetic publication storage failure") as caught:
+                publish_finished(run, candidate, finish, tmp_path / "failed-copy")
+        assert not (tmp_path / "failed-copy").exists()
+        assert len(list(tmp_path.glob(".failed-copy-*"))) == 1
+        assert finish.receipt_file in " ".join(caught.value.__notes__)
+        assert (run / "delivery.json").read_bytes() == native_delivery
+        assert attest_finished_handoff(run, finish.data, candidate)
         source_path = run / candidate / "source_model.json"
         source_path.write_bytes(source_path.read_bytes() + b" ")
         assert attest_finished_handoff(run, finish.data, candidate) is None

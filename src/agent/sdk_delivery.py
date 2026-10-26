@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
-import tempfile
+import uuid
 
 
 def _sha(raw):
@@ -67,8 +68,13 @@ def publish_finished(run: Path, candidate: str, reply, output_directory) -> dict
         "architectural_quality": "model_review_only; independent acceptance not implied",
     }
     target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{target.name}-", dir=target.parent) as temporary:
-        staging = Path(temporary)
+    staging = target.parent / f".{target.name}-{uuid.uuid4().hex}"
+    try:
+        # Windows restricted tokens need the workspace's inherited ACL. Python's
+        # mode-0700 tempfile directory excludes that token from its own child
+        # writes. Keep ordinary inherited permissions on Windows; private mode
+        # on POSIX. This changes no sandbox policy or existing directory ACL.
+        staging.mkdir(mode=0o777 if os.name == "nt" else 0o700)
         for name, raw in files.items():
             path = staging / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +87,14 @@ def publish_finished(run: Path, candidate: str, reply, output_directory) -> dict
         if target.exists():
             raise FileExistsError(f"public output appeared during publication: {target}")
         staging.rename(target)
+    except BaseException as error:
+        # Do not mask a copy failure with cleanup failure, or rerun native finish.
+        # A partial private staging folder is evidence, never a public delivery.
+        error.add_note(f"Native finish remains at {run}; finish receipt: {reply.receipt_file}; "
+                       f"publication target: {target}; staging (possibly partial): {staging}. "
+                       "Publication outcome may be partial or unknown; inspect target and staging "
+                       "before retrying. Do not rerun native finish merely to copy its artifacts.")
+        raise
     return {"output_directory": str(target), "source_model": str(target / "source_model.json"),
             "viewer": str(target / "delivery.html"), "publication_file": str(target / "publication.json"),
             "candidate": candidate, "source_model_sha256": attested["source_model_sha256"]}
