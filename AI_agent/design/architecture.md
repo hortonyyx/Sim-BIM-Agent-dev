@@ -88,6 +88,8 @@ Mesh回叠默认按源几何朝向/遮挡显示，可按真实source boundary ID
 
 用户入口为 `sim_bim.py` / `Start.cmd` → `product_cli` → `runtime_configuration` → 单模型或分工入口。当前模型实际接收的 guidance 由 domain 模块生成，源码导航见 [domain 入口](../../src/agent/README.md)。
 
+2026-10-26 同步：当前有两条输入线和一个开发对照入口。图纸线为分工模式（调度员、平面/立面读图员），迭代至约 domain113 后暂缓；textured mesh 线为单模型加可选同模型只读 worker，10-19 起迭代至 domain146。两条线共用源 BIM、kernel、查看器与自研 runtime，roles、methods（文字）和部分 tools 分开。domain147 起的薄 Python SDK（`src/agent/sdk.py`）让 Codex runtime 等通用 runtime 直接调用同一 domain，目前用于开发对照，未进入产品入口。桌面发布版为 runtime24/domain110，只含图纸线和基础 GLB 接收，不含 10-19 以后的 mesh 方法、工具和 SDK。
+
 旧 EnergyPlus intake 顺序管线与阶段资源集中到 [legacy](../../src/agent/legacy/README.md)，不作为顶层 skills 或当前 BIM Agent 的步骤说明。历史 stage ID、产物目录与字段保留原含义；共享的几何、校验和下游适配按能力保留，不因历史命名批量删除。继承与新增关系见 [domain 沿革](domain_lineage.md)。
 
 ## 程序与数据

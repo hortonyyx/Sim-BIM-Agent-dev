@@ -1,5 +1,11 @@
 # 当前任务
 
+## 2026-10-26 价值口径与对照基线讨论
+
+- 用户澄清：Agent＝model＋harness，当前只改 harness。更快、更好分别按同 model、同配置衡量，“至少快一半”不是硬门槛；更省主要指提高 work model 中弱模型承担的比重，不设硬门槛，token 不做通用比较。街区仿真接线另行完成，本线目标是合理的源 BIM。
+- 归因更正：以往通用组都拿到了 BIM rules（文字：输出合同），10-25 起还拿到 methods（文字：细度、停止、自检原则及时间目标），没有的是 kernel、tools（代码）和 roles。这些对照不能证明 harness 无用；强模型上 kernel、tools 的增益仍未体现。同为 6.1 Sol 的幸福中心，早期对照 24:38、10-25 A 9:51，是 methods（文字）提速的单样本线索，两次质量未按同一盲评对齐。
+- 暂定基线：通用 harness（Codex runtime）＋原始输入＋BIM rules（文字）＋中性任务描述，待用户最终确认。四项候选验证均未启动；指代约定已写入[术语](terminology.md)。完整记录见[讨论结论](../reports/2026-10-26_harness_value_axes_discussion.md)，实施状态仍以[当前交接](../reports/2026-10-26_minimal_delivery_path.md)为准。
+
 ## 2026-10-26 跨模型讨论背景与归因更正
 
 - 已整理 [当前问题与跨模型讨论背景](../reports/2026-10-26_harness_value_discussion_brief.md)，包含用户目标和细度原则、历史整案与最新局部结果、已做改动、明确缺陷、竞争性解释及待讨论实验。
