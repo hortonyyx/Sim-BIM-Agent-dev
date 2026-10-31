@@ -350,6 +350,29 @@ class RoleSession:
         structured = raw.get("structuredContent") if isinstance(raw, Mapping) else None
         if not isinstance(structured, Mapping):
             structured = raw if isinstance(raw, Mapping) else {}
+        if payload.outcome == "succeeded":
+            audit = structured.get("receipt_audit")
+            if (not isinstance(audit, Mapping) or audit.get("json_pointer") != ""
+                    or audit.get("receipt_file") != structured.get("receipt_file")
+                    or audit.get("hash_encoding") != "utf-8-json-sort_keys-compact-ensure_ascii_false"
+                    or not isinstance(audit.get("sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", audit["sha256"])
+                    or not isinstance(audit.get("receipt_file"), str)):
+                return {"status": "unavailable", "event_id": latest.event_id,
+                        "reason": "The passed trial has no valid complete receipt audit identity."}
+            from .trial import _inside
+            workspace = child.task_directory / "bim/trial_workspace"
+            receipt_path = _inside(workspace, audit["receipt_file"])
+            if not receipt_path.is_file():
+                raise ValueError("event-bound trial receipt is missing")
+            complete = json.loads(receipt_path.read_bytes())
+            if (not isinstance(complete, dict)
+                    or hashlib.sha256(json_bytes(complete)).hexdigest() != audit["sha256"]):
+                raise ValueError("event-bound trial full receipt hash mismatch")
+            for key in ("receipt_file", "status", "plan_sha256", "trial_id", "reading_geometry_ready"):
+                if key in structured and structured[key] != complete.get(key):
+                    raise ValueError(f"trial receipt projection differs from its full receipt: {key}")
+            structured = {**complete, "receipt_audit": audit}
         required = ("receipt_file", "plan_sha256")
         draft_status = "passed" if payload.outcome == "succeeded" else "failed"
         if draft_status == "passed":

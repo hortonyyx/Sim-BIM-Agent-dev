@@ -172,7 +172,6 @@ def dependency_project(sources, profile, imports):
              'description = "Sim-BIM Agent: drawings and textured mesh to structured BIM"',
              'readme = "README.md"', "requires-python = " + json.dumps(development["requires-python"]),
              "dependencies = [", *["    " + json.dumps(r) + "," for r in requirements], "]", "",
-             "[project.scripts]", 'sim-bim-agent = "src.agent.product_cli:main"', "",
              "[tool.uv]", "package = false", ""]
     return "\n".join(lines).encode("utf-8"), requirements
 

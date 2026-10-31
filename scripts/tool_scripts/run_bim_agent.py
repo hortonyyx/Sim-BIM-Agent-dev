@@ -1897,43 +1897,6 @@ class Toolkit:
                                              "review_interval_count": len(result["review_intervals"])})
         return [Image(data=data.getvalue(), format="png"), json.dumps(result)]
 
-    def profile(self, name, box, axis, rgb, tolerance):
-        import numpy as np
-        with PILImage.open(self.image_path(name)) as raw:
-            x0,y0,x1,y1 = box
-            if not (0 <= x0 < x1 <= raw.width and 0 <= y0 < y1 <= raw.height):
-                raise ValueError("box outside original image bounds")
-            pixels = np.asarray(raw.convert("RGB").crop(box)).astype(float)
-        if len(rgb) != 3 or not all(0 <= c <= 255 for c in rgb) or not 0 <= tolerance <= 442:
-            raise ValueError("RGB in 0..255 and distance tolerance in 0..442 required")
-        mask = np.linalg.norm(pixels - np.asarray(rgb), axis=2) <= tolerance
-        if axis not in {"x", "y"}:
-            raise ValueError("axis must be x or y")
-        counts = mask.sum(axis=0 if axis == "x" else 1)
-        offset = x0 if axis == "x" else y0
-        # Return runs of positive support plus maxima, without naming objects.
-        runs = _profile_positive_runs(counts, offset)
-        result = {"axis": axis, "runs": runs, "matching_pixels": int(mask.sum()),
-                  "name": name, "box_original_pixels": list(box),
-                  "support_length": mask.shape[0] if axis == "x" else mask.shape[1],
-                  "coordinate_system": "original image pixels; interval endpoints inclusive",
-                  "evidence_note": "pixels spans any positive color support, including connected "
-                      "lines, text and arrow tips; its ends are not measured dimension or object endpoints. "
-                      "peak is only the FIRST global maximum in the run. support_peaks lists every "
-                      "positive local maximum plateau with its count, including weaker peaks, in "
-                      "original coordinates; no smoothing, threshold or endpoint selection is applied. "
-                      "A plateau is higher than both adjacent counts (zero outside the run). "
-                      "Peaks can include noise and do not identify ticks, walls or openings. Inspect "
-                      "the original crop or use view_pixel_profile with the same input image name and "
-                      "a chosen min_fraction before adopting coordinates."}
-        diagnostic = _empty_profile_diagnostics(
-            pixels, rgb, counts, 1, mask.shape[0] if axis == "x" else mask.shape[1])
-        if diagnostic is not None:
-            result["empty_filter_diagnostics"] = diagnostic
-        self.log("pixel_profile", {"name": name, "box": box, "rgb": rgb,
-                                   "tolerance": tolerance, "result": result})
-        return result
-
     def view_profile(self, name, box, axis, rgb, tolerance, min_fraction):
         """Return a checkable profile table and image without assigning semantics."""
         import numpy as np
@@ -2147,12 +2110,6 @@ def build_tool_server(run: Path, readonly=False):
                 raise ValueError("claim_id selects the saved image/box; omit name and box")
             return toolkit.view_claim_evidence(claim_id, source_index, display_scale)
         return toolkit.view(name, box, coordinate_grid, display_scale)
-
-    @server.tool()
-    def pixel_profile(name: ImageFilename, box: list[int], axis: Literal["x", "y"],
-                      rgb: list[int], tolerance: float = 70) -> dict:
-        """Historical replay only; use view_pixel_profile, optionally include_image=false."""
-        return toolkit.profile(name, box, axis, rgb, tolerance)
 
     @server.tool()
     def view_pixel_profile(name: ImageFilename, box: list[int], axis: Literal["x", "y"],
