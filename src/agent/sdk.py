@@ -112,7 +112,7 @@ class BimSession:
 
         self._runner = asyncio.Runner()
         self._closed = False
-        self._server = build_tool_server(self.run, readonly=readonly, enabled_only=True)
+        self._server = build_tool_server(self.run, readonly=readonly)
         self._tools = None
         self._receipts = self.run / "sdk" / "receipts"
         self._images = self.run / "sdk" / "images"
@@ -146,8 +146,7 @@ class BimSession:
         self._ensure_open()
         if self._tools is None:
             self._tools = {tool.name: tool.model_dump(mode="json", exclude_none=True)
-                           for tool in self._runner.run(self._server.list_tools())
-                           if tool.name != "review_detail"}
+                           for tool in self._runner.run(self._server.list_tools())}
         return self._tools
 
     def catalog(self):

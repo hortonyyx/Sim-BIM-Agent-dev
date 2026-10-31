@@ -10,16 +10,11 @@
     "src.agent_runtime.openai_subscription",
     "scripts.tool_scripts.run_bim_agent"
   ],
-  "facades": {
-    "src/agent/__init__.py": "scripts/release/templates/product_package_init.py",
-    "src/agent/execution/__init__.py": "scripts/release/templates/product_package_init.py",
-    "src/validator/__init__.py": "scripts/release/templates/product_package_init.py"
-  },
   "resources": [
     "src/agent/data/room_types.json",
     "src/agent_runtime/model_profiles.json",
     "src/agent_runtime/route_dispatch.json",
-    "src/configs/correction.yaml",
+    "src/configs/geometry.yaml",
     "scripts/tool_scripts/vendor/three.min.js",
     "scripts/tool_scripts/vendor/OrbitControls.js",
     "scripts/tool_scripts/vendor/README.md"
@@ -29,19 +24,23 @@
     "sim_bim.py"
   ],
   "product_files": [
-    "README.md", "Start.cmd", "setup.ps1", ".gitignore", ".gitattributes",
-    "config.example.json", "config.mesh.example.json",
-    "config.opencode-go.example.json", "config.opencode-go-haiku.example.json"
+    "README.md",
+    "Start.cmd",
+    "setup.ps1",
+    ".gitignore",
+    ".gitattributes",
+    "config.example.json",
+    "config.mesh.example.json",
+    "config.opencode-go.example.json"
   ],
   "forbidden_prefixes": [
-    "src/agent/legacy/", "src/agent/judge/", "src/agent/nodes/",
-    "src/agent/tools/", "src/rag/", "src/mcp/", "src/converters/",
-    "src/database/", "src/runner/", "data/"
+    "scripts/dev/",
+    "tests/",
+    "AI_agent/",
+    "data/"
   ],
   "forbidden_files": [
-    "src/agent/state.py", "src/agent/llm.py", "src/agent/react.py",
-    "src/agent/runner.py", "src/agent/sdk.py", "src/validator/data_model.py",
-    "scripts/tool_scripts/run_stage.py"
+    "src/agent/sdk.py"
   ],
   "import_distributions": {
     "PIL": "pillow",

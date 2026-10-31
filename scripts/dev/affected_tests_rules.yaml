@@ -1,0 +1,12 @@
+# Changes to selection, shared configuration or dependencies require the broader check scope.
+# An unrecognised or uncovered module also falls back; no retired paths are exempted.
+full_scope:
+  - pyproject.toml
+  - uv.lock
+  - conftest.py
+  - "**/conftest.py"
+  - "src/configs/**"
+  - scripts/dev/affected_tests.py
+  - scripts/dev/affected_tests_rules.yaml
+  - tests/check_groups.json
+uncovered_allowlist: {}

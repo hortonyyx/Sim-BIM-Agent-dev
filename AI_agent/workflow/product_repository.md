@@ -16,7 +16,6 @@
 
 开发远端为 [Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，仓库 ID `1216622598`；成品远端为 [Sim-BIM-Agent](https://github.com/hortonyyx/Sim-BIM-Agent)，仓库 ID `1440941560`。首次设置或更换 remote 时核对仓库身份，不能混用两个 origin。旧开发 URL 已由成品接管，不能再用于定位开发历史。
 
-旧 `D:/Sim-BIM-Agent/product-repo` 只在确认工作树干净、远端已同步、没有未跟踪或忽略文件后迁入 `cache/product-publish/repository`，不保留第二个发布检出，不顺带删除历史安装或缓存。本次流程整理只将桌面对齐已公开的 `release-2026-10-31.3`，不因开发发布工具变化另发 `.4`。
 
 ## 日常操作
 
@@ -41,9 +40,9 @@ python scripts/release/desktop_release.py publish --tag "<release-id>" --notes-f
 
 ## 发布内容与字节一致性
 
-成品由当前入口、真实工具和必要资源的运行闭包生成。旧 GT/独立评测、历史编排、RAG、EnergyPlus 服务/转换/运行以及 IDD/天气数据不进入包；开发库保留历史代码与完整版本记录。案例、答案、实验记录、开发报告、tests、凭据和用户运行产物也不进入成品。
+成品由当前入口、真实工具和必要资源的运行闭包生成。旧 GT/独立评测、历史编排、RAG、EnergyPlus 服务/转换/运行以及 IDD/天气数据不进入包；退出的代码和版本通过 Git 历史追溯。案例、答案、实验记录、开发报告、tests、凭据和用户运行产物也不进入成品。
 
-构建从固定 Git 提交读取文件；普通源码保持提交字节，Windows `.cmd`、`.bat`、`.ps1` 显式输出 CRLF。包入口 facade、产品依赖文件和当前版本登记由同一提交中的声明规则生成，manifest 的 `projection.file_origins` 记录每个文件的来源和转换。成品 `.gitattributes` 使用 `* -text` 保留已验收字节；Git 完整跟踪集合必须等于 manifest 文件集合加 `release-manifest.json`。发布用户说明来源于 `product/README.md`，无需在成品目录手工维护副本。
+构建从固定 Git 提交读取文件；普通源码保持提交字节，Windows `.cmd`、`.bat`、`.ps1` 显式输出 CRLF。产品依赖文件和当前版本登记由同一提交中的声明规则生成，manifest 的 `projection.file_origins` 记录每个文件的来源和转换。成品 `.gitattributes` 使用 `* -text` 保留已验收字节；Git 完整跟踪集合必须等于 manifest 文件集合加 `release-manifest.json`。发布用户说明来源于 `product/README.md`，无需在成品目录手工维护副本。
 
 `scripts/release/product_profile.json` 定义入口、动态资源、禁入子系统及依赖映射；`product_projection.py` 计算运行闭包，未声明的动态导入或禁入子系统会阻止构建。依赖范围变化时先运行 `python scripts/release/prepare_product_dependencies.py D:/Sim-BIM-Agent/cache/<new-dependency-stage>`，审阅生成的锁与元数据再提交。生成器复用开发锁版本，不能静默升级共同包。
 

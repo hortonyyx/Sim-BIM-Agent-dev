@@ -99,7 +99,7 @@ def _strings(value: object, *, path: str, require_one: bool = False) -> list[str
 
 def _seed_role(item: dict, *, seed_id: str) -> tuple[str, dict | None]:
     """Validate optional use evidence without inferring it from a bare label."""
-    from src.agent.correction.schema import RoomRoleEvidence
+    from src.agent.geometry_model.schema import RoomRoleEvidence
     from src.agent.roles import require_role
 
     evidence = (RoomRoleEvidence.model_validate(item["role_evidence"]).model_dump(mode="json")
@@ -224,7 +224,7 @@ def compile_plan_partition(
 
     ``reading_type='plan'`` marks a 2D reading, where floor and opening heights
     may be absent. Known heights are still validated, and absent heights stay
-    absent in the result. Unmarked legacy plans must supply all heights and
+    absent in the result. Unmarked complete plans must supply all heights and
     continue to produce an executable geometry-v2 proposal.
 
     Input linework must already meet exactly.  Exact orthogonal intersections

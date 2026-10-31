@@ -35,15 +35,10 @@ coverage.xml
 /output/
 /.worktrees/
 /_dev/
-/data/database/
-/data/examples/
-/qdrant_storage/
 *.log
 *.tmp
 *.bak
 .isolation_merge.lock
-eplusout.*
-eplustbl.*
 
 # Host-generated metadata
 .DS_Store
@@ -51,6 +46,6 @@ eplustbl.*
 Thumbs.db
 Desktop.ini
 
-# Frozen pre-slim evidence remains locally on D, outside the current Git tree.
+# Local research records stay outside the current source tree.
 /AI_agent/logs/
 /AI_agent/archive/

@@ -17,7 +17,7 @@ def render_regularization_html(source: dict, audit: dict | None = None) -> str:
     if not reports:
         return ""
     names = public_names_for_display(source)
-    references = public_reference_map(source, names)
+    references = public_reference_map(names)
     spaces = {row["id"]: row for row in source.get("spaces", [])}
 
     def escaped(value):
@@ -138,7 +138,7 @@ def render_delivery_html(result: dict, source: dict) -> str:
     selection_origin = result["selection_origin"]
     current_claims = result["current_claim_state"]
     names = public_names_for_display(source)
-    references = public_reference_map(source, names)
+    references = public_reference_map(names)
 
     def text_html(value):
         return html.escape(public_reference_text(value, references))

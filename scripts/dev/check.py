@@ -1,13 +1,4 @@
-"""Offline checks: fast by default, selected current checks, or explicit archives.
-
-Examples:
-  python scripts/dev/check.py
-  python scripts/dev/check.py targeted tests/test_role_configuration.py
-  python scripts/dev/check.py targeted --changed src/agent_runtime/budget.py
-  python scripts/dev/check.py node
-  python scripts/dev/check.py historical --archive-root D:/Sim-BIM-Agent/repo --cases-root D:/Sim-BIM-Agent/repo/case_tests
-"""
-
+"""Run offline checks for the current product and its development interfaces."""
 from __future__ import annotations
 
 import argparse
@@ -17,12 +8,9 @@ import subprocess
 import sys
 import uuid
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-
 from tests.check_selection import files_for, inventory, unclassified
-
 
 def select(scope, paths, changed):
     if paths:
@@ -33,58 +21,46 @@ def select(scope, paths, changed):
             relative = absolute.resolve().relative_to(ROOT).as_posix()
             if not absolute.is_file() or not relative.startswith("tests/test_"):
                 raise ValueError(f"select a test module explicitly: {value}")
-            entry = inventory().get(relative)
-            if entry is None:
-                print(f"Unclassified new test selected explicitly: {relative}; classify before default checks", file=sys.stderr)
-            elif (entry["group"] == "historical") != (scope == "historical"):
-                raise ValueError(f"scope {scope} cannot select {entry['group']} check {relative}")
+            if relative not in inventory():
+                raise ValueError(f"classify the test module first: {relative}")
             selected.append(relative + ("::" + value.split("::", 1)[1] if "::" in value else ""))
         return sorted(set(selected))
     missing = unclassified()
     if missing:
         raise ValueError("unclassified tests: " + ", ".join(missing))
     if changed:
-        from scripts.tool_scripts.affected_tests import affected_tests
+        from scripts.dev.affected_tests import affected_tests
         result = affected_tests(changed)
         if result.scope == "SUBSET":
-            selected = [p for p in result.tests if inventory()[p]["group"] != "historical"]
+            selected = [p for p in result.tests if p in inventory()]
             if selected:
                 return selected
-        print("Affected mapping is incomplete; falling back to current node checks, without claiming "
-              "coverage of unmapped interfaces or historical evidence: " + "; ".join(result.reasons), file=sys.stderr)
+        print("Affected mapping is incomplete; selecting node checks: " + "; ".join(result.reasons),
+              file=sys.stderr)
         return files_for("node")
     if scope == "targeted":
         raise ValueError("targeted checks require explicit test files or --changed paths")
     return files_for(scope)
 
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scope", nargs="?", default="fast", choices=("fast", "targeted", "node", "historical"))
+    parser.add_argument("scope", nargs="?", default="fast", choices=("fast", "targeted", "node"))
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--changed", nargs="+")
-    parser.add_argument("--archive-root", type=Path)
-    parser.add_argument("--cases-root", type=Path)
-    parser.add_argument("--cache-root", type=Path, default=ROOT.parent / "cache/pytest/test-slim")
+    parser.add_argument("--cache-root", type=Path, default=Path("D:/Sim-BIM-Agent/cache/pytest"))
     parser.add_argument("--workers", type=int, choices=(0, 1, 2), default=0)
-    parser.add_argument("--list", action="store_true", help="show static selection without collecting or running tests")
+    parser.add_argument("--list", action="store_true", help="show the selection without running it")
     args = parser.parse_args(argv)
     try:
         if args.changed and args.paths:
             raise ValueError("choose explicit files or --changed, not both")
-        if args.scope == "historical":
-            for name, path in (("archive-root", args.archive_root), ("cases-root", args.cases_root)):
-                if path is None or not path.is_absolute() or not path.is_dir():
-                    raise ValueError(f"historical checks require an explicit existing absolute --{name}")
         if not args.cache_root.is_absolute():
             raise ValueError("--cache-root must be an absolute development cache directory")
         selected = select(args.scope, args.paths, args.changed)
     except (ValueError, KeyError) as exc:
         parser.error(str(exc))
-    print(f"{args.scope}: {len(selected)} modules; workers={args.workers}; offline egress gate retained", flush=True)
-    print("Actual scope: selected classified modules only; historical evidence excluded unless explicitly requested. "
-          "Fast checks exclude node and optional targeted modules; node excludes unrelated targeted modules. "
-          "This is not a full historical-suite result.", flush=True)
+    print(f"{args.scope}: {len(selected)} modules; workers={args.workers}; offline network guard active",
+          flush=True)
     if args.list:
         print("\n".join(selected))
         return 0
@@ -92,16 +68,11 @@ def main(argv=None):
     cache.mkdir(parents=True)
     env = {**os.environ, "SIM_BIM_TEST_SCOPE": args.scope, "PYTHONPATH": str(ROOT),
            "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "TEMP": str(cache), "TMP": str(cache)}
-    if args.scope == "historical":
-        env["SIM_BIM_TEST_ARCHIVE_ROOT"] = str(args.archive_root)
-        env["SIM_BIM_TEST_CASES_ROOT"] = str(args.cases_root)
-        env["PYTHONPATH"] += os.pathsep + str(args.archive_root)
     command = [sys.executable, "-X", "utf8", "-B", "-m", "pytest", "-n", str(args.workers),
-               "-p", "ep_no_billed_gate", "-p", "no:cacheprovider", "--basetemp", str(cache / "temp"),
+               "-p", "no_billed_gate", "-p", "no:cacheprovider", "--basetemp", str(cache / "temp"),
                "--junitxml", str(cache / "results.xml"), "-q", *selected]
     print("Evidence cache: " + str(cache), flush=True)
     return subprocess.run(command, cwd=ROOT, env=env).returncode
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

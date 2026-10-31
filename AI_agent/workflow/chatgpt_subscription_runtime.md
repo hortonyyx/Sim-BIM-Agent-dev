@@ -15,7 +15,7 @@ provider 名称固定为 `chatgpt-subscription`。这条通道不读取 `OPENAI_
 .venv/Scripts/python.exe -m src.agent_runtime.openai_subscription logout
 ```
 
-默认凭据目录是 `%LOCALAPPDATA%/EnergyPlus-Agent/openai-subscription`。需要隔离测试账号或运行目录时，`--directory` 必须放在子命令前：
+默认凭据目录是 `%LOCALAPPDATA%/Sim-BIM-Agent/openai-subscription`。需要隔离测试账号或运行目录时，`--directory` 必须放在子命令前：
 
 ```powershell
 .venv/Scripts/python.exe -m src.agent_runtime.openai_subscription --directory D:/private/energyplus-chatgpt login
@@ -101,7 +101,6 @@ SIWC 的 ChatGPT plan usage 仍是 preview 能力。能否授权取决于账号�
 
 顶层路由必须与 `roles.coordinator` 一致。纯 ChatGPT 角色组合不需要 `credentials_file`；混合其他 provider 时，其他 provider 仍按自己的凭据规则配置。启动时会逐个检查去重后的 ChatGPT 模型 slug 是否存在于当前账号目录。
 
-`external_coordinator_mcp` 模式当前不支持 `chatgpt-subscription`。该模式由外部 dev model 人工协调，不是“主调度员和 readers 都由自有 Runtime 执行”的原生订阅模式；要完全由本 Runtime 管理，选择 `single_model` 或 `role_division`。
 
 完整 case 仍须提供输入、输出目录、scope、上下文和调用／工具／时间／token 等预算，并先走配置 `check` 和现有整案批准门。这里的片段只说明订阅路由字段，不代替完整运行配置。
 

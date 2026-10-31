@@ -57,8 +57,7 @@ def continuation_parent(source):
         return None
     manifest = source.read_json("continuation_manifest.json")
     anchors = [source.resolve(event.payload.result_content) for event in source.events
-        if event.payload.event_type == "external_coordinator_mcp"
-        and event.payload.method == "continuation.import_context"]
+        if event.payload.event_type == "context_import"]
     if len(anchors) != 1:
         raise ValueError("continuation ancestry has no unique durable import")
     anchor = anchors[0]

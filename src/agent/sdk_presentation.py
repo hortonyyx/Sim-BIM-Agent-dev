@@ -51,7 +51,7 @@ def _display_inputs(data, run):
     for name, metadata in (images.items() if isinstance(images, dict) else ()):
         if isinstance(metadata, dict):
             metadata["path"] = str(run / "images" / name)
-    for key in ("mesh_input", "building_input", "plan_recovery"):
+    for key in ("mesh_input", "building_input"):
         item = result.get(key)
         if isinstance(item, dict) and isinstance(item.get("frozen_path"), str):
             item["read_path"] = str(run / item["frozen_path"])
@@ -178,7 +178,7 @@ _CONTEXT = {
         "Only this run's hash-bound direct original returns from view_image or paired elevation views are counted. Other image tools, workers and prior runs are outside this scope. A returned image is not proof of examination, complete coverage, correct interpretation or applied heights. Use supplied relevant elevations to check each floor's opening heights; do not transfer a typical height to an unexamined opening family.",
         "Returned views are not proof of inspection; other tools are outside this log."),
     "room_use_review/interpretation": (
-        "Counts cover structured role_evidence only, not semantic correctness. Legacy source_refs may contain other evidence. Unknown remains a fallback when no defensible listed use fits; it is not a preferred response to ambiguity. No-issue status does not establish that roles are correct.",
+        "Counts cover structured role_evidence only, not semantic correctness. Additional source_refs may contain other evidence. Unknown remains a fallback when no defensible listed use fits; it is not a preferred response to ambiguity. No-issue status does not establish that roles are correct.",
         "Structured evidence counts only; not role correctness."),
     "room_use_review/use_decision/meaning": (
         "Only explicit unknown roles or inconsistent role declarations identify a use question. Missing structured evidence alone does not identify wrong use or require an edit.",

@@ -70,11 +70,9 @@ TASK_SCHEMA = schema({
                       "seconds": {"type": "number", "exclusiveMinimum": 0}}),
 }, ("task_id", "role_id", "image", "target"))
 
-# Readers get these per-task allowances, capped by what remains of the run; tokens
-# stay under the run's own total. The coordinator no longer chooses them: in the
-# 10-06 sm24 debug run it guessed 100-120k tokens, while a plan reader alone used
-# ~0.9M and an elevation reader up to ~0.25M, so readers stopped after two or three
-# requests. Measured use: plan reader 19-30 requests, elevation reader up to 8.
+# Reader task allowances are capped by the remaining shared run budget.
+# Tokens remain governed by the root budget; the coordinator cannot allocate
+# an independent token pool to a reader.
 ROLE_TASK_BUDGET = {
     "plan_reader": {"model_calls": 40, "tool_calls": 120, "seconds": 3600},
     "elevation_reader": {"model_calls": 16, "tool_calls": 50, "seconds": 1800},
@@ -356,8 +354,7 @@ class RoleSession:
         draft_status = "passed" if payload.outcome == "succeeded" else "failed"
         if draft_status == "passed":
             required += ("compiled_numeric_plan_sha256", "candidate")
-            required += (("reading_product_file", "reading_product_sha256") if structured.get("reading_geometry_ready")
-                         else ("candidate_source_sha256",))
+            required += ("reading_product_file", "reading_product_sha256")
         if (structured.get("status") != draft_status
                 or (draft_status == "passed" and not geometry_ready(structured))
                 or any(not isinstance(structured.get(key), str) or not structured[key] for key in required)):
@@ -371,21 +368,14 @@ class RoleSession:
         receipt_hash = {}
         if draft_status == "passed":
             audit = structured.get("receipt_audit")
-            if audit is not None:
-                if (not isinstance(audit, Mapping) or audit.get("json_pointer") != ""
-                        or audit.get("receipt_file") != structured["receipt_file"]
-                        or audit.get("hash_encoding") != "utf-8-json-sort_keys-compact-ensure_ascii_false"
-                        or not isinstance(audit.get("sha256"), str)
-                        or not re.fullmatch(r"[0-9a-f]{64}", audit["sha256"])):
-                    return {"status": "unavailable", "event_id": latest.event_id,
-                            "reason": "The passed trial has no valid complete receipt audit identity."}
-                digest = audit["sha256"]
-            else:
-                # Legacy full captures can prove the entire receipt. A partial
-                # projection cannot match this digest and is rejected on load.
-                digest = hashlib.sha256(json.dumps(structured, ensure_ascii=False, sort_keys=True,
-                    separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
-            receipt_hash["expected_receipt_sha256"] = digest
+            if (not isinstance(audit, Mapping) or audit.get("json_pointer") != ""
+                    or audit.get("receipt_file") != structured["receipt_file"]
+                    or audit.get("hash_encoding") != "utf-8-json-sort_keys-compact-ensure_ascii_false"
+                    or not isinstance(audit.get("sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", audit["sha256"])):
+                return {"status": "unavailable", "event_id": latest.event_id,
+                        "reason": "The passed trial has no valid complete receipt audit identity."}
+            receipt_hash["expected_receipt_sha256"] = audit["sha256"]
         return {
             "status": "available", "draft_status": draft_status,
             "event_id": latest.event_id, "sequence": latest.sequence,
@@ -406,7 +396,7 @@ class RoleSession:
                     ("receipt_file", "plan_sha256", "compiled_numeric_plan_sha256")}
         if selection.get("draft_status", selection.get("status")) == "passed":
             identity.update({key: selection[key] for key in
-                             ("candidate", "candidate_source_sha256", "reading_product_file", "reading_product_sha256", "expected_receipt_sha256")
+                             ("candidate", "reading_product_file", "reading_product_sha256", "expected_receipt_sha256")
                              if key in selection})
             _, receipt = prior.verified_unsubmitted_draft(expected_image_sha256, **identity)
         else:
@@ -446,7 +436,7 @@ class RoleSession:
                     "plan_sha256": receipt["plan_sha256"],
                     "receipt_file": receipt["receipt_file"],
                     "compiled_numeric_plan_sha256": receipt.get("compiled_numeric_plan_sha256"),
-                    **({**{key: receipt[key] for key in ("candidate", "candidate_source_sha256", "reading_product_file", "reading_product_sha256") if key in receipt},
+                    **({**{key: receipt[key] for key in ("candidate", "reading_product_file", "reading_product_sha256") if key in receipt},
                         "expected_receipt_sha256": trial_event["expected_receipt_sha256"],
                         "topology_decisions_required": len(receipt.get("topology_issues", []))} if passed else {}),
                     "instruction": (
@@ -556,11 +546,6 @@ class RoleSession:
                     if report is not None:
                         result = self._with_assembly_review(result, report)
                 return result
-            if name == "apply_elevation_heights" and isinstance(arguments, dict):
-                # The former confirm flag carried nothing beyond match_id; GLM's
-                # Anthropic-compatible route sent it as the string "true" (10-06 sm24
-                # debug run2), so tolerate and drop it rather than block heights.
-                arguments = {key: value for key, value in arguments.items() if key != "confirm"}
             arguments = normalize_stringified_parameters(arguments, self.schemas[name])
             if name == "delegate_readers":
                 _validate_task_instructions(arguments.get("tasks"))
@@ -894,8 +879,7 @@ class RoleSession:
         return task
 
     def _with_plan_floors(self, tasks, *, add_missing=False):
-        """A facade target without floors names the plan floors (10-07 run4: a bare
-        "South" reader invented floor "GF", which no plan floor matched)."""
+        """Bind a facade target to the declared plan floors when floors are omitted."""
         from .submission import canonical_target
         tasks = [dict(task) if isinstance(task, dict) else task for task in tasks]
         auto_added = []
@@ -1084,16 +1068,10 @@ class RoleSession:
                     compiled_plan = prior.numeric_plan(prior_receipt)
                     if not isinstance(compiled_plan, dict):
                         raise ValueError("verified compiled rework plan is not a JSON object")
-                    compiled_delivery = previous["plan"] == compiled_plan
-                    if (not compiled_delivery
-                            and canonical_plan_sha256(previous["plan"]) != validation["plan_sha256"]):
+                    if previous["plan"] != compiled_plan:
                         raise ValueError("rework artifact differs from its successful trial")
                     trial.inherit_reference(prior, validation["plan_sha256"], task["rework_targets"])
-                    # Current deliveries contain the effective compiled plan
-                    # and continue from it. Legacy deliveries contain the
-                    # original declaration and retain their historical base.
-                    if compiled_delivery:
-                        trial.reference_plan = copy.deepcopy(compiled_plan)
+                    trial.reference_plan = copy.deepcopy(compiled_plan)
                 elif prior_record.get("status") == "failed":
                     editable = (task.get("previous_task_handoff") or {}).get("editable_draft")
                     if editable:
@@ -1105,7 +1083,7 @@ class RoleSession:
                                 "submission_accepted": False,
                                 "topology_decisions_required": len(recovered.get("topology_issues", [])),
                                 **{key: recovered[key] for key in
-                                   ("compiled_numeric_plan_sha256", "candidate", "candidate_source_sha256", "reading_product_file", "reading_product_sha256") if key in recovered},
+                                   ("compiled_numeric_plan_sha256", "candidate", "reading_product_file", "reading_product_sha256") if key in recovered},
                             })
                         else:
                             trial.inherit_failed_reference(
@@ -1226,27 +1204,27 @@ class RoleSession:
             raise ValueError("plan delivery has no successful trial receipt")
         plan = value["plan"]
         receipt = record["validation"]
-        if receipt.get("compiled_numeric_plan_file"):
-            from .trial import canonical_plan_sha256
-            workspace = self.registry.child(task_id).task_directory / "bim/trial_workspace"
-            path = (workspace / receipt["compiled_numeric_plan_file"]).resolve()
-            if not path.is_relative_to(workspace.resolve()) or not path.is_file():
-                raise ValueError("compiled reader plan is outside its trial or missing")
-            raw = path.read_bytes()
-            if hashlib.sha256(raw).hexdigest() != receipt["compiled_numeric_plan_sha256"]:
-                raise ValueError("compiled reader plan hash mismatch")
-            compiled = json.loads(raw)
-            if not isinstance(compiled, dict):
-                raise ValueError("compiled reader plan is not a JSON object")
-            if plan != compiled and canonical_plan_sha256(plan) != receipt["plan_sha256"]:
-                raise ValueError("trial receipt does not refer to this original or verified compiled plan")
-            plan = compiled
+        if not receipt.get("compiled_numeric_plan_file"):
+            raise ValueError("plan delivery requires its saved compiled reader plan")
+        workspace = self.registry.child(task_id).task_directory / "bim/trial_workspace"
+        path = (workspace / receipt["compiled_numeric_plan_file"]).resolve()
+        if not path.is_relative_to(workspace.resolve()) or not path.is_file():
+            raise ValueError("compiled reader plan is outside its trial or missing")
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != receipt["compiled_numeric_plan_sha256"]:
+            raise ValueError("compiled reader plan hash mismatch")
+        compiled = json.loads(raw)
+        if not isinstance(compiled, dict):
+            raise ValueError("compiled reader plan is not a JSON object")
+        if plan != compiled:
+            raise ValueError("plan delivery differs from its verified compiled reader plan")
+        plan = compiled
         from .levels import apply_levels, apply_resolved_levels
         if resolved_levels is None:
             plan, citations = apply_levels(self.registry, plan, **levels)
         else:
             if levels:
-                raise ValueError("choose resolved levels or explicit legacy overrides")
+                raise ValueError("choose resolved levels or explicit cited overrides")
             plan, citations = apply_resolved_levels(plan, resolved_levels), resolved_levels
             levels = {"resolved_levels": resolved_levels}
         materialization = []

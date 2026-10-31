@@ -9,7 +9,7 @@
 ```powershell
 .venv/Scripts/python.exe -m src.agent_runtime.control RUN_DIR status
 .venv/Scripts/python.exe -m src.agent_runtime.control RUN_DIR pause --task TASK_ID --id pause-001
-.venv/Scripts/python.exe -m src.agent_runtime.control RUN_DIR message --task TASK_ID --id correction-001 --text "本层外轮廓保留东北凹入，先复核该处。"
+.venv/Scripts/python.exe -m src.agent_runtime.control RUN_DIR message --task TASK_ID --id review-001 --text "本层外轮廓保留东北凹入，先复核该处。"
 .venv/Scripts/python.exe -m src.agent_runtime.control RUN_DIR resume --task TASK_ID --id resume-001
 ```
 

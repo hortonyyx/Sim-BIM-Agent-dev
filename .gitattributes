@@ -17,20 +17,13 @@
 Dockerfile text eol=lf
 .env.example text eol=lf
 
-# EnergyPlus 输入文件是文本，统一 LF
-*.idf    text eol=lf
-*.imf    text eol=lf
-*.epJSON text eol=lf
-*.epw    text eol=lf
-*.ddy    text eol=lf
-
 # Windows 专用脚本必须保留 CRLF，否则在 Windows 上可能解析异常
 *.bat    text eol=crlf
 *.cmd    text eol=crlf
 *.ps1    text eol=crlf
 
 # 二进制文件：不做换行符转换
-# CAD 源（gt 答案级数据，将来要算 sha256 指纹绑定）—— 必须保字节原样，禁 CRLF→LF 改写
+# 原始设计资料保留字节，避免换行转换改变文件身份。
 *.dxf    binary
 *.dwg    binary
 *.png    binary
@@ -39,7 +32,6 @@ Dockerfile text eol=lf
 *.gif    binary
 *.ico    binary
 *.pdf    binary
-*.eso    binary
 *.sql    binary
 *.so     binary
 *.zip    binary

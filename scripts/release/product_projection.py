@@ -1,7 +1,7 @@
 """Deterministic current-BIM payload and dependency projection.
 
-The profile names runtime entry points, dynamic resources and deliberate package
-facades. Python imports supply the remaining closure; forbidden subsystems fail
+The profile names runtime entry points and dynamic resources.
+Python imports supply the remaining closure; forbidden subsystems fail
 the build instead of silently widening the distributed product.
 """
 from __future__ import annotations
@@ -69,7 +69,6 @@ def project_sources(sources):
     profile = json.loads(sources[PROFILE])
     if profile.get("schema_version") != "sim-bim-product-profile.v1":
         raise ValueError("Unknown product profile")
-    facades = profile["facades"]
     modules = {module_name(p): p for p in sources
                if p.endswith(".py") and p.startswith(("src/", "scripts/"))}
     dynamic = ast.parse(sources["src/agent/bim_inputs.py"].decode("utf-8-sig"))
@@ -101,7 +100,7 @@ def project_sources(sources):
         path = modules[name]
         if path in profile["forbidden_files"] or path.startswith(tuple(profile["forbidden_prefixes"])):
             raise ValueError(f"Current BIM runtime imports an excluded subsystem: {path}")
-        tree = ast.parse(sources[facades.get(path, path)].decode("utf-8-sig"))
+        tree = ast.parse(sources[path].decode("utf-8-sig"))
         visitor = RuntimeImports()
         visitor.visit(tree)
         if visitor.unresolved_dynamic:
@@ -120,8 +119,6 @@ def project_sources(sources):
                     candidate = base + "." + alias.name
                     if candidate in modules:
                         enqueue(candidate)
-                    elif modules.get(base) in facades:
-                        raise ValueError(f"Product uses an excluded aggregate API: {base}.{alias.name}")
         for imported in visitor.dynamic:
             enqueue(imported, required=True)
         for size in range(1, len(name.split("."))):
@@ -139,12 +136,10 @@ def project_sources(sources):
             raise ValueError(f"Product mode {mode} points to an undistributed entrypoint: {module}")
     payload, origins = {}, {}
     for name in sorted(selected):
-        original = facades.get(name, name)
-        if original not in sources:
-            raise ValueError(f"Required product resource is unavailable: {original}")
-        payload[name] = sources[original]
-        origins[name] = {"source": original, "source_sha256": sha(sources[original]),
-                         "transform": "package_facade" if name in facades else "identity"}
+        if name not in sources:
+            raise ValueError(f"Required product resource is unavailable: {name}")
+        payload[name] = sources[name]
+        origins[name] = {"source": name, "source_sha256": sha(sources[name]), "transform": "identity"}
     for name in profile["product_files"]:
         original = "product/" + name
         data = sources[original]
@@ -199,12 +194,12 @@ def with_dependencies(sources, payload, origins, profile, imports):
 
 def register_projection(destination, *, sources, commit, profile):
     """Create new product identities; never rewrite a source registry record."""
-    from src.agent_runtime.agent_registry import discover_files, _fingerprints, product_version_id
+    from src.agent_runtime.agent_registry import discover_files, product_version_id
+    from scripts.dev.agent_versions import _fingerprints
 
     source_registry = json.loads(sources[REGISTRY])
     strategy_files = [PROFILE, "scripts/release/product_projection.py", "scripts/release/build_product.py",
-                      "scripts/release/prepare_product_dependencies.py", LOCK_METADATA,
-                      *sorted(set(profile["facades"].values()))]
+                      "scripts/release/prepare_product_dependencies.py", LOCK_METADATA]
     provenance = {"schema_version": "sim-bim-product-projection.v1", "source_commit": commit,
                   "source_runtime_version": source_registry["current_runtime_version"],
                   "source_domain_version": source_registry["current_domain_version"],

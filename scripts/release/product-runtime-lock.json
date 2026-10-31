@@ -1,14 +1,12 @@
 {
-  "development_lock_sha256": "966c62ae883ed8705081ea63dabd6a38dba33a1591f83f535890e1c6ae29e19e",
+  "development_lock_sha256": "f2529acff56c2c5c6bbe21d79e3c893d2dde3e24f44217dc8960812667a2cd61",
   "direct_dependencies": [
     "anyio==4.13.0",
     "httpcore==1.0.9",
     "httpx==0.28.1",
     "jsonschema==4.26.0",
-    "loguru==0.7.3",
     "mcp==1.27.0",
     "numpy==2.4.4",
-    "omegaconf==2.3.0",
     "pillow==12.2.0",
     "portalocker==3.2.0",
     "pydantic==2.13.3",
@@ -19,9 +17,9 @@
     "shapely==2.1.2",
     "trimesh==4.11.5"
   ],
-  "locked_package_count": 43,
-  "product_lock_sha256": "258a130a8c702ec20fff419f0f2b15b6a1ba1f7058b2f71af82e2dab35b86093",
-  "product_pyproject_sha256": "8cf6ce6920ef84c4c6c608985d5785496312663f6e10f4be8e785b4bb22bc98d",
-  "profile_sha256": "23798accbdf7fdbaa01a161299fbc2393c516307a88c57bc77ecece8b2112c85",
+  "locked_package_count": 39,
+  "product_lock_sha256": "ea94a91c9e1210bcf87ffdce76e99142aa947eb051aadd3f1c8377dca719abd2",
+  "product_pyproject_sha256": "c344ec51ef672c790e64df39b99c0d56d01a4f0550060b9ab6bc2d812f9e80ed",
+  "profile_sha256": "98fd2478b05d973cf49769957e098112ee177769fe8c96c516b2d0fee9212c0f",
   "schema_version": "sim-bim-product-dependencies.v1"
 }
