@@ -96,8 +96,7 @@ def build_source_viewer_html(display: dict, *, source_geometry_ready: bool,
     viewer = build_viewer_html(display, title=title, mesh_path=mesh_path)
     references = public_reference_map(public_names_for_display(display["source_model"]))
     banner = (
-        '<aside style="position:fixed;bottom:12px;left:12px;z-index:30;background:white;padding:10px;'
-        'max-width:55vw;max-height:45vh;overflow:auto">'
+        '<aside class="source-notes" aria-label="模型来源与说明">'
         f"<strong>{html.escape(title)}</strong><br>"
         "模型提交的几何方案；原图保真尚未核对，未经人工确认。"
         "<details><summary>假设</summary><ul>" + _html_list(assumptions, references) + "</ul></details>"
@@ -105,7 +104,7 @@ def build_source_viewer_html(display: dict, *, source_geometry_ready: bool,
         '<a href="report.json">质量与来源记录</a> · <a href="proposal.json">原始方案</a> · '
         '<a href="source_model.json">源模型</a></aside>'
     )
-    return viewer.replace("</body>", banner + "</body>")
+    return viewer.replace('<div id="rinfo">', '<div id="rinfo">' + banner, 1)
 
 
 def _require_vertical_continuity(source: dict, policy: str | None) -> None:

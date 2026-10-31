@@ -499,7 +499,7 @@ def build_source_bim(geom: GeometryInput, *, capability_profile="orthogonal_poly
                        "numerical_tolerance_m": EPS,
                        "scope": "source geometry, contacts and explicit opening hosts",
                        "not_evaluated": ["drawing partition fidelity and completeness", "unobserved openings",
-                                         "voids and false slabs", "thermal properties and solver acceptance"]},
+                                         "voids and false slabs"]},
     }
     if opening_segment_groups:
         payload['opening_segment_groups'] = opening_segment_groups
