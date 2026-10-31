@@ -238,10 +238,6 @@
       "group": "targeted",
       "reason": "Offline module checks selected when changing src.agent.execution.bim_claim_state, src.agent.execution.bim_height_coverage, src.agent.execution.source_proposal"
     },
-    "tests/test_bim_agent_bridge.py": {
-      "group": "targeted",
-      "reason": "Offline module checks selected when changing scripts.tool_scripts, scripts.tool_scripts.bim_agent_bridge"
-    },
     "tests/test_bim_agent_guidance.py": {
       "group": "targeted",
       "reason": "Offline module checks selected when changing scripts.tool_scripts, scripts.tool_scripts.bim_agent_guidance, scripts.tool_scripts.run_bim_agent"
@@ -272,7 +268,7 @@
     },
     "tests/test_bim_agent_utf8_json.py": {
       "group": "fast",
-      "reason": "Current offline contract: scripts.tool_scripts.bim_agent_budget, scripts.tool_scripts.bim_agent_continuation, scripts.tool_scripts.run_bim_agent"
+      "reason": "Explicit UTF-8 source geometry and native journal receipt IO under simulated Windows GBK defaults"
     },
     "tests/test_bim_candidate_budget.py": {
       "group": "targeted",

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from scripts.tool_scripts.bim_agent_continuation import _read, _write
+from src.agent_runtime.continuation import ReadOnlyRun
+from src.agent_runtime.loop import RunLimits
+from src.agent_runtime.store import EventStore
+from src.harness_contracts import RunLifecyclePayload
 from scripts.tool_scripts.bim_agent_budget import saved_floor_status
 from scripts.tool_scripts.run_bim_agent import Toolkit
 from tests.test_bim_agent_plan_partition import example
@@ -60,9 +63,16 @@ def test_build_and_reread_source_with_nonascii_standard_under_gbk(tmp_path, gbk_
     assert toolkit.input_view_status()["images"]
 
 
-def test_continuation_receipt_roundtrip_preserves_utf8_bytes_under_gbk(tmp_path, gbk_defaults):
+def test_native_receipt_roundtrip_preserves_utf8_bytes_under_gbk(tmp_path, gbk_defaults):
     path = tmp_path / "receipt.json"
     value = {"standard": STANDARD, "label": "源模型"}
-    _write(path, value)
+    with EventStore(tmp_path, run_id="utf8", task_id="main",
+                    budget_limit=RunLimits(model_calls=1, tool_calls=1, seconds=10, tokens=1000).ledger_limit()) as store:
+        store.append(RunLifecyclePayload(action="start", reason="offline UTF-8 fixture"))
+        store.write_json("receipt.json", value)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert json.loads(path.read_bytes().decode("utf-8")) == value
-    assert _read(path) == value
+    source = ReadOnlyRun(tmp_path)
+    assert source.read_json("receipt.json") == value
+    assert source.verify_unchanged()
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
