@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v46-20261101",
-  "current_domain_version": "domain-v167-20261101",
+  "current_domain_version": "domain-v168-20261101",
   "runtime_versions": {
     "runtime-v46-20261101": {
       "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v167-20261101": {
-      "source_commit": "2208cb4e2c899bbfc8086f32dd7786c3437e56a2",
+    "domain-v168-20261101": {
+      "source_commit": "c88e6596b7e352a4a369c7ebbf52fe713148e64b",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -245,7 +245,7 @@
         },
         "scripts/tool_scripts/bim_agent_delivery_display.py": {
           "kind": "tool",
-          "sha256": "07e65325d0cb75d891ce1f13c1c69562625aeb9d2dc69d9d6e25875a19c3f08c"
+          "sha256": "4ddd17399db6dedd9095097e47ff0ea60e8c734d70800d0160e6c08139018e38"
         },
         "scripts/tool_scripts/bim_agent_drawing_readings.py": {
           "kind": "tool",
