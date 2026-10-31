@@ -20,11 +20,11 @@
     "-m",
     "src.agent.version_fingerprints"
   ],
-  "current_runtime_version": "runtime-v45-20261101",
-  "current_domain_version": "domain-v158-20261101",
+  "current_runtime_version": "runtime-v46-20261101",
+  "current_domain_version": "domain-v162-20261101",
   "runtime_versions": {
-    "runtime-v45-20261101": {
-      "source_commit": "034b3a159a91fd3c4afa9d8492416cbe1606a5ef",
+    "runtime-v46-20261101": {
+      "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
       "coverage": "automatic_directories",
       "files": {
         "pyproject.toml": {
@@ -129,7 +129,7 @@
         },
         "src/agent_runtime/model_profiles.json": {
           "kind": "runtime",
-          "sha256": "a91628ad7763b4464e305049c60a0c04dd0543375800afabb8dfa0a00bbf0684"
+          "sha256": "e4c5e6264f81d0f5cc1c0872e93c31dc3d4e0541da2ca0f35c2ec96cfb14f441"
         },
         "src/agent_runtime/network_recovery.py": {
           "kind": "runtime",
@@ -157,7 +157,7 @@
         },
         "src/agent_runtime/route_dispatch.json": {
           "kind": "runtime",
-          "sha256": "884ef0d4ab9a56107cfc9e78950e96013e73c99b6389106edf62140b43884f92"
+          "sha256": "587407f13140678ce6c1bce67295f15276972c392b1ecf6a3e69ef29de9a94c0"
         },
         "src/agent_runtime/run_paths.py": {
           "kind": "runtime",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v158-20261101": {
-      "source_commit": "6db16f0fcf8f1541134945394245a6a40501ce7c",
+    "domain-v162-20261101": {
+      "source_commit": "6a980cebc7d508d5d16335766f51cd31d1e38e79",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -261,11 +261,11 @@
         },
         "scripts/tool_scripts/bim_agent_feedback.py": {
           "kind": "tool",
-          "sha256": "7b492354e0db8405130b4d884e1c642d0bd194eda403299185fe006c484b6ed7"
+          "sha256": "8e6026d8995fe73df3c239d5dd817d647822f4fa28dd3abeb49baa80eb8fcaa8"
         },
         "scripts/tool_scripts/bim_agent_guidance.py": {
           "kind": "guidance",
-          "sha256": "469f3fbe301d1763c75ac28d38545d5f37e9ebefabf19efe75babdba842ad4eb"
+          "sha256": "5ecbe37a4e83f46f8d6131e4136b6b712393ad8ec0caa932acc0f75e2b633fa6"
         },
         "scripts/tool_scripts/bim_agent_inference.py": {
           "kind": "tool",
@@ -341,7 +341,7 @@
         },
         "scripts/tool_scripts/run_bim_agent.py": {
           "kind": "task_description",
-          "sha256": "28c3738bf23cf1414d0851223d1004ae206d4e3bfc58b6a4dceb94b7231d1b42"
+          "sha256": "532d4b729a33d654a26c510064cf9578dd9bdcf46e8fbf9db3aad9df8bc29173"
         },
         "scripts/tool_scripts/vendor/OrbitControls.js": {
           "kind": "tool",
@@ -705,7 +705,7 @@
         },
         "src/agent/runtime_configuration.py": {
           "kind": "tool",
-          "sha256": "771a0eb3ebaaff20300d55170fb479eeb328f28adc91f16cefd1a0bc7c77b460"
+          "sha256": "28703cda4e1301661002de4240840697ba18ed1a5fef3a3d2f24675ac4c55c9f"
         },
         "src/agent/runtime_context.py": {
           "kind": "tool",
@@ -865,7 +865,7 @@
         },
         "src/agent/runtime_roles/session.py": {
           "kind": "tool",
-          "sha256": "3006b2f6dead952fd72304097c0199b88a5faa48add212cee7bf9b2b9c9691d0"
+          "sha256": "16fac979b615f424a3aa9951f4fafde4a5daf3608bbce3104cab9c6d8d75a44c"
         },
         "src/agent/runtime_roles/submission.py": {
           "kind": "tool",
