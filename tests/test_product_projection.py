@@ -29,6 +29,34 @@ def test_forbidden_import_and_unresolved_dynamic_import_fail_closed(sources):
             projection.project_sources(changed)
 
 
+def test_product_precheck_rejects_undistributed_mode_but_development_retains_it(tmp_path, monkeypatch):
+    from src.agent import runtime_configuration as configuration
+    monkeypatch.setattr(configuration, "ROOT", tmp_path)
+    registry = tmp_path / agent_registry.REGISTRY_RELATIVE_PATH
+    registry.parent.mkdir(parents=True)
+    registry.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(agent_registry, "load_agent_registry", lambda root: {"product_projection": {"present": True}})
+    config = tmp_path / "configuration.json"
+    config.write_text(json.dumps({"schema_version": 1, "approval_required_before_launch": True,
+                                 "cases": [{"case_id": "old-mode", "mode": "external_coordinator_mcp"}]}))
+    with pytest.raises(ValueError, match="not included"):
+        configuration.load_configuration(config)
+    with pytest.raises(ValueError, match="not included"):
+        configuration.argv_for({"mode": "external_coordinator_mcp"})
+    with pytest.raises(ValueError, match="entrypoint is missing"):
+        configuration.entrypoint_for("single_model")
+    monkeypatch.setattr(agent_registry, "load_agent_registry", lambda root: {})
+    assert configuration.entrypoint_for("external_coordinator_mcp") == "src.agent.runtime_coordinator"
+
+
+def test_product_profile_cannot_silently_omit_an_enabled_subprocess_entrypoint(sources):
+    changed = dict(sources)
+    changed["src/agent/runtime_configuration.py"] = changed["src/agent/runtime_configuration.py"].replace(
+        b'"single_model": "src.agent.runtime_entry"', b'"single_model": "src.agent.runtime_coordinator"')
+    with pytest.raises(ValueError, match="undistributed entrypoint"):
+        projection.project_sources(changed)
+
+
 def test_runtime_dependency_lock_only_retains_development_versions(sources):
     payload, origins, profile, imports = projection.project_sources(sources)
     requirements = projection.with_dependencies(sources, payload, origins, profile, imports)

@@ -129,6 +129,14 @@ def project_sources(sources):
             if parent in modules:
                 todo.add(parent)
     selected = resources | {modules[m] for m in reached} | set(profile["entry_files"])
+    route_tree = ast.parse(sources["src/agent/runtime_configuration.py"].decode("utf-8-sig"))
+    route_values = {target.id: ast.literal_eval(node.value) for node in route_tree.body
+                    if isinstance(node, ast.Assign) for target in node.targets
+                    if isinstance(target, ast.Name) and target.id in {"ALLOWED_ENTRYPOINTS", "PRODUCT_RUN_MODES"}}
+    for mode in route_values["PRODUCT_RUN_MODES"]:
+        module = route_values["ALLOWED_ENTRYPOINTS"][mode]
+        if module.replace(".", "/") + ".py" not in selected:
+            raise ValueError(f"Product mode {mode} points to an undistributed entrypoint: {module}")
     payload, origins = {}, {}
     for name in sorted(selected):
         original = facades.get(name, name)
