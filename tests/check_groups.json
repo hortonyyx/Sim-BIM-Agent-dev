@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_desktop_release.py": {
+      "group": "targeted",
+      "reason": "Actual desktop evidence binding, same-tag Git/Release recovery and owned staging cleanup with offline local Git fixtures"
+    },
     "tests/test_product_projection.py": {
       "group": "targeted",
       "reason": "Current BIM product import closure, locked dependency projection, immutable content identities and shared geometry compatibility"

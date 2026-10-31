@@ -6,6 +6,8 @@
 
 同日后续：[成品公开与用户说明](reports/2026-10-31_public_product_readme.md)。成品已按用户授权公开，最新 `release-2026-10-31.3`；README 改为安装、资料、模型配置、运行与结果说明，含已离线核对的 DeepSeek Flash 示例。程序与依赖未改，内部维护事务留在开发库。
 
+同日桌面流程已统一：[桌面与云端发布交接](reports/2026-10-31_desktop_publication_flow.md)。桌面已与公开 `.3` 完全同字节；以后通过开发库 `desktop_release.py stage → 桌面验收 → publish`，不维护另一个可运行本地成品。旧成品Git检出移入受管发布缓存，`product/` 仍只是模板。实际桌面自动检查通过，未做新的模型或人工体验验收。
+
 2026-10-26 讨论入口：[当前问题与跨模型讨论背景](reports/2026-10-26_harness_value_discussion_brief.md)，以及随后与用户讨论的[价值口径与对照基线](reports/2026-10-26_harness_value_axes_discussion.md)。用户澄清：更快、更好按同 model、同配置衡量，“至少快一半”不是硬门槛；更省指提高弱模型承担的比重，不比 token。以往通用组已拿到 BIM rules（文字）和部分 methods（文字），不能据此判 harness 无用；近期局部 B 是指定原生路径，也不能据此判定完全可选工具成为负担。指代按[术语](project/terminology.md) 2026-10-26 补充。两份文档均无程序改动或模型实验，实施状态仍以当前交接为准。
 
 ## 每次开始
@@ -119,7 +121,7 @@
 
 开发主库为 `D:\Sim-BIM-Agent\repo`；短期工作树放 `D:\Sim-BIM-Agent\worktrees`。桌面是发布产物，不存开发缓存、测试、GT和历史实验。新数据/运行/缓存位于D盘同级目录；历史资料保守留在D副本原位但不进入当前Git树，准确位置见归档索引。
 
-桌面固定为 `Sim BIM Agent`，以后使用 `scripts/release/update_product.ps1` 原位更新/回滚，不再创建版本后缀目录。用户要求本地保持简单：D盘只保留上一版的程序压缩包和状态记录，排除虚拟环境、案例和输出；更早版本交给Git。临时发布与更新副本验证完成后清理。
+桌面固定为 `Sim BIM Agent`，日常走 [桌面验收与发布](workflow/product_repository.md) 的 `desktop_release.py stage → publish`；底层 `update_product.ps1` 仍负责原位更新/回滚，不再创建版本后缀目录。用户要求本地保持简单：D盘只保留上一版的程序压缩包和状态记录，排除虚拟环境、案例和输出；更早版本交给Git。临时发布与更新副本验证完成后清理。
 
 本轮任务完成后保存简短交接与验证边界，核对diff、commit/push、清理已完成工作树，报告C/D剩余空间。用户要求的独立审阅须在实施完成后另启审阅者，发现问题修复后复核。项目事实保存在仓库，助手记忆只作索引。
 

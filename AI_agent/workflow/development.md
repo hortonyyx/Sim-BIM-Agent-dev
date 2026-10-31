@@ -16,9 +16,10 @@
 | D:/Sim-BIM-Agent/runs | 模型运行、检查点与结果，不复制回主树 |
 | D:/Sim-BIM-Agent/archive | 迁移核验、精简前文档及旧树独有证据 |
 | D:/Sim-BIM-Agent/cache | pytest、临时工具和可再生产物 |
-| D:/Sim-BIM-Agent/releases | 固定提交生成的发布包 |
-| D:/Sim-BIM-Agent/product-repo | 已验收成品的独立 Git 仓库；只接收开发库生成的发布内容 |
-| 桌面/Sim BIM Agent | 固定独立产品目录；版本写在发布清单，不另建桌面版本目录 |
+| D:/Sim-BIM-Agent/cache/release-staging | 固定提交生成的本次候选暂存，不安装环境 |
+| D:/Sim-BIM-Agent/cache/product-publish | 发布状态、持久化桌面验收证据；其 repository 仅为成品 Git 发布缓存，无运行环境 |
+| D:/Sim-BIM-Agent/releases | 旧发布导出保留原位，不作为日常安装，也不批量清理 |
+| C:/Users/Horton/Desktop/Sim BIM Agent | 唯一实际运行的成品安装，无 .git；版本写在发布清单，不另建桌面版本目录 |
 
 历史 `AI_agent/logs`、`AI_agent/archive`、`case_tests`、`backup`、`showcase`、`output` 保留在 D repo 实体目录，已退出当前 Git 树、默认测试和产品。该布局是批量移位遭自动审批拒绝后的保守处理；实际映射见 [归档索引](../reports/archive-index.md)。新记录放 `AI_agent/reports`，原始大输出放外部 runs/cache。
 
@@ -56,26 +57,20 @@ python -m src.agent_runtime.agent_registry register
 python -m src.agent_runtime.agent_registry verify
 ```
 
-发布从已提交、已登记的程序生成：
+日常顺序固定为：已提交、已登记的开发代码 → `stage` 构建暂存并更新桌面 → 桌面自身环境验收 → `publish` 发布同一份桌面文件及 Release 附件。`status` 分别报告桌面验收、云端 Git 的 manifest 一致性和 Release 就绪状态。具体命令和报告绑定见 [桌面验收与成品发布](product_repository.md)。`product/` 仅是模板；暂存与 Git 发布缓存均不建立 `.venv`，不能先在另一个安装验收后声称桌面已验收。
+
+发布包不含 .git、tests、开发文档、实验、GT、凭据。程序和资源按 release-manifest 校验；运行环境在桌面原路径按锁文件建立，不能复制带旧绝对路径的虚拟环境。更新不覆盖外部用户数据。自动验收覆盖 doctor、离线示例、当前接口/工具/恢复；人工体验只记录未做或用户已明确声称完成，不伪称，也不为同一授权反复增加审批。
+
+`stage` 调用现有 Windows 更新器；异常时使用同一个恢复入口：
+
 ```powershell
-python scripts/release/build_product.py D:/Sim-BIM-Agent/releases/<版本名>
-```
-
-发布包不含.git、tests、开发文档、实验、GT、凭据。程序和资源按release-manifest校验；运行环境在安装原路径按锁文件建立，不能复制带旧绝对路径的虚拟环境。固定入口不变，更新后完成doctor、离线示例、当前接口/工具/恢复检查，失败则恢复原版。更新不覆盖外部用户数据。
-
-成品 Git 仓库的清单驱动同步、字节保真、提交/tag 和无 Git 安装导出见 [成品仓库发布](product_repository.md)。本轮仅交付当前源码形态；未来产品结构由开发主线决定。
-
-已有安装使用同一个 Windows 更新工具，不再并排创建桌面版本：
-```powershell
-./scripts/release/update_product.ps1 -Action plan -Release D:/Sim-BIM-Agent/releases/<版本名>
-./scripts/release/update_product.ps1 -Action update -Release D:/Sim-BIM-Agent/releases/<版本名>
 ./scripts/release/update_product.ps1 -Action rollback
 ./scripts/release/update_product.ps1 -Action status
 ```
 
-默认目标为桌面 `Sim BIM Agent`；非默认位置通过 `-InstallRoot` 指定。更新前结束产品运行，维护期间不启动新实例。清单哈希、本地修改、文件冲突与路径边界先检查；每次实际切换都由产品自身 Python 完成隔离验收。验证失败自动恢复原版，进程意外中断则拒绝继续更新，先执行 `rollback`。依赖不变时复用原路径环境，依赖变化时 `uv sync --frozen`；`-Offline` 可禁止依赖下载，恢复失败如实保留 pending 状态。
+更新前结束产品运行，维护期间不启动新实例。清单哈希、本地修改、文件冲突与路径边界先检查；每次实际切换都由桌面自身 Python 完成隔离验收。验证失败自动恢复原版，进程意外中断则拒绝继续更新，先执行 `rollback`。依赖不变时复用原路径环境，依赖变化时 `uv sync --frozen`；更新器的 `-Offline` 可禁止依赖下载，恢复失败如实保留 pending 状态。云端发布失败不改变桌面验收事实；重试前核对远端提交、tag 和 Release 的实际状态，不覆盖已发布历史。push 成功而 Release 或附件失败时，以同 tag 重试 `publish` 补齐。
 
-按用户要求保持简单：`D:/Sim-BIM-Agent/archive/product-backup` 只留上一版 `previous.zip`、`state.json`、`update.lock`。ZIP 仅含清单内程序和发布清单，状态记录含简短验证结果；不长期备份环境、案例、凭据或大日志。临时文件在 `D:/Sim-BIM-Agent/cache/product-update`，成功后清理，中断时保留到恢复完成。更早版本由 Git 管理；需要时检出对应提交重新构建，再走同一更新工具。
+按用户要求保持简单：`D:/Sim-BIM-Agent/archive/product-backup` 保留更新器管理的上一版压缩程序备份及恢复状态；不长期备份环境、案例、凭据或大日志。桌面验收报告持久保存在发布管理目录，不随本次暂存清理丢失。`cache/release-staging` 和 `cache/product-update` 只清理本次成功流程所属的临时内容；失败或中断的资料留待核查，旧 releases 和曾 blocked 的缓存不批量删除。更早版本由 Git tag 管理；需要时导出到无环境的受管暂存，再走同一桌面更新工具。
 
 ## 收尾
 

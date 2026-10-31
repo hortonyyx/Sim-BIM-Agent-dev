@@ -10,6 +10,7 @@ param(
     [string]$InstallRoot = (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Sim BIM Agent'),
     [string]$BackupRoot = 'D:\Sim-BIM-Agent\archive\product-backup',
     [string]$WorkRoot = 'D:\Sim-BIM-Agent\cache\product-update',
+    [string]$VerificationRoot,
     [switch]$Offline
 )
 $ErrorActionPreference = 'Stop'
@@ -214,11 +215,17 @@ function Sync-Dependencies {
 }
 
 function Verify-Product($Output) {
+    if ($script:Evidence) { $Output = Join-Path $script:Evidence ([Guid]::NewGuid().ToString('N')) }
     & (Join-Path $script:Install '.venv/Scripts/python.exe') -I -B $script:Verifier --product $script:Install --output $Output | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Product validation failed: $Output" }
     $report = Get-Content -LiteralPath (Join-Path $Output 'report.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not $report.passed) { throw 'Product verifier did not pass' }
-    return @{ passed = $true; elapsed_seconds = $report.elapsed_seconds; live_model_requests = 0 }
+    if (-not $report.passed -or $report.live_model_requests -ne 0 -or
+        (Full-Path $report.product) -ne $script:Install -or
+        $report.release_manifest_sha256 -ne (Digest (Join-Path $script:Install 'release-manifest.json'))) {
+        throw 'Product verifier did not pass for this exact installation and manifest'
+    }
+    return @{ passed = $true; elapsed_seconds = $report.elapsed_seconds; live_model_requests = 0;
+        report = if ($script:Evidence) { Join-Path $Output 'report.json' } else { $null } }
 }
 
 function Remove-Work($Path) {
@@ -232,12 +239,19 @@ function Invoke-ProductUpdate {
     $script:Install = Full-Path $InstallRoot
     $script:Backup = Full-Path $BackupRoot
     $script:Work = Full-Path $WorkRoot
+    $script:Evidence = if ($VerificationRoot) { Full-Path $VerificationRoot } else { $null }
     foreach ($a in @($script:Install, $script:Backup, $script:Work)) {
         foreach ($b in @($script:Install, $script:Backup, $script:Work)) {
             if ($a -ne $b -and (Within $a $b)) { throw 'Install, backup and work roots must be separate' }
         }
     }
     if (@($script:Install, $script:Backup, $script:Work | Select-Object -Unique).Count -ne 3) { throw 'Storage roots must differ' }
+    if ($script:Evidence) {
+        foreach ($root in @($script:Install, $script:Backup, $script:Work)) {
+            if ($script:Evidence -eq $root -or (Within $script:Evidence $root) -or (Within $root $script:Evidence)) { throw 'Persistent verification evidence must be separate from install, backup and temporary work' }
+        }
+        New-Item -ItemType Directory -Path $script:Evidence -Force | Out-Null
+    }
     New-Item -ItemType Directory -Path $script:Backup -Force | Out-Null
     $lock = [IO.File]::Open((Join-Path $script:Backup 'update.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $work = $null; $completed = $false; $pendingWritten = $false
