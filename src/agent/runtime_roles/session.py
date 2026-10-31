@@ -1148,20 +1148,26 @@ class RoleSession:
                       "parameters": t["inputSchema"]}} for t in catalog]
             versions = make_versions(child, root=self.root, prompt=guide, tools=specs, parameters=parameters,
                                      route=route, code_paths=("src/agent/runtime_roles", "src/agent/runtime_tools.py"))
-            from .reader_context import previous_artifact_context
-            previous_context = previous_artifact_context(
-                previous, role_id=task["role_id"], artifact_reference=task.get("previous_artifact")
-            )
-            from .plan_views import initial_coordinate_view
-            initial_image, initial_view = initial_coordinate_view(raw_image, image_name=task["image"], directory=scoped.run_directory)
-            tools._remember_references({"structuredContent": {"evidence_previews": [initial_view]}})
-            content = [{"type": "text", "text": json.dumps({"task": task, "previous_artifact": previous_context,
-                       "input": {"image": task["image"], "original_size": list(size), "sha256": task["input_sha256"]},
-                       "initial_view": initial_view,
-                       "coordinates": ELEVATION_COORDINATES if task["role_id"] == "elevation_reader"
-                       else READER_COORDINATES[task["role_id"]]}, ensure_ascii=False)},
-                       {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(initial_image).decode(),
-                                                             "detail": "original"}}]
+            messages, image_originals = [], {}
+            if not child.events:
+                from .reader_context import previous_artifact_context
+                previous_context = previous_artifact_context(
+                    previous, role_id=task["role_id"], artifact_reference=task.get("previous_artifact")
+                )
+                from .plan_views import initial_coordinate_view
+                initial_image, initial_view = initial_coordinate_view(raw_image, image_name=task["image"], directory=scoped.run_directory)
+                tools._remember_references({"structuredContent": {"evidence_previews": [initial_view]}})
+                content = [{"type": "text", "text": json.dumps({"task": task, "previous_artifact": previous_context,
+                           "input": {"image": task["image"], "original_size": list(size), "sha256": task["input_sha256"]},
+                           "initial_view": initial_view,
+                           "coordinates": ELEVATION_COORDINATES if task["role_id"] == "elevation_reader"
+                           else READER_COORDINATES[task["role_id"]]}, ensure_ascii=False)},
+                           {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(initial_image).decode(),
+                                                                 "detail": "original"}}]
+                messages = [{"role": "system", "content": guide}, {"role": "user", "content": content}]
+                image_originals = {hashlib.sha256(initial_image).hexdigest(): child.put_bytes(raw_image, "image/png")}
+            # Resume restores the original messages and image lineage from the
+            # checkpoint. Reissuing a view here would change its saved tool state.
             adapter = self.adapter_factory(task["task_id"], config, child)
             if hasattr(adapter, "close"):
                 stack.push_async_callback(adapter.close)
@@ -1175,9 +1181,7 @@ class RoleSession:
                 context_policy=context_policy_from_effective(task["role_id"], effective_context),
                 request_timeout_seconds=self.limits.seconds / (self.max_concurrent_readers + 1),
                 fault_hook=self.reader_fault_hook)
-            original_ref = child.put_bytes(raw_image, "image/png")
-            runtime = await engine.run([{"role": "system", "content": guide}, {"role": "user", "content": content}],
-                image_originals={hashlib.sha256(initial_image).hexdigest(): original_ref}, resume=bool(child.events))
+            runtime = await engine.run(messages, image_originals=image_originals, resume=bool(child.events))
             if task["role_id"] == "plan_reader":
                 runtime["plan_reader_progress"] = tools.progress(started_epoch=runtime.get("started_epoch"))
                 child.write_json("receipt.json", runtime)
