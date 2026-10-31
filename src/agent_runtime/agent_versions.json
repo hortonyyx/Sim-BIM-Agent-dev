@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v45-20261101",
-  "current_domain_version": "domain-v157-20261101",
+  "current_domain_version": "domain-v158-20261101",
   "runtime_versions": {
     "runtime-v45-20261101": {
       "source_commit": "034b3a159a91fd3c4afa9d8492416cbe1606a5ef",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v157-20261101": {
-      "source_commit": "034b3a159a91fd3c4afa9d8492416cbe1606a5ef",
+    "domain-v158-20261101": {
+      "source_commit": "6db16f0fcf8f1541134945394245a6a40501ce7c",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -341,7 +341,7 @@
         },
         "scripts/tool_scripts/run_bim_agent.py": {
           "kind": "task_description",
-          "sha256": "ddef2a7dcd5beabe34171a3539bb70648dff55a551f3e0672dbb181cf22ee16b"
+          "sha256": "28c3738bf23cf1414d0851223d1004ae206d4e3bfc58b6a4dceb94b7231d1b42"
         },
         "scripts/tool_scripts/vendor/OrbitControls.js": {
           "kind": "tool",
@@ -693,7 +693,7 @@
         },
         "src/agent/product_cli.py": {
           "kind": "tool",
-          "sha256": "8817ece71bc1b2e24f9276117e990bc7ff21d5190e40d965bb741f7760b8e50d"
+          "sha256": "a91e52fd282dd67d2d06cd4bb088c3b1b6815c162cfc54dfc1ac5cb5e0a955ab"
         },
         "src/agent/roles.py": {
           "kind": "tool",
@@ -865,7 +865,7 @@
         },
         "src/agent/runtime_roles/session.py": {
           "kind": "tool",
-          "sha256": "67e7fe7800521ba6d7a80340d4fa724f2af25e925bd01224d68bfc6e51d64a50"
+          "sha256": "3006b2f6dead952fd72304097c0199b88a5faa48add212cee7bf9b2b9c9691d0"
         },
         "src/agent/runtime_roles/submission.py": {
           "kind": "tool",
@@ -915,15 +915,15 @@
       "mode_fingerprints": {
         "mesh_workers/coordinator": {
           "guidance_sha256": "30412c90ddc012d5778910ee6da0a836ac913cb41304f74c4196c738a9d8a0ae",
-          "sha256": "90f620960a1ba8007a989cf8abc0774fa54ceca5fe48815958505fae1e6e20f4",
+          "sha256": "445f9a466ff7f3bb459b3ae510c6c6ab9d6fe56d3466ee44a83db83da74badf0",
           "task_template_sha256": "7b8d577e6d31287c59bc420affb4e13e7b8091554d9204481005c628fd73e4f6",
-          "tools_sha256": "5bd801f1421031c3499fb05a657dd4107b05210cc1a024ad90ee6d680b40d6b7"
+          "tools_sha256": "06c0e6358c4d89a9e04cc2ee71d259352f1ccfd1c838e00da24e1500de89f3fd"
         },
         "mesh_workers/observer": {
           "guidance_sha256": "647868a3211f743d06abf1180d51424adac71075051c370a37366a4e77f7165d",
-          "sha256": "4ca02dc4fa72cfc6f322d48f0e880edbf34c12daf1403cce43d188a4ca05d083",
+          "sha256": "c382d94d2e0ee4416de849c9b558663b4cc43cd806eac7ddb83140f02a4d6bae",
           "task_template_sha256": "edd745ad0c0f62d8e54ba2791fb5bad82a5c5459edb337f436299d4fca27353a",
-          "tools_sha256": "9fa5757163a94f8dca5ae03dbaa9db402fb1e1bc2bd0cfb483e101abba9bde44"
+          "tools_sha256": "a8036a2d7a990ed5dfdcb3276d0fe2333d149fbe2f5c3df4a7ef1bfaf7ef553d"
         },
         "role_division/coordinator": {
           "guidance_sha256": "72823f778b129f3e0060eba56c70143cd208b337e2b62d524b0572d7cd584706",
@@ -945,34 +945,34 @@
         },
         "single_model/coordinator": {
           "guidance_sha256": "486c8dbb410b3f41958b284cc5f41a3a64f0956e87ff24d01cd4f76d1a03f9a1",
-          "sha256": "8bf8d4872b21dce2f6a166aa7b18cc93de3c646174a6ad74049e8c85a2db3fa9",
+          "sha256": "fdeb96d8fceb82a69ef45dbd310989564d85e54f7d7b3e31b78b47db9ba627f8",
           "task_template_sha256": "7b8d577e6d31287c59bc420affb4e13e7b8091554d9204481005c628fd73e4f6",
-          "tools_sha256": "5585ec443c2f166c447aaa18cd799543f88177d3a092d293b79c95c9f09b7ab7"
+          "tools_sha256": "4d6d405f333992101ff8c8fc3ac0a8c5a3e6217bfb9ce6f694e155a143e0f31f"
         },
         "single_model/coordinator_mesh": {
           "guidance_sha256": "68efca87cd639d04501b4d3f14eaf92d2f4dec392fd111374709e26058a66384",
-          "sha256": "6c39f82337adfd2345e387185042e35a65449fff9f9ddb84c3f8c3d43a102b31",
+          "sha256": "436002e229e2d5b42787aae7d6d5ef8879c9c54fe3843c25857bca15addbe2c0",
           "task_template_sha256": "7b8d577e6d31287c59bc420affb4e13e7b8091554d9204481005c628fd73e4f6",
-          "tools_sha256": "767160555337b7a23f12454bc194d212e5272b21adcce1276c0ec09983a858e0"
+          "tools_sha256": "bb6f39c2ce8d6ca6734e2aeaec52ed4afca282b6395c12dd58fb6e300974f2ee"
         },
         "single_model/readonly": {
           "guidance_sha256": "486c8dbb410b3f41958b284cc5f41a3a64f0956e87ff24d01cd4f76d1a03f9a1",
-          "sha256": "43e08e73d0e5f1aa5c5cfafd2efb0e02b7fc9631a036b135acc48781d88fa282",
+          "sha256": "bc69e647891864ec10df5722129ddd592089df296b49f97187a2f2628fd8499a",
           "task_template_sha256": "7b8d577e6d31287c59bc420affb4e13e7b8091554d9204481005c628fd73e4f6",
-          "tools_sha256": "e0f1faa340c5c499d0d371622c9816d8072ca479223ac62924dbee12ccf1bd5c"
+          "tools_sha256": "3080bba18ae7bd4c955dbc8cf9cd9c84e9acd16d46d38bce8febfe11691098e1"
         },
         "single_model/readonly_mesh": {
           "guidance_sha256": "68efca87cd639d04501b4d3f14eaf92d2f4dec392fd111374709e26058a66384",
-          "sha256": "3222a1c9288fcbc79bb3c6e955a712264a55ce1a0d782b2e54d762d7600d73db",
+          "sha256": "936bd566ad6955610aefd3b77feae091b93af0eb26c34dc56b58f486b4e6a2a6",
           "task_template_sha256": "7b8d577e6d31287c59bc420affb4e13e7b8091554d9204481005c628fd73e4f6",
-          "tools_sha256": "9fa5757163a94f8dca5ae03dbaa9db402fb1e1bc2bd0cfb483e101abba9bde44"
+          "tools_sha256": "a8036a2d7a990ed5dfdcb3276d0fe2333d149fbe2f5c3df4a7ef1bfaf7ef553d"
         }
       },
       "tool_catalog_sha256": {
-        "coordinator": "5585ec443c2f166c447aaa18cd799543f88177d3a092d293b79c95c9f09b7ab7",
-        "coordinator_mesh": "767160555337b7a23f12454bc194d212e5272b21adcce1276c0ec09983a858e0",
-        "readonly": "e0f1faa340c5c499d0d371622c9816d8072ca479223ac62924dbee12ccf1bd5c",
-        "readonly_mesh": "9fa5757163a94f8dca5ae03dbaa9db402fb1e1bc2bd0cfb483e101abba9bde44"
+        "coordinator": "4d6d405f333992101ff8c8fc3ac0a8c5a3e6217bfb9ce6f694e155a143e0f31f",
+        "coordinator_mesh": "bb6f39c2ce8d6ca6734e2aeaec52ed4afca282b6395c12dd58fb6e300974f2ee",
+        "readonly": "3080bba18ae7bd4c955dbc8cf9cd9c84e9acd16d46d38bce8febfe11691098e1",
+        "readonly_mesh": "a8036a2d7a990ed5dfdcb3276d0fe2333d149fbe2f5c3df4a7ef1bfaf7ef553d"
       }
     }
   },
