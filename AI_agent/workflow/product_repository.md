@@ -11,7 +11,7 @@
 
 沿用 `build_product.py` 当前已追踪源文件选择。输入案例、评测答案、实验记录、开发报告、tests、开发 Git 历史、凭据和运行产物不进入包。全部被当前 runtime/domain 登记的文件、完整版本表、共享依赖及可选 EnergyPlus 资源保持原样。部分历史评测工具是当前不可变 domain 的已登记成员；本轮保留其代码以维持核验，不带其评测数据。后续裁剪由开发主线统一实施并登记新版本，不能在发布端悄悄改旧版本。
 
-`.gitignore` 排除本地环境、缓存及用户文件；`.gitattributes` 使用 `* -text` 保留已验证发行字节，避免 Windows Git 自动换行转换破坏清单 SHA-256。成品 Git 的完整跟踪集合必须等于 manifest 中的文件加 `release-manifest.json`。发布说明由开发库的 `product/README.md` 生成；没有另一份需要手工维护的产品源码。
+构建从固定 Git 提交直接读取文件，Windows `.cmd`、`.bat`、`.ps1` 启动脚本显式输出 CRLF，其余保持提交字节，不依赖开发工作区的换行状态。`.gitignore` 排除本地环境、缓存及用户文件；`.gitattributes` 使用 `* -text` 保留已验证发行字节，避免 Windows Git 自动换行转换破坏清单 SHA-256。成品 Git 的完整跟踪集合必须等于 manifest 中的文件加 `release-manifest.json`。发布说明由开发库的 `product/README.md` 生成；没有另一份需要手工维护的产品源码。
 
 ## 每次发布
 

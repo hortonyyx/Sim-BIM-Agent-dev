@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
+import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -42,18 +43,32 @@ def build(destination: Path):
     subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", *selected.values()], cwd=ROOT,
                    check=True, stdout=subprocess.DEVNULL)
     records = release_records(ROOT)
+    commit = source_commit(ROOT)
     for original in selected.values():
         path = ROOT / original
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(ROOT):
             raise ValueError(f"Invalid payload path: {original}")
+    # Read the immutable Git tree, not checkout bytes affected by core.autocrlf
+    # or nested attributes. Windows launch scripts have an explicit output format.
+    archived = subprocess.check_output(["git", "archive", "--format=tar", commit, "--", *selected.values()], cwd=ROOT)
+    with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as tree:
+        committed = {}
+        for relative, original in selected.items():
+            item = tree.getmember(original)
+            if not item.isfile():
+                raise ValueError(f"Invalid committed payload path: {original}")
+            data = tree.extractfile(item).read()
+            if Path(relative).suffix.casefold() in {".cmd", ".bat", ".ps1"}:
+                data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            committed[relative] = data
     destination.mkdir(parents=True)
     files = {}
     for relative, original in sorted(selected.items()):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / original, target)
+        target.write_bytes(committed[relative])
         files[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
-    manifest = {"schema_version": "sim-bim-release.v1", "source_commit": source_commit(ROOT),
+    manifest = {"schema_version": "sim-bim-release.v1", "source_commit": commit,
                 "runtime_version": records["runtime"]["version_id"],
                 "domain_version": records["domain"]["version_id"], "files": files,
                 "environment": "Rebuild with uv sync --frozen --no-dev --no-install-project; .venv is not payload"}

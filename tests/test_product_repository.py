@@ -150,3 +150,27 @@ def test_manifest_cannot_claim_git_environment_or_escape(tmp_path, path):
     (root / publisher.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="Unsafe"):
         publisher.read_release(root)
+
+
+def test_build_uses_committed_tree_independently_of_checkout_line_endings(tmp_path, monkeypatch):
+    from scripts.release import build_product
+    from src.agent_runtime import agent_registry
+
+    source = tmp_path / "source"
+    initialize(source)
+    (source / ".gitattributes").write_bytes(b"*.cmd text eol=lf\n")
+    (source / "product").mkdir()
+    (source / "product/README.md").write_bytes(b"product\n")
+    script = source / "product/Start.cmd"
+    script.write_bytes(b"@echo off\necho product\n")
+    commit(source)
+    monkeypatch.setattr(build_product, "ROOT", source)
+    monkeypatch.setattr(agent_registry, "release_records", lambda root: {
+        "runtime": {"version_id": "runtime-test"}, "domain": {"version_id": "domain-test"}})
+    first, second = tmp_path / "first", tmp_path / "second"
+    build_product.build(first)
+    script.write_bytes(b"@echo off\r\necho product\r\n")
+    assert not command(source, "diff", "--name-only").strip()
+    build_product.build(second)
+    assert (first / "Start.cmd").read_bytes() == b"@echo off\r\necho product\r\n"
+    assert {p.name: p.read_bytes() for p in first.iterdir()} == {p.name: p.read_bytes() for p in second.iterdir()}
