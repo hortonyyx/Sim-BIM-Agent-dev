@@ -161,7 +161,7 @@
       "image_uncertainty": "The official 14-pixel patch and 2x merge grid exactly matched Paratera at 224x224 and 896x896. It conservatively overestimated the 1600x1200 synthetic request by 1,139 image tokens; Paratera image preprocessing is not attested.",
       "profile_status": "sourced_and_paratera_calibrated_with_deployment_uncertainty",
       "recommended_min_output_tokens": 32000,
-      "output_limit_source": "AI_agent/logs/experiments/2026-10-03_migration_comparison/README.md: attempt 1 exhausted 16,384 output tokens (16,377 reasoning); Claude Code baseline cap was 32,000 and one baseline turn reasoned for about 19,600 tokens. This is a recommendation, not a guarantee against truncation."
+      "output_limit_source": "Observed on 2026-10-03: a request exhausted 16,384 output tokens, including 16,377 reasoning tokens; another used about 19,600 reasoning tokens. The 32,000-token recommendation allows more reasoning but does not guarantee against truncation."
     },
     {
       "canonical_name": "gpt-6-astra",

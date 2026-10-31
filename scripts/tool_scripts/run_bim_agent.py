@@ -1,4 +1,4 @@
-"""Sim-BIM tools and a command-line runner for admitted building inputs.
+"""Sim-BIM tool implementations and their MCP server.
 
 The working model receives the input inventory, optional user declarations and
 BIM tools. MCP manages file access and geometry execution. The same tools serve
@@ -198,8 +198,6 @@ def coordinate_grid_view(pic, region):
                  "note":"Blue dotted grid/white labels are viewing aids, not drawing evidence."}
 
 
-
-
 def run_guide(run: Path) -> str:
     """System prompt matching the run's admitted inputs and declared image kind."""
     manifest = json.loads((run / "inputs.json").read_bytes())
@@ -210,21 +208,6 @@ def run_guide(run: Path) -> str:
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS
     return guide
-
-
-# Built-in Claude Code subagents run on other models; a worker run allows only WORKER_AGENT.
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def delivery_tool_reply(result: dict) -> dict:
@@ -2059,9 +2042,6 @@ class Toolkit:
         return [Image(data=buffer.getvalue(), format="png"), json.dumps(record)]
 
 
-
-
-
 def build_tool_server(run: Path, readonly=False):
     """Construct the sole tool catalog without starting transport or executing tools."""
     from mcp.server.fastmcp import Image
@@ -2163,8 +2143,6 @@ def build_tool_server(run: Path, readonly=False):
         All points and seed coordinates refer to the ORIGINAL image.
         """
         return toolkit.pixel_region(name, seed_pixel, background_rgb, tolerance, simplify_pixels)
-
-
 
 
     @server.tool()
@@ -2527,7 +2505,6 @@ def build_tool_server(run: Path, readonly=False):
             Full original views are valid; seeing a view does not certify interpretation.
             """
             return claim_result(toolkit.replace_claim_sources(claim_id, view_ids, reason))
-
 
 
         @server.tool()
@@ -3047,10 +3024,6 @@ def serve(run: Path, readonly=False):
         import scipy.signal  # noqa: F401
     server = build_tool_server(run, readonly=readonly)
     server.run()
-
-
-
-
 
 
 def main():

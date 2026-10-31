@@ -467,10 +467,6 @@ Do not ask the user for routine geometry choices.
 """
 
 
-
-
-
-
 def build_guide(*, images=None, mesh=False):
     """System prompt for one run. images is drawings, mesh_views, photos, unknown or None."""
     mesh_mode = mesh or images == "mesh_views"
@@ -486,10 +482,7 @@ def build_guide(*, images=None, mesh=False):
     if not mesh_mode and images in ("photos", "unknown"):
         parts.append(PHOTOS)
     tools = TOOLS
-    # C2: the review found disabled tools described in every request. Their
-    # catalog entries and these sentences now use the same capability flags.
     return "\n".join(parts + [tools, DELIVERY])
-
 
 
 REFERENCES = {
@@ -626,7 +619,7 @@ regularization_inputs.coordinate_references contains axis, value_m, basis
 ('dimension'), chain_id, tick_index and source_refs; line_references contains
 partition_id, basis ('dimension' or 'ink') and source_refs. Plan-reader trial
 alone supplies these from checked dimensions/ink; this build entry does not
-read new dimensions or align to image ink. Historical replay policy belongs
+read new dimensions or align to image ink. The regularization policy belongs
 to the run manifest, never to a model-declared plan field.
 Every enclosed face becomes one space. No room count is supplied or enforced.
 An open passage still leaves two faces and two spaces, even at full ceiling height.

@@ -33,6 +33,7 @@ coverage.xml
 /backup/
 /showcase/
 /output/
+/data/
 /.worktrees/
 /_dev/
 *.log
