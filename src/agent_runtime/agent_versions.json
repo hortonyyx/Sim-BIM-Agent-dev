@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v46-20261101",
-  "current_domain_version": "domain-v164-20261101",
+  "current_domain_version": "domain-v165-20261101",
   "runtime_versions": {
     "runtime-v46-20261101": {
       "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v164-20261101": {
-      "source_commit": "4350ff6db26bdb6e802ef2cc409bac9060a15356",
+    "domain-v165-20261101": {
+      "source_commit": "e9149a473c874ead9eee416eb3ba7f2449c051c8",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -769,7 +769,7 @@
         },
         "src/agent/runtime_roles/continuation.py": {
           "kind": "tool",
-          "sha256": "2290547be7f32e58431d869d619d19ee239b5c95c234106c1c1c143e553eba77"
+          "sha256": "943c9d5e70c98efb27dcfc589830a1c4afd5514ed5eee72d81904867a297dd0a"
         },
         "src/agent/runtime_roles/coordinates.py": {
           "kind": "tool",
@@ -865,7 +865,7 @@
         },
         "src/agent/runtime_roles/session.py": {
           "kind": "tool",
-          "sha256": "243583ed4e035ad6d836db8ae4768537ef247ba2c4e8decfdd0efe5f055b2440"
+          "sha256": "3ec6451fda62593a11537f1595680dae87cb9b2d757fec6944bcd5965d770e33"
         },
         "src/agent/runtime_roles/submission.py": {
           "kind": "tool",
