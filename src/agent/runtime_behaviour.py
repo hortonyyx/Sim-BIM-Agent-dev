@@ -594,7 +594,7 @@ def summarise(record: dict[str, Any]) -> dict[str, Any]:
               if step["tool"] in {"record_claim", "replace_claim_sources"} and not step.get("is_error")
               and step.get("delivered_to_model", True)]
     # Entries share the actual transaction call/time; they are not extra tool
-    # calls. Read saved claims just as for the compatibility single-step tools.
+    # calls. Read the saved claim evidence for each recorded entry.
     for step in transactions:
         if step.get("is_error") or not step.get("delivered_to_model", True):
             continue

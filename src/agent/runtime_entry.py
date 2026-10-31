@@ -1,8 +1,8 @@
 """Run one role on admitted case inputs using the frozen BIM tool service.
 
 CLI: python -m src.agent.runtime_entry --help
-Real requests require an explicit live provider. Tool preparation never starts
-the historical subscription runner.
+Real requests require an explicit live provider. Preparation freezes inputs
+and configures the native BIM tool service.
 """
 
 from __future__ import annotations
