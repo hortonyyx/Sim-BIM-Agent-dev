@@ -2069,7 +2069,7 @@ def build_tool_server(run: Path, readonly=False):
         """List admitted original images, native mesh, building declaration and scope."""
         toolkit.log("inputs", {})
         return {**toolkit.manifest, "input_view_status": toolkit.input_view_status(),
-                "candidate_budget": toolkit.candidate_budget(),
+                **({"candidate_budget": toolkit.candidate_budget()} if not toolkit.readonly else {}),
                 "remaining_seconds": toolkit.remaining_seconds()}
 
     @server.tool()
