@@ -4,13 +4,13 @@ import copy
 
 import pytest
 
-from src.agent.correction.schema import CorrectedGeometry
+from src.agent.geometry_model.schema import GeometryInput
 from src.agent.geometry.source_bim import build_source_bim
 from src.agent.geometry.source_elevation_view import render_source_elevation
 
 
 def _source():
-    geometry = CorrectedGeometry.model_validate({
+    geometry = GeometryInput.model_validate({
         "footprint_x": [0, 4], "footprint_y": [0, 2],
         "floors": [
             {"name": "F1", "z_floor": 0, "ceiling_height": 3, "cells": [

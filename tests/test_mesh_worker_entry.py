@@ -35,12 +35,12 @@ def test_invalid_worker_configuration_fails_before_launch(tmp_path, configuratio
         _load(tmp_path, case)
 
 
-@pytest.mark.parametrize("mode,kind", [("single_model", "images"),
-    ("role_division", "mesh"), ("external_coordinator_mcp", "mesh")])
-def test_worker_option_does_not_silently_change_other_entrypoints(tmp_path, mode, kind):
+@pytest.mark.parametrize("mode,kind,error", [("single_model", "images", "mesh_workers"),
+    ("role_division", "mesh", "mesh_workers"), ("external_coordinator_mcp", "mesh", "unsupported run mode")])
+def test_worker_option_does_not_silently_change_other_entrypoints(tmp_path, mode, kind, error):
     case = _case(tmp_path)
     case.update(mode=mode, input_kind=kind, mesh_workers={"max_concurrent": 2})
-    with pytest.raises(ValueError, match="mesh_workers"):
+    with pytest.raises(ValueError, match=error):
         _load(tmp_path, case)
 
 
@@ -115,7 +115,7 @@ async def _native_mesh_worker_handoff(tmp_path, time_budget_mode):
     receipt = await runtime_entry.execute(args)
     assert receipt["status"] == "completed", receipt
     assert receipt["limits"].get("time_budget_mode", "wall_and_requests") == time_budget_mode
-    assert ("time_budget_mode" in receipt["limits"]) == (time_budget_mode == "wall")
+    assert receipt["limits"]["time_budget_mode"] == time_budget_mode
     assert (receipt["budget"]["total_limit"]["seconds"] is None) == (time_budget_mode == "wall")
     assert receipt["finalization"]["completion_valid"] is True
     assert receipt["finalization"]["delivery"]["complete_building"] is True

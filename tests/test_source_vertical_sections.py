@@ -5,8 +5,8 @@ import pytest
 from shapely.geometry import Polygon
 
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
-from src.agent.geometry.modelling import _newell
-from src.agent.geometry.source_schema import SourcePolygonGeometry
+from src.agent.geometry.surfaces import polygon_normal
+from src.agent.geometry_model.source_polygon import SourcePolygonGeometry
 from src.agent.geometry.source_volume import space_polygon_at_z, space_volume, space_overlap_volume
 
 
@@ -141,7 +141,7 @@ def test_closed_shell_volume_under_rotation_and_large_translation(angle, offset)
             continue
         # Translate near origin for a stable divergence-theorem volume.
         points = [[p[0]-offset, p[1]+offset, p[2]] for p in boundary["vertices"]]
-        normal = _newell(points)
+        normal = polygon_normal(points)
         if boundary["geometry_type"] == "wall":
             direction = [(points[1][i]-points[0][i])/math.dist(points[0][:2], points[1][:2]) for i in (0, 1)]
             project = lambda ring: [[(p[0]-offset-points[0][0])*direction[0] + (p[1]+offset-points[0][1])*direction[1], p[2]] for p in ring]

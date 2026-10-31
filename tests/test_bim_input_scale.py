@@ -99,8 +99,8 @@ def test_explicit_tagged_mm_is_still_supported_and_recorded(tmp_path):
     result = Toolkit(run).build_plan("plan.png", raw)
     assert result["source_geometry_ready"], result
     record = result["plan_input"]
-    assert (run / record["submitted_plan_file"]).read_text() == raw
-    assert json.loads((run / record["plan_file"]).read_text())["x_anchors"] == example()["x_anchors"]
+    assert (run / record["submitted_plan_file"]).read_text(encoding="utf-8") == raw
+    assert json.loads((run / record["plan_file"]).read_text(encoding="utf-8"))["x_anchors"] == example()["x_anchors"]
 
 
 def test_survey_origin_and_negative_anchors_do_not_trigger_absolute_coordinate_check():
@@ -123,10 +123,10 @@ def test_direct_and_edited_source_proposals_are_stopped_before_kernel(tmp_path, 
     assert result["status"] == "error" and not result["source_geometry_ready"]
     assert "proposal.geometry.footprint_x" in result["error"]
     assert not (tmp_path / "bad/source_model.json").exists()
-    assert json.loads((tmp_path / "bad/proposal.json").read_text()) == before == proposal
+    assert json.loads((tmp_path / "bad/proposal.json").read_text(encoding="utf-8")) == before == proposal
 
 
-def test_legacy_numeric_strings_are_checked_after_existing_schema_parsing(tmp_path, monkeypatch):
+def test_numeric_strings_are_checked_after_existing_schema_parsing(tmp_path, monkeypatch):
     import src.agent.execution.source_proposal as exporter
     proposal = _proposal()
     proposal["geometry"]["footprint_x"] = ["0", "6000"]
@@ -135,16 +135,16 @@ def test_legacy_numeric_strings_are_checked_after_existing_schema_parsing(tmp_pa
     result = export_source_proposal(proposal, tmp_path / "strings")
     assert result["status"] == "error" and "ScaleMismatchError" in result["error"]
     assert "footprint_x" in result["error"] and "6000" in result["error"]
-    assert json.loads((tmp_path / "strings/proposal.json").read_text()) == proposal
+    assert json.loads((tmp_path / "strings/proposal.json").read_text(encoding="utf-8")) == proposal
 
 
-def test_normal_legacy_numeric_strings_keep_their_existing_acceptance(tmp_path):
+def test_normal_numeric_strings_keep_schema_acceptance(tmp_path):
     proposal = _proposal()
     proposal["geometry"]["footprint_x"] = ["0", "6"]
     proposal["geometry"]["floors"][0]["ceiling_height"] = "3"
     result = export_source_proposal(proposal, tmp_path / "normal-strings")
     assert result["source_geometry_ready"], result
-    assert json.loads((tmp_path / "normal-strings/proposal.json").read_text()) == proposal
+    assert json.loads((tmp_path / "normal-strings/proposal.json").read_text(encoding="utf-8")) == proposal
 
 
 def test_only_height_used_by_the_geometry_kernel_can_support_the_scale_check():

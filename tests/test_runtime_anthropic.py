@@ -234,7 +234,7 @@ def test_native_large_result_compaction_records_actual_wire_content(tmp_path):
             return {"content": [{"type": "text", "text": "large-result " * 5000}]}
     engine = native_engine(tmp_path, [native_response(("v", "view", {})), native_response(text="Done")],
         tools=LargeTools(tmp_path / "tools"), limits=RunLimits(model_calls=3, tool_calls=2, seconds=60, tokens=500000))
-    engine.context_policy = ContextPolicy(large_result_bytes=100)
+    engine.context_policy = ContextPolicy()
     with engine.store:
         result = asyncio.run(engine.run(MESSAGES))
         assert result["status"] == "completed"

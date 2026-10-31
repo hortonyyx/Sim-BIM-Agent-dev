@@ -70,7 +70,7 @@ def _facade(session, side, image):
 def continuation(tmp_path, monkeypatch):
     monkeypatch.setattr("src.agent.runtime_roles.session.make_versions", lambda *args, **kwargs: versions())
     monkeypatch.setattr(domain, "verify_domain_compatibility", lambda *args: {
-        "source_domain": "fixture-v1", "destination_domain": "fixture-v2", "changed_files": []})
+        "source_domain": "fixture-v1", "destination_domain": "fixture-v1", "changed_files": []})
     source_path = tmp_path / "source"
     source_run = _images(source_path)
     source_limits = RunLimits(model_calls=30, tool_calls=50, seconds=120, tokens=500_000)
@@ -146,14 +146,14 @@ def test_imported_draft_reads_retrials_and_explicitly_submits(continuation, monk
     assert c.source.verify_unchanged()
 
 
-@pytest.mark.parametrize("product", ["receipt", "plan", "numeric", "source", "profile", "image", "artifact"])
+@pytest.mark.parametrize("product", ["receipt", "plan", "numeric", "reading_product", "profile", "image", "artifact"])
 def test_source_tamper_rejects_before_any_target_import(continuation, product):
     c = continuation
     receipt = c.facts["passed"]
     paths = {"receipt": c.facts["workspace"] / receipt["receipt_file"],
              "plan": c.facts["workspace"] / receipt["input_plan_file"],
              "numeric": c.facts["workspace"] / receipt["compiled_numeric_plan_file"],
-             "source": c.facts["workspace"] / receipt["candidate"] / "source_model.json",
+             "reading_product": c.facts["workspace"] / receipt["reading_product_file"],
              "profile": c.facts["workspace"] / receipt["measurement_profiles"][0]["file"],
              "image": c.source.directory / "bim/images/north.png",
              "artifact": c.source.directory / "tasks" / hashlib.sha256(b"e_north").hexdigest() / "reader_artifact.json"}
@@ -240,7 +240,7 @@ def test_completed_record_without_submission_is_not_imported(continuation):
     assert not c.target.registry.records
 
 
-def _compat_fixture(tmp_path, *, change="src/agent/runtime_roles/session.py", target="domain-v68-20261012"):
+def _compat_fixture(tmp_path, *, change="src/agent/runtime_roles/session.py", target="domain-fixture-b"):
     from src.agent_runtime.agent_registry import discover_files, REGISTRY_RELATIVE_PATH
     root = tmp_path / "repo"
     scope = {"domain": ["src/agent"], "runtime": []}
@@ -254,31 +254,31 @@ def _compat_fixture(tmp_path, *, change="src/agent/runtime_roles/session.py", ta
     path.write_text("new", encoding="utf-8")
     new = {"files": discover_files(root, "domain", scope=scope, registry_path=root / REGISTRY_RELATIVE_PATH)}
     registry = {"schema_version": "agent-version-registry.v2", "current_domain_version": target,
-                "domain_versions": {"domain-v67-20261012": old, target: new}, "scope": scope}
+                "domain_versions": {"domain-fixture-a": old, target: new}, "scope": scope}
     path = root / REGISTRY_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(json_bytes(registry))
-    body = {"version_id": "domain-v67-20261012", **old}
+    body = {"version_id": "domain-fixture-a", **old}
     ref = {"uri": "blobs/version", "sha256": hashlib.sha256(json_bytes(body)).hexdigest(), "media_type": "application/json"}
     source = SimpleNamespace(verified_versions=lambda: {"mode": "role_division", "domain_version": {
-        "identifier": "domain-v67-20261012", "evidence": {"blob": ref}}}, get_bytes=lambda _: json_bytes(body))
+        "identifier": "domain-fixture-a", "evidence": {"blob": ref}}}, get_bytes=lambda _: json_bytes(body))
     return source, root
 
 
 @pytest.mark.parametrize("change", ["src/agent/runtime_roles/session.py", "src/agent/runtime_roles/continuation.py",
                                     "src/agent/version_fingerprints.py"])
-def test_explicit_compatible_domain_pair_allows_only_reviewed_changes(tmp_path, change):
+def test_reader_continuation_rejects_changed_domain_even_for_runtime_glue(tmp_path, change):
     source, root = _compat_fixture(tmp_path, change=change)
-    result = domain.verify_domain_compatibility(source, root)
-    assert result["changed_files"] == [change]
+    with pytest.raises(ValueError, match="same domain version"):
+        domain.verify_domain_compatibility(source, root)
 
 
-@pytest.mark.parametrize(("change", "target"), [("src/agent/geometry.py", "domain-v68-20261012"),
-    ("src/agent/runtime_roles/unreviewed.py", "domain-v68-20261012"),
-    ("src/agent/runtime_roles/session.py", "domain-v69-20261012")])
+@pytest.mark.parametrize(("change", "target"), [("src/agent/geometry.py", "domain-fixture-b"),
+    ("src/agent/runtime_roles/unreviewed.py", "domain-fixture-b"),
+    ("src/agent/runtime_roles/session.py", "domain-fixture-c")])
 def test_geometry_new_files_and_unknown_versions_are_not_compatible(tmp_path, change, target):
     source, root = _compat_fixture(tmp_path, change=change, target=target)
-    with pytest.raises(ValueError, match="unreviewed|explicit"):
+    with pytest.raises(ValueError, match="same domain version"):
         domain.verify_domain_compatibility(source, root)
 
 
@@ -287,8 +287,8 @@ def test_same_version_requires_exact_registered_source_and_current_files(tmp_pat
     source, root = _compat_fixture(tmp_path)
     path = root / REGISTRY_RELATIVE_PATH
     registry = json.loads(path.read_bytes())
-    old = registry["domain_versions"]["domain-v67-20261012"]
-    registry["current_domain_version"] = "domain-v67-20261012"
+    old = registry["domain_versions"]["domain-fixture-a"]
+    registry["current_domain_version"] = "domain-fixture-a"
     path.write_bytes(json_bytes(registry))
     (root / "src/agent/runtime_roles/session.py").write_text("old", encoding="utf-8")
     assert domain.verify_domain_compatibility(source, root)["rule"] == "identical_release"
@@ -299,7 +299,7 @@ def test_same_version_requires_exact_registered_source_and_current_files(tmp_pat
 
 def test_source_version_evidence_cannot_claim_another_registered_snapshot(tmp_path):
     source, root = _compat_fixture(tmp_path)
-    source.get_bytes = lambda _: json_bytes({"version_id": "domain-v67-20261012", "files": {}})
+    source.get_bytes = lambda _: json_bytes({"version_id": "domain-fixture-a", "files": {}})
     with pytest.raises(ValueError, match="immutable registered"):
         domain.verify_domain_compatibility(source, root)
 
@@ -439,6 +439,12 @@ def planar_continuation(tmp_path, monkeypatch, request):
             "basis": "Offline planar continuation fixture; no independent quality claim.",
             "assumptions": [], "unresolved": [],
         }
+        plan["wall_metadata"] = [
+            {"target": target, "thickness_m": .1, "reference_side": "centerline",
+             "evidence_status": "inferred", "basis": "Synthetic continuation fixture assumption",
+             "source_refs": ["north.png:fixture"]}
+            for target in ("footprint:*", "partition:*")
+        ]
         trial = PlanTrial(None, image_name="north.png", workspace=workspace,
                           receipt_directory=workspace / "trial_receipts")
         receipt = asyncio.run(trial.run(plan))
@@ -520,7 +526,7 @@ def test_planar_continuation_rejects_changed_product_before_destination_mutation
     product_file, _ = product_identity(c.receipt)
     path = c.workspace / product_file
     path.write_bytes(path.read_bytes() + b" ")
-    with pytest.raises(ValueError, match="candidate changed|hash mismatch"):
+    with pytest.raises(ValueError, match="reading product changed|hash mismatch"):
         domain.import_reader_evidence(c.source, c.target)
     assert not c.target.registry.records
     assert not (c.target.store.directory / domain.MANIFEST).exists()

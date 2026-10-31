@@ -131,7 +131,8 @@ def test_regularization_reference_is_readable_after_whole_reply_compaction(tmp_p
         large = {f'field_{i}': [{'evidence': 'a' * 1100} for _ in range(8)] for i in range(12)}
         compact = compact_reply(run, 'assemble_plan_bim', {
             **large, 'source_geometry_ready': True, 'regularization': reference})
-        assert 'report_view' in compact and 'regularization' not in compact
+        assert 'report_view' in compact
+        assert compact['regularization'] == reference
         assert len(json.dumps(compact).encode()) <= 24000
         read = compact['report_view']['reference']['read']
         async with _server_session(run, readonly=False) as session:
@@ -153,15 +154,15 @@ def test_new_plan_retains_raw_input_and_full_audit_with_compact_reply(tmp_path):
     result = Toolkit(run).build_plan('plan.png', raw)
     assert result['source_geometry_ready'], result
     record = result['plan_input']
-    assert (run / record['submitted_plan_file']).read_text() == raw
-    effective = json.loads((run / record['plan_file']).read_text())
-    full = json.loads((run / result['regularization']['file']).read_text())
+    assert (run / record['submitted_plan_file']).read_text(encoding="utf-8") == raw
+    effective = json.loads((run / record['plan_file']).read_text(encoding="utf-8"))
+    full = json.loads((run / result['regularization']['file']).read_text(encoding="utf-8"))
     assert effective['regularization'] == full
     assert record['regularization'] == summary(full)
     assert hashlib.sha256((run / record['plan_file']).read_bytes()).hexdigest() == record['plan_sha256']
-    source = json.loads((run / result['candidate'] / 'source_model.json').read_text())
+    source = json.loads((run / result['candidate'] / 'source_model.json').read_text(encoding="utf-8"))
     assert source['generation']['provenance']['plan_input']['regularization'] == full
-    assert '几何规整清单' in (run / result['candidate'] / 'viewer.html').read_text()
+    assert '几何规整清单' in (run / result['candidate'] / 'viewer.html').read_text(encoding="utf-8")
     assert (run / result['candidate'] / 'regularization_report.json').is_file()
 
 
@@ -180,33 +181,30 @@ def test_thin_named_space_rejects_with_audit_and_without_a_candidate(tmp_path):
     assert not list(run.glob('candidate_*'))
 
 
-def test_legacy_policy_is_owned_by_the_run_manifest(tmp_path):
+@pytest.mark.parametrize("rule", [None, "legacy", "unregistered"])
+def test_frozen_run_requires_the_current_regularization_rule(tmp_path, rule):
     run = _run_with_one_image(tmp_path)
-    plan = example()
-    plan['partitions'][0]['points'] = [[1.5, 1], [1.5, 7]]
-    plan['openings'] = []
-    plan['space_seeds'] = []
-    raw = json.dumps(plan)
     toolkit = Toolkit(run)
-    toolkit.manifest['plan_regularization_rule'] = 'legacy'
-    result = toolkit.build_plan('plan.png', raw)
-    assert result['source_geometry_ready'], result
-    assert 'regularization' not in result
-    assert (run / result['plan_input']['plan_file']).read_text() == raw
-    toolkit.manifest.pop('plan_regularization_rule')
-    plan['regularization'] = {'rule_version': 'legacy', 'status': 'pass'}
-    assert toolkit.build_plan('plan.png', json.dumps(plan))['source_geometry_ready'] is False
+    if rule is None:
+        toolkit.manifest.pop("plan_regularization_rule")
+    else:
+        toolkit.manifest["plan_regularization_rule"] = rule
+    result = toolkit.build_plan("plan.png", json.dumps(example()))
+    assert result["source_geometry_ready"] is False
+    assert "unknown plan_regularization_rule" in json.dumps(result)
+    assert not list(run.glob("candidate_*"))
 
 
-def test_lite_grid_policy_is_explicit_and_trusted_not_inferred_for_history():
-    assert selected_grid_step({}) is None
-    assert selected_grid_step({'scope': 'use 0.1 m'}) is None
-    assert selected_grid_step({'lite_bim_grid_step_m': .1}) == .1
-    for value in (None, True, 0, .2, '0.1'):
-        with pytest.raises(ValueError, match='lite_bim_grid_step_m'):
-            selected_grid_step({'lite_bim_grid_step_m': value})
-    with pytest.raises(ValueError, match='legacy'):
-        selected_grid_step({'lite_bim_grid_step_m': .1, 'plan_regularization_rule': 'legacy'})
+def test_lite_grid_policy_is_explicit_and_trusted():
+    current = {"plan_regularization_rule": "plan_regularization_v1"}
+    assert selected_grid_step(current) is None
+    assert selected_grid_step({**current, "scope": "use 0.1 m"}) is None
+    assert selected_grid_step({**current, "lite_bim_grid_step_m": .1}) == .1
+    for value in (None, True, 0, .2, "0.1"):
+        with pytest.raises(ValueError, match="lite_bim_grid_step_m"):
+            selected_grid_step({**current, "lite_bim_grid_step_m": value})
+    with pytest.raises(ValueError, match="unknown plan_regularization_rule"):
+        selected_grid_step({"lite_bim_grid_step_m": .1})
 
 
 def test_cross_storey_failure_policy_is_owned_by_the_run_manifest():
@@ -367,12 +365,12 @@ def test_stack_saves_effective_drafts_and_full_floor_reports(tmp_path, perimeter
                          floor_id=f'L{index+1}', z_floor=index*3., evidence='test level'))
     assembled = toolkit.assemble_plans(json.dumps(rows))
     assert assembled['source_geometry_ready'], assembled
-    audit = json.loads((run / assembled['regularization']['file']).read_text())
+    audit = json.loads((run / assembled['regularization']['file']).read_text(encoding="utf-8"))
     assert audit['changes'] and set(audit['floor_reports']) == {'L1', 'L2'}
-    source = json.loads((run / assembled['candidate'] / 'source_model.json').read_text())
+    source = json.loads((run / assembled['candidate'] / 'source_model.json').read_text(encoding="utf-8"))
     html = render_regularization_html(source)
     assert '几何规整清单' in html and '移动' in html
-    binding = json.loads((run / assembled['plan_assembly']['file']).read_text())
+    binding = json.loads((run / assembled['plan_assembly']['file']).read_text(encoding="utf-8"))
     assert all((run / row['effective_plan_file']).is_file() for row in binding['floors'])
     assert all((run / name).read_bytes() == payload
                for name, payload in original_drafts.items())

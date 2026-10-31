@@ -15,7 +15,7 @@ from src.harness_contracts import (
     UsageReported,
 )
 
-from test_agent_runtime import MESSAGES, response, runtime
+from test_agent_runtime import MESSAGES, response, runtime, record_reserved_request
 
 
 def test_runtime_settlement_preserves_seconds_overrun_and_stops(tmp_path):
@@ -32,6 +32,7 @@ def test_runtime_settlement_preserves_seconds_overrun_and_stops(tmp_path):
         engine.store.append(
             BudgetEventPayload(action="reserve", reservation=reservation)
         )
+        record_reserved_request(engine, reservation)
         engine._load_budget()
         reason = engine._settle(
             reservation.reservation_id,
@@ -192,3 +193,16 @@ def test_output_reduction_changes_wire_request_and_records_decision(tmp_path):
         }
         assert decision["effective_estimate"]["estimate_source"] == decision[
             "token_estimate"]["source"]
+
+
+def test_settlement_rejects_missing_request_without_fabricating_image_accounting(tmp_path):
+    import pytest
+    engine = runtime(tmp_path, [])
+    reservation = BudgetReservation(reservation_id="missing-request", purpose="primary_task",
+        task_id=engine.store.task_id, amounts=BudgetAmounts(tokens=100, calls=1, seconds=Decimal("1")))
+    with engine.store:
+        engine.store.append(BudgetEventPayload(action="reserve", reservation=reservation))
+        engine._load_budget()
+        with pytest.raises(ValueError, match="requires its recorded adapter request"):
+            engine._settle(reservation.reservation_id, UsageReported(raw_usage={"total_tokens": 30}), seconds=.5)
+        assert not engine.budget.ledger.settlements

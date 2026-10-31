@@ -1,29 +1,17 @@
-"""Thin shim — the F-158 no-billed-calls gate now lives in the earliest-loaded
-plugin ``ep_no_billed_gate`` (repo root), pinned first in ``pyproject.toml``
-``addopts`` so it installs *before* any command-line ``-p`` plugin or initial
-conftest can bind a pre-gate ``socket.connect`` reference (see that module's
-docstring and verdict ``2026-09-03c_f158_crossreview_gpt`` B-1).
+"""Classify offline checks and expose the early network guard.
 
-The gate's hooks, fixture and install all live in the plugin and must NOT be
-duplicated here (that would double-fire them). This file only re-exports the
-plugin's public names so existing ``from conftest import ...`` keeps working,
-and importing it also guarantees the gate is installed even in the degraded case
-where ``addopts`` did not load the plugin as ``-p``.
+The no_billed_gate plugin is loaded first through pyproject.toml so provider
+connections are blocked before tests or other plugins can cache network APIs.
+The hooks are defined only there; this module re-exports the shared exception
+and local-address predicate for tests that need to inspect the guard.
 """
 
-from ep_no_billed_gate import (  # noqa: F401  (re-export for `from conftest import ...`)
+from no_billed_gate import (  # noqa: F401  (re-export for `from conftest import ...`)
     ProviderCallBlocked,
     _is_local,
 )
 
-# Fixture-only source copies for the old clean-room tests; no gate replacement.
-from tests.isolation_source_fixture import (  # noqa: F401
-    isolation_source_copy,
-    separate_cleanroom_source,
-)
-
-# Classify before importing test modules: historical imports can depend on
-# archive scripts that deliberately do not live in the product checkout.
+# Classify checks before importing their modules.
 import os
 from pathlib import Path
 
@@ -57,23 +45,6 @@ def pytest_sessionstart(session):
     scope = os.environ.get("SIM_BIM_TEST_SCOPE", "fast")
     if scope not in GROUPS:
         raise pytest.UsageError(f"unknown SIM_BIM_TEST_SCOPE: {scope}")
-    for argument in session.config.args:
-        candidate = Path(str(argument).split("::", 1)[0])
-        if not candidate.is_absolute():
-            candidate = Path(session.config.invocation_params.dir) / candidate
-        if candidate.suffix != ".py":
-            continue
-        try:
-            entry = inventory().get(candidate.resolve().relative_to(ROOT).as_posix())
-        except ValueError:
-            continue
-        if entry and entry["group"] == "historical" and scope != "historical":
-            raise pytest.UsageError("Historical checks require explicit archive opt-in: scripts/dev/check.py historical")
-    if scope == "historical":
-        for key in ("SIM_BIM_TEST_ARCHIVE_ROOT", "SIM_BIM_TEST_CASES_ROOT"):
-            value = os.environ.get(key)
-            if not value or not Path(value).is_absolute() or not Path(value).is_dir():
-                raise pytest.UsageError(f"historical checks require an explicit existing absolute {key}")
 
 
 def pytest_ignore_collect(collection_path, config):
@@ -100,14 +71,8 @@ def pytest_ignore_collect(collection_path, config):
             return True
         raise pytest.UsageError(f"Unclassified test: {relative}; add it to tests/check_groups.json or select its file explicitly")
     group = entry["group"]
-    if group == "historical":
-        if explicit and scope != "historical":
-            raise pytest.UsageError(f"{relative} is an optional historical check; use scripts/dev/check.py historical with explicit archive/cases roots")
-        return scope != "historical"
     if explicit:
         return False
-    if scope == "historical":
-        return True
     if scope == "node":
         return group == "targeted"
     return scope == "fast" and group != "fast"
@@ -123,19 +88,19 @@ def pytest_collection_modifyitems(config, items):
             entry = None
         if entry:
             item.add_marker(getattr(pytest.mark, entry["group"]))
-        if (scope not in {"node", "historical"} and item.get_closest_marker("mutation")
+        if (scope != "node" and item.get_closest_marker("mutation")
                 and not _explicit_file(config, path)):
-            item.add_marker(pytest.mark.skip(reason="mutation matrix belongs to node/historical checks"))
+            item.add_marker(pytest.mark.skip(reason="mutation matrix belongs to node checks"))
 
 
 def pytest_report_header(config):
     scope = os.environ.get("SIM_BIM_TEST_SCOPE", "fast")
-    return (f"Sim BIM check scope: {scope}; classified selection, not all test modules. "
-            "Historical evidence requires explicit archive opt-in; fast excludes node/optional targeted checks. "
+    return (f"Sim-BIM check scope: {scope}; classified selection, not all test modules. "
+            "Fast excludes node/optional targeted checks. "
             "The no-billed-calls gate remains active.")
 
 
 def pytest_terminal_summary(terminalreporter):
     scope = os.environ.get("SIM_BIM_TEST_SCOPE", "fast")
     terminalreporter.write_line(f"Coverage boundary: {scope} / explicitly selected modules only; "
-                              "unselected node, optional targeted and historical modules are not covered.")
+                              "unselected node and optional targeted modules are not covered.")

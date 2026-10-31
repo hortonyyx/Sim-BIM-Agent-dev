@@ -1,7 +1,6 @@
-"""Candidate exports remain bounded without silently sharing a six-save quota."""
+"""Candidate exports obey a shared explicit quota across sessions."""
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -41,10 +40,10 @@ def test_seventh_revision_persists_and_explicit_limit_preserves_prior_candidates
     assert all(runner.digest(run / name / 'source_model.json') == sha for name, sha in hashes.items())
 
 
-def test_legacy_manifest_still_reports_six_and_stdio_exposes_configured_budget(tmp_path):
+def test_stdio_exposes_configured_budget(tmp_path):
     async def scenario():
         run, toolkit = setup_run(tmp_path)
-        assert toolkit.candidate_budget() == {'limit': 6, 'used': 0, 'remaining': 6}
+        assert toolkit.candidate_budget() == {'limit': 24, 'used': 0, 'remaining': 24}
         manifest = json.loads((run / 'inputs.json').read_text())
         manifest['max_candidates'] = 11
         runner.dump(run / 'inputs.json', manifest)
@@ -58,24 +57,22 @@ def test_legacy_manifest_still_reports_six_and_stdio_exposes_configured_budget(t
 
 @pytest.mark.parametrize('value', [0, -1, True, 2.5, '24'])
 def test_invalid_limit_does_not_create_run_or_invoke_model(tmp_path, value):
+    from src.agent.bim_inputs import prepare_bim_inputs
     with pytest.raises(ValueError, match='max_candidates'):
-        runner.run_experiment(SimpleNamespace(out=tmp_path / 'new', max_candidates=value))
+        prepare_bim_inputs(tmp_path / 'new', images_path=None, mesh_path=None,
+            building_input_path=None, scope='invalid budget', image_kind='drawings',
+            max_candidates=value)
     assert not (tmp_path / 'new').exists()
 
 
-def test_new_run_freezes_default_and_configured_limit(tmp_path, monkeypatch):
+def test_new_run_freezes_default_and_configured_native_limit(tmp_path):
+    from src.agent.runtime_entry import parser, prepare_inputs
     old, _ = setup_run(tmp_path)
-    limits = []
-    def invoke(run, prompt, **kwargs):
-        manifest = json.loads((run / 'inputs.json').read_text())
-        limits.append(manifest['max_candidates'])
-        assert runner.Toolkit(run).candidate_budget()['limit'] == manifest['max_candidates']
-        record = {'returncode':0, 'elapsed_seconds':1,
-                  'result':{'is_error':False, 'result':'No candidate in synthetic test', 'total_cost_usd':0}}
-        runner.dump(run / 'agent_receipt.json', record)
-        return record
-    monkeypatch.setattr(runner, 'subscription', invoke)
-    for name, options in [('default', {}), ('custom', {'max_candidates':9})]:
-        runner.run_experiment(SimpleNamespace(images=old / 'images', out=tmp_path / name,
-            scope='synthetic budget configuration', timeout=60, **options))
-    assert limits == [24, 9]
+    default = parser().parse_args(['--provider', 'scripted', '--out', str(tmp_path / 'default')]).max_candidates
+    for name, limit in [('default', default), ('custom', 9)]:
+        run, _, _ = prepare_inputs(tmp_path / name, images=old / 'images', mesh=None,
+            building_input=None, scope='budget configuration', image_kind='drawings',
+            max_candidates=limit)
+        manifest = json.loads((run / 'inputs.json').read_bytes())
+        assert manifest['max_candidates'] == limit
+        assert runner.Toolkit(run).candidate_budget()['limit'] == limit

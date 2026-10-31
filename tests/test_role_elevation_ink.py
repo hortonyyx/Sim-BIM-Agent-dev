@@ -64,7 +64,7 @@ def test_aligns_all_four_edges_and_ignores_legacy_evidence_box_as_geometry():
     result = align_elevation_artifact(image, artifact, search_distance_m=0.5)
     aligned = result["openings"][0]
 
-    assert aligned["geometry_source"] == "legacy_x_px_and_calibrated_heights"
+    assert aligned["geometry_source"] == "x_px_and_calibrated_heights"
     assert aligned["original_bbox_px"] == pytest.approx([37, 33, 93, 77])
     assert aligned["aligned_bbox_px"] == pytest.approx([40, 30, 90, 80])
     assert {edge["status"] for edge in aligned["edges"].values()} == {"aligned"}
@@ -332,7 +332,7 @@ def test_height_evidence_uses_aligned_opening_box_for_its_source_region():
     assert located["source_box"] == [37, 28, 63, 62]
 
 
-def test_legacy_expanded_recording_stays_readable_but_is_not_public_schema():
+def test_expanded_recording_cannot_bypass_current_elevation_submission_schema():
     x_schema = elevation_submission_tool()["inputSchema"]["properties"]["x_calibration"]
     assert "world_start_m" not in x_schema["properties"]
     recorded = {
@@ -347,11 +347,9 @@ def test_legacy_expanded_recording_stays_readable_but_is_not_public_schema():
         },
     }
 
-    expanded = expand_elevation_submission(recorded, "North/F1")
-
-    assert expanded == recorded
-    with pytest.raises(ValueError):
-        expand_elevation_submission({**recorded, "orientation": "South"}, "North/F1")
+    from jsonschema import ValidationError
+    with pytest.raises(ValidationError):
+        expand_elevation_submission(recorded, "North/F1")
 
 
 @pytest.mark.parametrize("basis", ["annotation", "annotation_and_pixels", "visual_estimate", "assumption", "declared"])

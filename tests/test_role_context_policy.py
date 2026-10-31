@@ -116,16 +116,16 @@ def test_effective_context_uses_role_defaults_then_global_and_role_overrides():
     assert effective_role_context("plan_reader").compact_at_tokens is None
     value = effective_role_context("plan_reader", global_defaults={
         "context_tokens": 220_000, "compact_at_tokens": 120_000,
-        "active_window_messages": 18, "max_images": 5, "max_image_bytes": 9_000_000,
+        "max_images": 5, "max_image_bytes": 9_000_000,
     }, role_overrides=RoleContextOverrides(
         context_tokens=180_000, compact_at_tokens=90_000, max_images=2))
     assert value.model_dump(mode="json") == {
-        "context_tokens": 180_000, "active_window_messages": 18,
+        "context_tokens": 180_000,
         "compact_at_tokens": 90_000, "compact_to_ratio": 0.3,
-        "large_result_bytes": 8192, "max_images": 2, "max_image_bytes": 9_000_000,
+        "max_images": 2, "max_image_bytes": 9_000_000,
     }
     policy = context_policy_from_effective("plan_reader", value)
-    assert policy.compact_at_tokens == 90_000 and policy.active_window_messages == 18
+    assert policy.compact_at_tokens == 90_000
     assert policy.max_images == 2 and policy.max_image_bytes == 9_000_000
 
 

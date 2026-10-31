@@ -26,23 +26,17 @@ def _prepare(tmp_path, monkeypatch, *, images=False):
     source = _asset(tmp_path / 'source.glb')
     declaration = tmp_path / 'building.json'
     declaration.write_text('{"use":"synthetic","unknown_path":"private.glb"}')
-    captured = {}
-    def offline(run, prompt, **kwargs):
-        captured.update(prompt=prompt, manifest=runner.Toolkit(run).manifest, kwargs=kwargs)
-        record = {'elapsed_seconds': 0, 'result': {'is_error': False, 'total_cost_usd': 0}}
-        runner.dump(run / 'agent_receipt.json', record)
-        return record
-    monkeypatch.setattr(runner, 'subscription', offline)
-    argv = ['runner', 'run', '--mesh', str(source), '--building-input', str(declaration),
-            '--out', str(tmp_path / 'run'), '--timeout', '30']
+    from src.agent.bim_inputs import prepare_bim_inputs
+    folder = None
     if images:
-        from PIL import Image
         folder = tmp_path / 'originals'; folder.mkdir()
         Image.new('RGB', (10, 10), 'white').save(folder / 'plan.png')
-        argv += ['--images', str(folder)]
-    monkeypatch.setattr(sys, 'argv', argv)
-    runner.main()
-    return source, tmp_path / 'run', captured
+    run = tmp_path / 'run'
+    manifest = prepare_bim_inputs(run, images_path=folder, mesh_path=source,
+        building_input_path=declaration, scope='synthetic mesh admission',
+        image_kind=None, max_candidates=24)
+    return source, run, {'manifest': manifest}
+
 
 
 @pytest.mark.parametrize('images', [False, True])
@@ -52,12 +46,11 @@ def test_native_asset_input_and_optional_images_keep_exact_originals(tmp_path, m
     manifest = captured['manifest']
     assert len(manifest['images']) == int(images)
     assert manifest['mesh_input']['sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
-    assert manifest['input_mode'] == 'native_mesh_agent_experiment'
+    assert manifest['input_mode'] == 'native_mesh'
     assert manifest['input_contents']['original_png_images']['included'] is images
     assert manifest['input_contents']['ground_truth_or_evaluation']['included'] is False
     assert not (run / 'mesh_observations').exists()  # no developer-prepared cameras
     assert not (run / 'private.glb').exists()
-    assert captured['kwargs']['model'] == 'sonnet'
 
 
 def test_mesh_stdio_renders_measures_and_rejects_unadmitted_or_changed_asset(tmp_path, monkeypatch):
@@ -115,11 +108,12 @@ def test_tall_mesh_view_preserves_metric_aspect_instead_of_stretching_angles(tmp
     asyncio.run(scenario())
 
 
-def test_empty_input_is_rejected_before_subscription(tmp_path, monkeypatch):
-    monkeypatch.setattr(sys, 'argv', ['runner','run','--out',str(tmp_path/'run')])
-    monkeypatch.setattr(runner, 'subscription', lambda *a, **k: pytest.fail('unexpected model call'))
+def test_empty_input_is_rejected_before_tools_or_models(tmp_path):
+    from src.agent.bim_inputs import prepare_bim_inputs
     with pytest.raises(ValueError, match='provide PNG drawings or a native'):
-        runner.main()
+        prepare_bim_inputs(tmp_path / 'run', images_path=None, mesh_path=None,
+            building_input_path=None, scope='synthetic', image_kind=None, max_candidates=1)
+    assert not (tmp_path / 'run').exists()
 
 
 def test_mesh_frame_and_overlay_reach_stdio_and_preserve_saved_geometry(tmp_path, monkeypatch):
@@ -154,7 +148,7 @@ def test_mesh_frame_and_overlay_reach_stdio_and_preserve_saved_geometry(tmp_path
                 'observation':observation,'pixels':[[600,600]],'candidate':candidate}))
             x,y,z = points['queries'][0]['world_xyz']
             assert points['queries'][0]['source_xyz'] == pytest.approx([3-y,4+x,z])
-            source = json.loads((run/candidate/'source_model.json').read_text())
+            source = json.loads((run/candidate/'source_model.json').read_text(encoding="utf-8"))
             html = (run/candidate/'viewer.html').read_text(encoding='utf-8')
             start = html.index('window.GEO = ') + len('window.GEO = ')
             embedded = json.loads(html[start:html.index(';</script>', start)])

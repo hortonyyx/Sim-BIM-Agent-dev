@@ -83,7 +83,7 @@ def test_packet_copies_only_admitted_bytes_and_one_optional_candidate(prepared):
         assert _sha(parent / relative) == _sha(child / relative) == digest
         assert (parent / relative).stat().st_ino != (child / relative).stat().st_ino
     assert set(packet["child_file_sha256"]) == {
-        "inputs.json", "assets/input.glb", "images/sketch.png", "building_input.json", "resume_plan.json",
+        "inputs.json", "assets/input.glb", "images/sketch.png", "building_input.json",
         "candidate_01/source_model.json", "candidate_01/report.json", "candidate_01/proposal.json",
         "mesh_observations/mesh_001.json", "mesh_observations/mesh_001.png", "mesh_observations/mesh_001.npz"}
     assert not (child / "private_gt.json").exists()
@@ -126,7 +126,7 @@ def test_raw_mesh_packet_does_not_depend_on_any_candidate(prepared):
 
 @pytest.mark.parametrize("where", ["parent", "child"])
 @pytest.mark.parametrize("relative", ["assets/input.glb", "images/sketch.png", "building_input.json",
-    "resume_plan.json", "candidate_01/source_model.json", "mesh_observations/mesh_001.json",
+    "candidate_01/source_model.json", "mesh_observations/mesh_001.json",
     "mesh_observations/mesh_001.png", "mesh_observations/mesh_001.npz"])
 def test_changed_packet_dependency_is_rejected(prepared, where, relative):
     _admit_auxiliary_inputs(prepared[0])

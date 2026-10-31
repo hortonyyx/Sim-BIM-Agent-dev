@@ -1,4 +1,4 @@
-"""Tests for the offline interactive 3D geometry viewer generator (backlog #3).
+"""Tests for the offline interactive source BIM viewer.
 
 The rendered result needs a browser to confirm visually (headless container); these
 tests assert the generated HTML is self-contained + offline + carries the geometry
@@ -30,6 +30,20 @@ _GEO = {
         {"name": "win1", "parent": "w1", "verts": [[1, 0, 1], [3, 0, 1], [3, 0, 2], [1, 0, 2]]},
     ],
 }
+
+_GEO["source_model"] = {
+    "schema_version": "source_bim_v2",
+    "floors": [{"id": f"F{i}", "name": f"F{i}", "z_floor": z, "height": 3,
+                "footprint": [[0, 0], [4, 0], [4, 4], [0, 4]]} for i, z in [(1, 0), (2, 3)]],
+    "spaces": [{"id": f"Z{i}", "floor_id": f"F{i}", "role": "unknown", "z_floor": z, "height": 3,
+                "polygon": [[0, 0], [4, 0], [4, 4], [0, 4]]} for i, z in [(1, 0), (2, 3)]],
+    "boundaries": [{"id": row["name"], "space_id": row["zone"], "kind": "physical",
+                    "geometry_type": "wall", "vertices": row["verts"]} for row in _GEO["surfaces"]],
+    "openings": [{"id": "win1", "kind": "window", "space_ids": ["Z1"],
+                  "vertices": _GEO["windows"][0]["verts"]}],
+    "opening_hosts": {"win1": ["w1"]}, "connections": [],
+}
+
 
 
 def test_viewer_is_offline_and_self_contained():
@@ -172,6 +186,7 @@ def test_geometry_cannot_break_out_of_script():
             "surfaces": [{"name": "n", "zone": "z", "type": "Wall", "obc": "Outdoors",
                           "verts": [[0, 0, 0], [1, 0, 0], [1, 0, 1]]}],
             "windows": []}
+    evil["source_model"] = copy.deepcopy(_GEO["source_model"])
     html = rgv.build_viewer_html(evil, title="t")
     # exactly the 4 legitimate <script> blocks, none injected by the data
     assert html.count("<script>") == 4 and html.count("</script>") == 4
@@ -200,7 +215,7 @@ def test_viewer_without_roles_falls_back_to_white_zone_fill():
     html = rgv.build_viewer_html(_GEO, title="t")  # no roles
     start = html.index("window.GEO = ") + len("window.GEO = ")
     geo = json.loads(html[start:html.index(";</script>", start)])
-    assert geo["roles"] == {}  # empty → JS HAS_ROLES false → legacy white zone fill
+    assert geo["roles"] == {}  # empty → JS HAS_ROLES false → white zone fill
 
 
 def test_source_spanning_spaces_are_filter_members_without_slicing_geometry():
@@ -230,6 +245,13 @@ def test_source_spanning_spaces_are_filter_members_without_slicing_geometry():
         "public_names": {"floors": {"F1": "F1", "CORE": "Core", "F2": "F2"}},
         "validation": {"status": "pass"}, "openings": [], "connections": [],
     }
+    for floor in data["source_model"]["floors"]:
+        floor["footprint"] = [[0, 0], [2, 0], [2, 1], [0, 1]]
+    for space in data["source_model"]["spaces"]:
+        space["polygon"] = ([[1, 0], [2, 0], [2, 1], [1, 1]] if space["id"] == "core"
+                            else [[0, 0], [1, 0], [1, 1], [0, 1]])
+    data["source_model"]["opening_hosts"] = {}
+    data["source_model"].pop("public_names")
     html = rgv.build_viewer_html(data, title="spanning")
     start = html.index("window.GEO = ") + len("window.GEO = ")
     embedded = json.loads(html[start:html.index(";</script>", start)])
@@ -246,42 +268,25 @@ def test_source_spanning_spaces_are_filter_members_without_slicing_geometry():
     assert "zoneFloors[z]=declared.length ? declared : [zoneFloor[z]]" in html
 
 
-def test_legacy_viewer_keeps_geometric_floor_fallback():
-    html = rgv.build_viewer_html(_GEO, title="legacy")
+def test_viewer_uses_declared_source_floors():
+    html = rgv.build_viewer_html(_GEO, title="source floors")
     start = html.index("window.GEO = ") + len("window.GEO = ")
     geo = json.loads(html[start:html.index(";</script>", start)])
-    assert geo["source_model"] is None and geo["public_names"]["floors"] == []
-    assert "cluster((floorSurf.length ? floorSurf : SURF).map(zmin))" in html
+    assert geo["source_model"] == _GEO["source_model"]
+    assert [row["id"] for row in geo["public_names"]["floors"]] == ["F1", "F2"]
+    assert geo["floor_memberships"] == {"Z1": [0], "Z2": [1]}
 
 
-def test_discover_roles_prefers_zone_meta_then_legacy_correction(tmp_path):
-    """zone→role auto-discovery prefers building_geometry zone_meta because
-    deterministic public names differ from correction cell ids."""
-    run = tmp_path / "run_x"
-    (run / "2_modelling").mkdir(parents=True)
-    (run / "1_correction").mkdir(parents=True)
-    bg = run / "2_modelling" / "building_geometry.json"
-    bg.write_text(json.dumps({
-        "zones": ["Z01_F1_Office_W", "Z02_F1_Meeting_E"],
-        "zone_meta": [
-            {"name": "Z01_F1_Office_W", "role": "office", "cell_id": "A", "fi": 0},
-            {"name": "Z02_F1_Meeting_E", "role": "meeting", "cell_id": "B", "fi": 0},
-        ],
-        "surfaces": [], "windows": [],
-    }), encoding="utf-8")
-    (run / "1_correction" / "correction_geometry.json").write_text(json.dumps({
-        "floors": [{"cells": [{"id": "A", "role": "wrong"}, {"id": "B", "role": "wrong"}]}]
-    }), encoding="utf-8")
-    assert rgv.discover_roles(bg) == {"Z01_F1_Office_W": "office", "Z02_F1_Meeting_E": "meeting"}
-
-    legacy = run / "2_modelling" / "legacy_building_geometry.json"
-    legacy.write_text(json.dumps({"zones": ["A", "B"], "surfaces": [], "windows": []}), encoding="utf-8")
-    assert rgv.discover_roles(legacy) == {"A": "wrong", "B": "wrong"}
-
-    # missing sibling → empty (graceful, viewer falls back to white)
-    lone = tmp_path / "lonely.json"
-    lone.write_text(json.dumps({"zones": [], "surfaces": [], "windows": []}), encoding="utf-8")
-    assert rgv.discover_roles(lone) == {}
+def test_discover_roles_reads_only_display_geometry_metadata(tmp_path):
+    path = tmp_path / "display_geometry.json"
+    path.write_text(json.dumps({"zone_meta": [
+        {"name": "Z1", "role": "office"}, {"name": "Z2", "role": "meeting"},
+    ]}), encoding="utf-8")
+    (tmp_path / "unrelated.json").write_text(json.dumps({"zone_meta": [
+        {"name": "Z1", "role": "wrong"}]}), encoding="utf-8")
+    assert rgv.discover_roles(path) == {"Z1": "office", "Z2": "meeting"}
+    path.write_text(json.dumps({"zones": ["Z1", "Z2"]}), encoding="utf-8")
+    assert rgv.discover_roles(path) == {}
 
 
 def test_app_js_parses_with_node(tmp_path):

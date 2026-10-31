@@ -74,47 +74,6 @@ def test_scripted_tool_returns_at_half_near_and_hard_deadline(tmp_path, monkeypa
     asyncio.run(scenario())
 
 
-def test_scripted_model_timeout_delivers_latest_complete_even_after_partial_selection(tmp_path, monkeypatch):
-    old = _run_with_one_image(tmp_path)
-    _add_image(old, "upstairs.png")
-    events = []
-    def scripted_model(run, prompt, **kwargs):
-        toolkit = runner.Toolkit(run)
-        plan = dict(floor_id="local", z_floor=0, ceiling_height=3,
-            x_anchors=[[0, 0], [11, 11]], y_anchors=[[0, 7], [7, 0]], basis="synthetic frame",
-            footprint_pixels=[[1, 1], [10, 1], [10, 6], [1, 6]],
-            partitions=[], openings=[], assumptions=[], unresolved=[])
-        rows = []
-        for index, image in enumerate(["plan.png", "upstairs.png"], 1):
-            built = toolkit.build_plan(image, json.dumps(plan))
-            rows.append(dict(draft_id=f"draft_{index:03d}",
-                expected_plan_sha256=built["plan_input"]["plan_sha256"], floor_id=f"F{index}",
-                z_floor=3*(index-1), evidence="synthetic floor scope"))
-        full = toolkit.assemble_plans(json.dumps(rows))
-        partial = toolkit.build_plan("plan.png", json.dumps(plan))
-        runner.dump(run / "delivery_selection.json", {"candidate": partial["candidate"]})
-        # Simulate a process killed halfway through its next save; older complete
-        # building and the failure must both survive final handoff.
-        torn = run / "candidate_05"
-        torn.mkdir()
-        (torn / "source_model.json").write_text('{"floors":')
-        (torn / "report.json").write_text('{"status":')
-        assert saved_floor_status(toolkit)["missing_draft_images"] == []
-        assert fallback_selection(toolkit)[0] == full["candidate"]
-        events.append((full["candidate"], partial["candidate"]))
-        record = dict(returncode=-15, elapsed_seconds=6000, timed_out=True, result={})
-        runner.dump(run / "agent_receipt.json", record)
-        return record
-    monkeypatch.setattr(runner, "subscription", scripted_model)
-    out = tmp_path / "scripted"
-    runner.run_experiment(SimpleNamespace(images=old / "images", out=out, scope="synthetic two floors",
-        timeout=6000, provider="glm", image_kind="drawings", floor_plan_images=["plan.png", "upstairs.png"]))
-    delivery = json.loads((out / "delivery.json").read_text())
-    assert delivery["candidate"] == events[0][0]
-    assert delivery["selection_origin"] == "latest_complete_fallback_not_agent_selected"
-    assert delivery["floor_completeness"]["complete_building"]
-    assert delivery["generation_status"]["timed_out"]
-    assert delivery["floor_completeness"]["unreadable_saved_candidates"][0]["candidate"] == "candidate_05"
 
 
 def test_single_floor_fallback_reports_missing_upper_floor(tmp_path):
@@ -140,22 +99,3 @@ def test_no_complete_candidate_still_delivers_latest_viewable_severe_draft(tmp_p
     assert delivery["viewer_exists"]
     assert delivery["floor_completeness"]["complete_building"] is False
     assert delivery["floor_completeness"]["candidate_source_geometry_ready"] is False
-
-
-def test_subscription_wait_uses_remaining_deadline_and_never_launches_after_expiry(tmp_path, monkeypatch):
-    run = _clocked_run(tmp_path)
-    clock, waits = [6500], []
-    monkeypatch.setattr(runner.time, "time", lambda: clock[0])
-    class ScriptedProcess:
-        returncode = 0
-        def __init__(self, command, **kwargs):
-            kwargs["stdout"].write(json.dumps(dict(type="system", subtype="init", model="claude-sonnet-5")) + "\n")
-        def communicate(self, prompt, timeout):
-            waits.append(timeout)
-    monkeypatch.setattr(runner.subprocess, "Popen", ScriptedProcess)
-    monkeypatch.setattr("src.agent_runtime.versions.source_commit", lambda root: "offline-git-fixture")
-    runner.subscription(run, "fixture", model="sonnet", name="first", timeout=6000)
-    assert waits == [500]
-    clock[0] = 7000
-    receipt = runner.subscription(run, "fixture", model="sonnet", name="expired", timeout=6000)
-    assert waits == [500] and receipt["timed_out"] and receipt["model_process_started"] is False

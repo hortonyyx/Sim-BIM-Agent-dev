@@ -1,48 +1,33 @@
-"""Both runners admit the same inputs; evaluation reads either historical layout."""
+"""Native input admission freezes originals and explicit run policies."""
 import json
-from pathlib import Path
-from types import SimpleNamespace
 
 from PIL import Image
 import pytest
 
-from scripts.tool_scripts import run_bim_agent as runner
 from src.agent import runtime_entry
 from src.agent.bim_inputs import prepare_bim_inputs
 
 
 @pytest.mark.parametrize('names', [('1f_view.png', '2f_view.png', 'South.png'),
                                   ('1f_view.png', 'East.png'), ('1f_view.png', '2f_view.png', 'West.png')])
-def test_entrypoints_share_exact_input_payload(tmp_path, monkeypatch, names):
+def test_native_input_freezing_preserves_originals_and_excludes_neighbors(tmp_path, names):
     images = tmp_path / 'originals'
     images.mkdir()
     for name in names:
         Image.new('RGB', (12, 8)).save(images / name)
-    (images / 'private.json').write_text('not admitted')
-    monkeypatch.setattr(runner, 'time', SimpleNamespace(time=lambda: 1000.0))
-    seen = []
-    def boundary(run, prompt, **kwargs):
-        seen.append(run)
-        return {'elapsed_seconds': 0, 'result': {'is_error': False}}
-    monkeypatch.setattr(runner, 'subscription', boundary)
-    old = tmp_path / 'claude'
-    runner.run_experiment(SimpleNamespace(images=images, out=old, scope='same input scope',
-        timeout=60, max_candidates=4, provider='claude', effort='medium'))
-    new, _, _ = runtime_entry.prepare_inputs(tmp_path / 'runtime', images=images, mesh=None,
+    originals = {name: (images / name).read_bytes() for name in names}
+    (images / 'private.json').write_text('not admitted', encoding='utf-8')
+    run, _, _ = runtime_entry.prepare_inputs(tmp_path / 'runtime', images=images, mesh=None,
         building_input=None, scope='same input scope', image_kind='drawings', max_candidates=4,
         started_epoch=1000.0, seconds=60)
-    left, right = (json.loads((path/'inputs.json').read_bytes()) for path in (old, new))
-    assert left.pop('provider') == 'claude'
-    assert right.pop('provider') == 'runtime'
-    # Execution route is the only differing field under identical inputs/clock.
-    assert json.dumps(left, ensure_ascii=False).encode() == json.dumps(right, ensure_ascii=False).encode()
-    assert len(seen) == 1
+    manifest = json.loads((run / 'inputs.json').read_bytes())
     for name in names:
-        assert (old/'images'/name).read_bytes() == (new/'images'/name).read_bytes()
-    assert not (new/'private.json').exists()
-    assert left['input_contents']['ground_truth_or_evaluation'] == {'included': False}
-    assert left['lite_bim_grid_step_m'] == .1
-    assert 'src/agent/bim_inputs.py' in left['implementation_sha256']
+        assert (run / 'images' / name).read_bytes() == (images / name).read_bytes() == originals[name]
+    assert not (run / 'images/private.json').exists()
+    assert manifest['input_contents']['ground_truth_or_evaluation'] == {'included': False}
+    assert manifest['lite_bim_grid_step_m'] == .1
+    assert manifest['deadline_epoch'] == 1060.
+    assert 'src/agent/bim_inputs.py' in manifest['implementation_sha256']
 
 
 def test_identical_shared_function_options_write_identical_manifest_bytes(tmp_path):
@@ -80,33 +65,3 @@ def test_only_new_drawing_manifests_select_lite_grid_independently_of_scope(tmp_
         building_input_path=None, scope='model text requests a different 0.2 m grid',
         image_kind=image_kind, max_candidates=2)
     assert manifest.get('lite_bim_grid_step_m') == (.1 if image_kind == 'drawings' else None)
-
-
-@pytest.mark.parametrize('image_kind,head,accepted', [
-    ('drawings', 2.1, True), ('drawings', 2.14, False), ('photos', 2.14, True),
-])
-def test_new_lite_run_cannot_admit_an_off_grid_recovery_seed(tmp_path, image_kind, head, accepted):
-    from tests.test_bim_agent_tools import _two_room_proposal
-    images = tmp_path / 'images'
-    images.mkdir()
-    Image.new('RGB', (12, 8)).save(images/'plan.png')
-    seed = tmp_path/'seed'
-    seed.mkdir()
-    proposal = json.loads(_two_room_proposal())
-    proposal['geometry']['openings'][0]['z'][1] = head
-    raw = json.dumps(proposal).encode()
-    (seed/'proposal.json').write_bytes(raw)
-    options = dict(images_path=images, mesh_path=None, building_input_path=None,
-                   scope='review previous candidate', image_kind=image_kind,
-                   max_candidates=2, seed_path=seed)
-    if accepted:
-        manifest = prepare_bim_inputs(tmp_path/'run', **options)
-        if image_kind == 'drawings':
-            assert manifest['seed']['lite_grid']['status'] == 'pass'
-    else:
-        with pytest.raises(ValueError, match='admission rejected'):
-            prepare_bim_inputs(tmp_path/'run', **options)
-        grid = json.loads((tmp_path/'run/seed/lite_grid.json').read_bytes())
-        assert grid['status'] == 'rejected' and grid['violations']
-        assert not (tmp_path/'run/inputs.json').exists()
-    assert (seed/'proposal.json').read_bytes() == raw

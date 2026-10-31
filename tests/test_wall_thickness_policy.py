@@ -4,7 +4,7 @@ import copy
 import pytest
 from PIL import Image
 
-from src.agent.correction.parse import ensure_corrected_geometry
+from src.agent.geometry_model.parse import parse_geometry
 from src.agent.geometry.lite_bim_regularization import regularize_lite_plan, compiled_grid_report
 from src.agent.geometry.plan_partition import compile_plan_partition
 from src.agent.geometry.plan_regularization import regularize_plan_stack
@@ -69,7 +69,7 @@ def test_connected_different_thickness_segments_survive_source_binding():
     assert {r['thickness_m'] for r in adopted['wall_metadata'] if r['target'].startswith('partition:')} == {.12, .24}
     proposal, mapping = compile_plan_partition(adopted, image_size=IMAGE_SIZE, image_name='plan.png')
     readings = [wall_reading_input(adopted, mapping)]
-    source = build_source_bim(ensure_corrected_geometry(proposal['geometry']),
+    source = build_source_bim(parse_geometry(proposal['geometry']),
                              capability_profile='orthogonal_polygon', wall_readings=readings)
     patch = bind_wall_readings(source, readings)
     assert {r['thickness_m'] for r in patch['component_attributes']} >= {.12, .24}
@@ -230,7 +230,7 @@ def test_door_across_thickness_change_keeps_area_connectivity_and_logical_id():
     adopted, _ = regularize_lite_plan(plan, image_size=IMAGE_SIZE)
     proposal, mapping = compile_plan_partition(adopted, image_size=IMAGE_SIZE, image_name='plan.png')
     readings = [wall_reading_input(adopted, mapping)]
-    source = build_source_bim(ensure_corrected_geometry(proposal['geometry']),
+    source = build_source_bim(parse_geometry(proposal['geometry']),
                              capability_profile='orthogonal_polygon', wall_readings=readings)
     assert len(source['openings']) == 2
     assert source['opening_segment_groups']['D'] == ['D', 'D::thickness-2']
@@ -238,15 +238,12 @@ def test_door_across_thickness_change_keeps_area_connectivity_and_logical_id():
     assert sum(abs(o['vertices'][1][1] - o['vertices'][0][1]) for o in source['openings']) == pytest.approx(1)
     assert bind_wall_readings(source, readings)['component_attributes']
     from src.agent.geometry.opening_review import opening_inventory, review_openings
-    from src.agent.execution.ep_branch import derive_ep_geometry
     assert opening_inventory(source)['counts']['door'] == 1
     from tests.test_opening_review import _images
     review = dict(floor_id='F1', kind='door', image='plan.png', coverage='complete', marks=[
         dict(mark_id='D', box=[1, 2, 10, 12], opening_ids=['D'],
              space_ids=source['openings'][0]['space_ids'], basis='visible')])
     assert not review_openings(source, review, _images())['findings']
-    derive_ep_geometry(source, {s['id']: s['id'] for s in source['spaces']}, opening_policy={
-        'D': dict(state='closed', construction='Default_Door', reason='Synthetic closed door')})
 
 
 def test_window_across_perimeter_thickness_change_keeps_complete_aperture():
@@ -257,7 +254,7 @@ def test_window_across_perimeter_thickness_change_keeps_complete_aperture():
     adopted, _ = regularize_lite_plan(plan, image_size=IMAGE_SIZE)
     proposal, mapping = compile_plan_partition(adopted, image_size=IMAGE_SIZE, image_name='plan.png')
     readings = [wall_reading_input(adopted, mapping)]
-    source = build_source_bim(ensure_corrected_geometry(proposal['geometry']),
+    source = build_source_bim(parse_geometry(proposal['geometry']),
                              capability_profile='orthogonal_polygon', wall_readings=readings)
     assert len(source['openings']) == 2
     assert source['opening_segment_groups']['W'] == ['W', 'W::thickness-2']

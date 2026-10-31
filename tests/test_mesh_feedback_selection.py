@@ -95,9 +95,9 @@ def test_optional_calibration_failure_keeps_bim_and_unlocated_diagnostics(tmp_pa
 
 
 def test_diagnostic_identity_collision_does_not_hide_the_actual_floor():
-    from src.agent.correction.schema import CorrectedGeometry
+    from src.agent.geometry_model.schema import GeometryInput
     from src.agent.geometry.source_bim import build_source_bim
-    geometry=CorrectedGeometry.model_validate({'schema_version':'2',
+    geometry=GeometryInput.model_validate({'schema_version':'2',
         'footprint_x':[0,6],'footprint_y':[0,6], 'windows':[], 'openings':[],
         'floors':[{'name':'F1','z_floor':0,'ceiling_height':3,
                    'cells':[{'id':'F2','x':[0,6],'y':[0,6]}]},
@@ -140,12 +140,12 @@ def test_source_geometry_and_membership_changes_are_not_mistaken_for_labels(tmp_
 
 
 def _small_source():
-    from src.agent.correction.parse import ensure_corrected_geometry
-    from src.agent.correction.schema import FootprintRing
+    from src.agent.geometry_model.parse import parse_geometry
+    from src.agent.geometry_model.schema import FootprintRing
     from src.agent.geometry.source_bim import build_source_bim
     value = plan()
     value['instances'] = [dict(id=f'F{i+1}', template='typical', z=3*i, height=3) for i in range(3)]
-    geometry = ensure_corrected_geometry(expand_parametric_proposal(value)['geometry'])
+    geometry = parse_geometry(expand_parametric_proposal(value)['geometry'])
     for floor in geometry.floors:
         floor.footprint = FootprintRing.model_validate(floor.footprint)
     return build_source_bim(geometry, capability_profile='orthogonal_polygon')

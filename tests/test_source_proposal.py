@@ -61,11 +61,11 @@ def test_direct_proposal_exports_independent_source_bim_with_openings(tmp_path):
     assert report["counts"]["openings"] == 2
     assert report["provenance"] == {"input": "agent"}
     assert report["proposal_sha256"] == hashlib.sha256((out / "proposal.json").read_bytes()).hexdigest()
-    assert report["source_model_sha256"] == json.loads((out / "source_model.json").read_text())["source_model_sha256"]
-    source = json.loads((out / "source_model.json").read_text())
+    assert report["source_model_sha256"] == json.loads((out / "source_model.json").read_text(encoding="utf-8"))["source_model_sha256"]
+    source = json.loads((out / "source_model.json").read_text(encoding="utf-8"))
     assert proposal["assumptions"][0] in source["assumptions"]
     assert source["generation"]["unresolved"] == proposal["unresolved"]
-    assert json.loads((out / "proposal.json").read_text()) == proposal
+    assert json.loads((out / "proposal.json").read_text(encoding="utf-8")) == proposal
     assert (out / "display_geometry.json").exists()
     viewer = (out / "viewer.html").read_text(encoding="utf-8")
     assert "&lt;墙体位置由平面推断&gt;" in viewer
@@ -83,7 +83,7 @@ def test_invalid_opening_still_exports_candidate_with_severe_finding(tmp_path):
     assert not report["source_geometry_ready"]
     assert report["counts"]["spaces"] == 2
     assert report["counts"]["unbuilt_openings"] == 1
-    source = json.loads((out / "source_model.json").read_text())
+    source = json.loads((out / "source_model.json").read_text(encoding="utf-8"))
     assert source["unbuilt_openings"][0]["id"] == "door"
     assert (out / "viewer.html").exists()
 
@@ -98,15 +98,15 @@ def test_room_observations_and_function_basis_survive_export_without_becoming_wa
     before = copy.deepcopy(proposal)
     target = tmp_path / "with_evidence"
     assert export_source_proposal(proposal, target)["source_geometry_ready"]
-    source = json.loads((target / "source_model.json").read_text())
+    source = json.loads((target / "source_model.json").read_text(encoding="utf-8"))
     room = next(s for s in source["spaces"] if s["id"] == "room")
-    assert room["source_refs"] == ["correction:floor/F1/cell/room", *cell["source_refs"]]
+    assert room["source_refs"] == ["geometry:floor/F1/cell/room", *cell["source_refs"]]
     assert room["assumptions"] == cell["assumptions"]
     assert room["role_evidence"] == cell["role_evidence"]
     assert all("desks" not in str(b["source_refs"]) for b in source["boundaries"])
-    display = json.loads((target / "display_geometry.json").read_text())
+    display = json.loads((target / "display_geometry.json").read_text(encoding="utf-8"))
     assert display["source_model"]["spaces"] == source["spaces"]
-    assert json.loads((target / "proposal.json").read_text()) == before == proposal
+    assert json.loads((target / "proposal.json").read_text(encoding="utf-8")) == before == proposal
     # A retained evidence record cannot silently certify a different new role.
     cell["role"] = "storage"
     failed = export_source_proposal(proposal, tmp_path / "mismatch")
@@ -129,7 +129,7 @@ def test_conflicting_window_kinds_are_reported_together_without_retyping(tmp_pat
     assert "geometry.openings" in report["error"]
     assert "other_space_id=null" in report["error"]
     assert proposal == original
-    assert json.loads((out / "proposal.json").read_text()) == original
+    assert json.loads((out / "proposal.json").read_text(encoding="utf-8")) == original
     assert not (out / "source_model.json").exists()
     assert not (out / "viewer.html").exists()
 
@@ -144,10 +144,10 @@ def test_explicit_window_kind_and_exterior_door_keep_their_declared_types(tmp_pa
     out = tmp_path / "explicit_types"
     report = export_source_proposal(proposal, out)
     assert report["source_geometry_ready"]
-    source = json.loads((out / "source_model.json").read_text())
+    source = json.loads((out / "source_model.json").read_text(encoding="utf-8"))
     kinds = {opening["id"]: opening["kind"] for opening in source["openings"]}
     assert kinds == {"window": "window", "door": "door", "external_door": "door"}
-    assert json.loads((out / "proposal.json").read_text()) == proposal
+    assert json.loads((out / "proposal.json").read_text(encoding="utf-8")) == proposal
 
 
 def test_proposal_output_never_overwrites_or_invents_a_run_record(tmp_path):
@@ -164,7 +164,7 @@ def test_proposal_output_never_overwrites_or_invents_a_run_record(tmp_path):
     report = export_source_proposal({"geometry": {}, "assumptions": [], "unresolved": [], "windows": []}, failed)
     assert report["status"] == "error"
     assert "unknown windows" in report["error"]
-    assert json.loads((failed / "report.json").read_text())["status"] == "error"
+    assert json.loads((failed / "report.json").read_text(encoding="utf-8"))["status"] == "error"
 
 
 def test_export_retains_complete_local_edit_audit_and_rehashes_source(tmp_path):
@@ -181,7 +181,7 @@ def test_export_retains_complete_local_edit_audit_and_rehashes_source(tmp_path):
     ])
     assert parent == original
     export_source_proposal(revised, tmp_path / "candidate")
-    source = json.loads((tmp_path / "candidate" / "source_model.json").read_text())
+    source = json.loads((tmp_path / "candidate" / "source_model.json").read_text(encoding="utf-8"))
 
     audit = revised["geometry"]["corrections"]
     assert source["generation"]["corrections"] == audit

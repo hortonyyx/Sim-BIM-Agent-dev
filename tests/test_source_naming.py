@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from src.agent.correction.schema import CorrectedGeometry
+from src.agent.geometry_model.schema import GeometryInput
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_naming import build_public_names, viewer_names
@@ -25,7 +25,7 @@ def proposal():
 
 
 def source():
-    return build_source_bim(CorrectedGeometry.model_validate(proposal()["geometry"]), capability_profile="orthogonal_polygon")
+    return build_source_bim(GeometryInput.model_validate(proposal()["geometry"]), capability_profile="orthogonal_polygon")
 
 
 def test_catalog_is_exact_pinned_upstream_plus_explicit_unknown():
@@ -105,7 +105,7 @@ def horizontal_aperture_source():
     for i in range(2):
         geometry["floors"].append({"name": f"level-{i}", "z_floor": 3*i, "ceiling_height": 3,
             "cells": [{"id": f"stairs-{i}", "role": "stairwell", "x": [0, 3], "y": [0, 3]}]})
-    s = build_source_bim(CorrectedGeometry.model_validate(geometry), capability_profile="orthogonal_polygon")
+    s = build_source_bim(GeometryInput.model_validate(geometry), capability_profile="orthogonal_polygon")
     ceiling = next(b["id"] for b in s["boundaries"] if b["space_id"] == "stairs-0" and b["geometry_type"] == "ceiling")
     floor = next(b["id"] for b in s["boundaries"] if b["space_id"] == "stairs-1" and b["geometry_type"] == "floor")
     for oid, x in [("north", 1.75), ("south", .25)]:
@@ -150,8 +150,8 @@ def test_concave_ring_has_six_ccw_walls_from_southernmost_westernmost():
     p = proposal()["geometry"]
     ring = [[0, 0], [8, 0], [8, 4], [4, 4], [4, 8], [0, 8]]
     p["floors"][0]["cells"] = [{"id": "L", "role": "corridor", "x": [0, 8], "y": [0, 8], "polygon": ring}]
-    from src.agent.correction.schema import FootprintRing
-    geom = CorrectedGeometry.model_validate(p)
+    from src.agent.geometry_model.schema import FootprintRing
+    geom = GeometryInput.model_validate(p)
     geom.windows = []; geom.openings = []
     geom.floors[0].footprint = FootprintRing(vertices=ring)
     s = build_source_bim(geom, capability_profile="orthogonal_polygon")
@@ -206,10 +206,10 @@ def test_export_rejects_invented_roles_preserves_input_and_uses_unknown(tmp_path
     del p["geometry"]["floors"][0]["cells"][0]["role"]
     report = export_source_proposal(p, tmp_path / "unknown")
     assert report["source_geometry_ready"]
-    s = json.loads((tmp_path / "unknown/source_model.json").read_text())
+    s = json.loads((tmp_path / "unknown/source_model.json").read_text(encoding="utf-8"))
     assert next(x for x in s["spaces"] if x["id"] == "west")["role"] == "unknown"
     assert "_Unknown_" in s["public_names"]["spaces"]["west"]
-    assert json.loads((tmp_path / "unknown/proposal.json").read_text()) == p
+    assert json.loads((tmp_path / "unknown/proposal.json").read_text(encoding="utf-8")) == p
 
 
 def test_view_names_cover_objects_fragments_regions_and_edges_without_mutation():
@@ -231,8 +231,7 @@ def test_view_names_cover_objects_fragments_regions_and_edges_without_mutation()
     assert all(len(n["parts"][bid]) == len(rows) for bid, rows in d["display_surface_parts"].items())
 
 
-def test_repeated_directions_follow_existing_order_per_floor_and_use_and_work_in_ep():
-    from src.agent.execution.ep_branch import derive_ep_geometry
+def test_repeated_directions_follow_existing_order_per_floor_and_use():
 
     geometry = {"schema_version": "2", "footprint_x": [0, 16], "footprint_y": [0, 8],
                 "floors": [], "windows": []}
@@ -243,7 +242,7 @@ def test_repeated_directions_follow_existing_order_per_floor_and_use_and_work_in
                   {"id": f"{fi}-north-east", "role": "meeting", "x": [8, 16], "y": [4, 8]}]
         geometry["floors"].append({"name": f"PLAN.F{fi}", "z_floor": 3*(fi-1), "ceiling_height": 3,
                                    "cells": list(reversed(cells))})
-    s = build_source_bim(CorrectedGeometry.model_validate(geometry), capability_profile="orthogonal_polygon")
+    s = build_source_bim(GeometryInput.model_validate(geometry), capability_profile="orthogonal_polygon")
     before = copy.deepcopy(s)
     names = s["public_names"]
     assert names["scheme_version"] == "bim_names_v3"
@@ -255,7 +254,6 @@ def test_repeated_directions_follow_existing_order_per_floor_and_use_and_work_in
     for key in ("floors", "spaces", "boundaries"):
         s[key].reverse()
     assert build_public_names(s) == names
-    derive_ep_geometry(before, names["spaces"])
     assert s["spaces"] == list(reversed(before["spaces"]))
 
 
@@ -270,7 +268,7 @@ def test_old_source_plan_uses_current_public_labels_and_filename_without_mutatio
     s["source_model_sha256"] = _digest({k: v for k, v in s.items() if k != "source_model_sha256"})
     candidate = tmp_path / "candidate_01"
     candidate.mkdir()
-    (tmp_path / "inputs.json").write_text('{"images": {}}', encoding="utf-8")
+    (tmp_path / "inputs.json").write_text('{"images": {}, "plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24}', encoding="utf-8")
     path = candidate / "source_model.json"
     path.write_text(json.dumps(s), encoding="utf-8")
     before = path.read_bytes()
@@ -311,7 +309,7 @@ def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_
     p = proposal()
     p["assumptions"] = ["Room west on ground-original; window high remains <unconfirmed>."]
     p["unresolved"] = ["Check shared between west and east. Image images/west.png remains original."]
-    (tmp_path / "inputs.json").write_text('{"images": {}}', encoding="utf-8")
+    (tmp_path / "inputs.json").write_text('{"images": {}, "plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24}', encoding="utf-8")
     toolkit = Toolkit(tmp_path)
     built = toolkit.build(p)
     candidate = tmp_path / built["candidate"]

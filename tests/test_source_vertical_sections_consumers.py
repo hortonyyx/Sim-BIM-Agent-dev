@@ -4,14 +4,13 @@ from copy import deepcopy
 from PIL import Image
 import pytest
 
-from src.agent.execution.ep_branch import derive_ep_geometry
 from src.agent.geometry.source_floor_selection import select_source_floor
 from src.agent.geometry.source_image_overlay import render_source_overlay
 from src.agent.geometry.source_model import _digest
 from src.agent.geometry.source_plan_view import render_source_plan
 from src.agent.geometry.source_space_relations import review_space_relations, revalidate_saved_relation_review
 from src.agent.geometry.source_vertical_continuity import review_vertical_continuity
-from src.agent.judge.source_partition import compare_partitions
+from scripts.dev.evaluation.source_partition import compare_partitions
 
 
 def rectangle(x1):
@@ -103,9 +102,6 @@ def test_partition_evaluator_cannot_score_a_flat_projection_as_a_stepped_match()
         assert report['findings'][0]['code'] == 'vertical_sections_not_supported'
 
 
-def test_ep_rejects_stepped_geometry_before_constructing_a_prism():
-    with pytest.raises(ValueError, match='vertical sections; no prism approximation'):
-        derive_ep_geometry(source(), {'office': 'Office'})
 
 
 def test_vertical_continuity_uses_actual_interface_not_overall_projection():

@@ -9,6 +9,33 @@ from src.agent.geometry.source_plan_view import render_source_plan
 from src.agent.geometry.source_space_relations import review_space_relations
 
 
+def _complete_source(source):
+    """Give the synthetic spatial fixture explicit footprints and opening hosts."""
+    from shapely.geometry import LineString
+
+    source["boundaries"] = []
+    for floor in source["floors"]:
+        spaces = [row for row in source["spaces"] if row["floor_id"] == floor["id"]]
+        points = [point for space in spaces for point in space["polygon"]]
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        floor["footprint"] = [[min(xs), min(ys)], [max(xs), min(ys)],
+                              [max(xs), max(ys)], [min(xs), max(ys)]]
+    for space in source["spaces"]:
+        ring = space["polygon"]
+        lo, hi = space["z_floor"], space["z_floor"] + space["height"]
+        for i, (a, b) in enumerate(zip(ring, ring[1:] + ring[:1])):
+            source["boundaries"].append({"id": f"{space['id']}/wall/{i}",
+                "space_id": space["id"], "geometry_type": "wall", "kind": "physical",
+                "vertices": [[*a, lo], [*b, lo], [*b, hi], [*a, hi]]})
+    source["opening_hosts"] = {
+        opening["id"]: [row["id"] for row in source["boundaries"]
+            if row["space_id"] in opening["space_ids"]
+            and LineString([v[:2] for v in row["vertices"][:2]]).covers(
+                LineString([v[:2] for v in opening["vertices"][:2]]))]
+        for opening in source["openings"]}
+    return source
+
+
 def _source(*, f2_references_core=True):
     floors = [
         {"id": "F1", "z_floor": 0, "height": 3, "spanning_space_ids": ["core"]},
@@ -38,6 +65,7 @@ def _source(*, f2_references_core=True):
               "connections": [
                   {"opening_id": row["id"], "kind": "door", "space_ids": row["space_ids"]}
                   for row in openings if row["kind"] == "door"]}
+    _complete_source(source)
     source["source_model_sha256"] = _digest(source)
     return source
 
@@ -113,6 +141,7 @@ def test_same_level_annex_connection_remains_visible_on_both_floor_group_plans()
     source["connections"] = [
         {"opening_id": "annex_door", "kind": "door", "space_ids": ["main", "annex"]},
     ]
+    _complete_source(source)
     source["source_model_sha256"] = _digest({key: value for key, value in source.items()
                                                if key != "source_model_sha256"})
     for floor_id, space_id in [("MAIN", "main"), ("ANNEX", "annex")]:

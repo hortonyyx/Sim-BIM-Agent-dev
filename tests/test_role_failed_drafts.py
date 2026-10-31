@@ -47,7 +47,7 @@ def test_precompiler_geometry_failure_is_durable_readable_and_locally_repairable
                           receipt_directory=tmp_path / "trial_receipts")
         first = await trial.run(unhosted_plan())
         assert first["status"] == "failed" and first["compiled_numeric_plan_sha256"] is None
-        assert "hosts" in first["reason"] and tools.calls == []
+        assert first["unhosted_openings"][0]["opening"] == "D1" and tools.calls == []
         assert first["editable_draft"]["editable"] is True
         partial = await trial.run(operations=[op(op="update", collection="openings", id="D1",
                                                  changes={"z": [0, 2.2]})])
@@ -65,7 +65,7 @@ def test_precompiler_geometry_failure_is_durable_readable_and_locally_repairable
         original = example()["openings"][0]
         passed = await resumed.run(operations=[op(op="update", collection="openings", id="D1",
                                                   changes={key: original[key] for key in ("p1", "p2")})])
-        assert passed["status"] == "passed" and len(tools.calls) == 1
+        assert passed["status"] == "passed" and tools.calls == []
         assert resumed.verified_plan(passed["plan_sha256"])[0]["openings"][0]["z"] == [0, 2.2]
     asyncio.run(scenario())
 
@@ -76,14 +76,14 @@ def test_format_failures_remain_explicit_and_cannot_bypass_complete_validation(t
         trial = PlanTrial(Tools(workspace=tmp_path), image_name="plan.png", workspace=tmp_path,
                           receipt_directory=tmp_path / "trial_receipts")
         incomplete = example()
-        incomplete.pop("ceiling_height")
+        incomplete.pop("x_anchors")
         first = await trial.run(incomplete)
         assert first["error_type"] == "plan_format" and first["editable_draft"]["editable"]
         still_bad = await trial.run(operations=[op(op="set", field="basis", value="updated observation")])
         assert still_bad["status"] == "failed" and trial.tools.calls == []
         with pytest.raises(ValueError, match="successful isolated trial"):
             trial.verified_plan(still_bad["plan_sha256"])
-        repaired = await trial.run(operations=[op(op="set", field="ceiling_height", value=3)])
+        repaired = await trial.run(operations=[op(op="set", field="x_anchors", value=example()["x_anchors"])])
         assert repaired["status"] == "passed"
         assert trial.read_draft(trial_id="trial_001", field="plan")["plan"] == incomplete
         duplicate = example()
@@ -100,12 +100,18 @@ def test_format_failures_remain_explicit_and_cannot_bypass_complete_validation(t
     asyncio.run(scenario())
 
 
-def test_failed_object_deletion_and_invalid_operations_keep_last_passed_plan():
+def test_failed_object_deletion_and_invalid_operations_keep_last_passed_plan(tmp_path, monkeypatch):
     async def scenario():
-        trial = PlanTrial(Tools(), image_name="plan.png")
+        workspace(tmp_path)
+        trial = PlanTrial(Tools(), image_name="plan.png", workspace=tmp_path,
+                          receipt_directory=tmp_path / "trial_receipts")
         passed = await trial.run(example())
-        trial.tools.ready = False
-        deleted = await trial.run(operations=[op(op="remove", collection="openings", id="D1")])
+        assert passed["status"] == "passed"
+        def failed_compiler(*args, **kwargs):
+            raise ValueError("synthetic local compiler failure after the declared deletion")
+        with monkeypatch.context() as patch:
+            patch.setattr("src.agent.runtime_roles.plan_reading.build_reading", failed_compiler)
+            deleted = await trial.run(operations=[op(op="remove", collection="openings", id="D1")])
         assert deleted["status"] == "failed"
         assert trial.baseline()[1] == deleted["plan_sha256"]
         with pytest.raises(ValueError, match="does not exist"):
@@ -147,14 +153,18 @@ def test_profile_evidence_survives_failure_before_numeric_product(tmp_path):
     asyncio.run(scenario())
 
 
-def test_reader_has_read_only_draft_inspection_without_compilation():
+def test_reader_has_read_only_draft_inspection_without_compilation(tmp_path):
     async def scenario():
-        trial = PlanTrial(Tools(ready=False), image_name="plan.png")
-        await trial.run(example())
+        workspace(tmp_path)
+        trial = PlanTrial(Tools(), image_name="plan.png", workspace=tmp_path,
+                          receipt_directory=tmp_path / "trial_receipts")
+        value = unhosted_plan()
+        assert (await trial.run(value))["status"] == "failed"
         reader = ReaderTools(Frozen(), role_id="plan_reader", image_name="plan.png", trial=trial)
         result = await reader.call_tool("read_plan_draft", {"field": "openings", "object_id": "D1"})
-        assert result["structuredContent"]["value"] == example()["openings"][0]
-        assert len(trial.tools.calls) == 1 and reader.repeatability("read_plan_draft") == "read_only"
+        assert result["structuredContent"]["value"] == value["openings"][0]
+        assert trial.tools.calls == [] and len(trial.receipts) == 1
+        assert reader.repeatability("read_plan_draft") == "read_only"
         assert reader.recovery_policy("read_plan_draft") == "retry_read"
         elevation = ReaderTools(Frozen(), role_id="elevation_reader", image_name="plan.png")
         with pytest.raises(ValueError, match="outside elevation_reader"):

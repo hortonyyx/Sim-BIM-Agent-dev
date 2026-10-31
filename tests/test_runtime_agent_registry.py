@@ -1,4 +1,4 @@
-"""V1: immutable history, independent release lines and startup refusal."""
+"""Current immutable releases, developer registration and startup refusal."""
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +10,8 @@ import subprocess
 import pytest
 
 from src.agent_runtime.agent_registry import (AgentVersionMismatch, agent_version_record,
-    discover_files, load_agent_registry, main, migrate_registry, register_versions, release_records)
+    discover_files, load_agent_registry, release_records)
+from scripts.dev.agent_versions import main, register_versions
 from src.agent_runtime.store import EventStore
 from src.agent_runtime.versions import make_versions, version_labels
 from src.harness_contracts import BudgetAmounts, VersionManifest
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _scratch(tmp_path):
     root = tmp_path / "repository"
-    for name in ("src/agent_runtime/loop.py", "src/agent_runtime/route_dispatch.json", "src/agent/tool.py"):
+    for name in ("src/agent_runtime/loop.py", "src/agent_runtime/route_dispatch.json", "src/harness_contracts/base.py", "src/agent/tool.py"):
         file = root / name
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("{}\n", encoding="utf-8")
@@ -29,13 +30,17 @@ def _scratch(tmp_path):
         "mode_fingerprints": {name: {key: "b" * 64 for key in
             ("sha256", "tools_sha256", "guidance_sha256", "task_template_sha256")}
             for name in ("single_model/coordinator", "role_division/plan_reader")}}
-    old = {"schema_version": "agent-version-registry.v1", "current_version": "old-20261006",
-           "versions": {"old-20261006": {"source_commit": "fixture", "files":
-               discover_files(root, "domain"), "tool_catalog_sha256": fingerprints["tool_catalog_sha256"]}}}
+    scope = {"runtime": ["src/agent_runtime", "src/harness_contracts"], "domain": ["src/agent"]}
+    (root / "src/agent_runtime/model_profiles.json").write_text("{}", encoding="utf-8")
+    (root / "uv.lock").write_text("version = 1", encoding="utf-8")
+    registry = {"schema_version": "agent-version-registry.v2", "scope": scope, "aliases": {},
+        "current_runtime_version": "runtime-v1-20261007", "current_domain_version": "domain-v1-20261007",
+        "runtime_versions": {"runtime-v1-20261007": {"source_commit": "fixture",
+            "coverage": "automatic_directories", "files": discover_files(root, "runtime", scope=scope)}},
+        "domain_versions": {"domain-v1-20261007": {"source_commit": "fixture",
+            "coverage": "automatic_directories", "files": discover_files(root, "domain", scope=scope), **fingerprints}}}
     path = root / "registry.json"
-    path.write_text(json.dumps(old), encoding="utf-8")
-    register_versions(root, registry_path=path, registration_date="20261007", fingerprints=fingerprints,
-                      legacy_order=["old-20261006"])
+    path.write_text(json.dumps(registry), encoding="utf-8")
     return root, path, fingerprints
 
 
@@ -43,7 +48,7 @@ def _scratch(tmp_path):
 
 def test_automatic_membership_verification_and_independent_version_lines(tmp_path, monkeypatch):
     root, path, fingerprints = _scratch(tmp_path)
-    monkeypatch.setattr("src.agent_runtime.agent_registry.source_commit", lambda root: "fixture")
+    monkeypatch.setattr("scripts.dev.agent_versions.source_commit", lambda root: "fixture")
     original = path.read_bytes()
     noop = register_versions(root, registry_path=path, fingerprints=fingerprints)
     assert noop["changed_lines"] == noop["changed_modes"] == []
@@ -87,19 +92,21 @@ def test_fingerprint_change_reports_only_affected_mode_and_retains_history(tmp_p
         assert after["domain_versions"][key] == value
 
 
-def test_current_cli_and_manifest_include_both_lines_and_all_role_parameters(tmp_path, capsys):
-    assert main(["verify", "--root", str(ROOT)]) == 0
+def test_current_cli_and_manifest_include_both_lines_and_all_role_parameters(tmp_path, capsys, monkeypatch):
+    root, path, _ = _scratch(tmp_path)
+    monkeypatch.setenv("BIM_AGENT_REGISTRY_PATH", str(path))
+    assert main(["verify", "--root", str(root)]) == 0
     identity = json.loads(capsys.readouterr().out)
     routes = {name: {"provider": "offline", "model": f"model-{name}", "reasoning_effort": effort,
                     "output_tokens": 1234, "temperature": 0.0}
               for name, effort in (("coordinator", "high"), ("plan_reader", "medium"), ("elevation_reader", "low"))}
     with EventStore(tmp_path / "run", run_id="versions", task_id="coordinator",
                     budget_limit=BudgetAmounts(tokens=100, calls=1)) as store:
-        args = dict(root=ROOT, prompt="test", tools=[], parameters={"max_tokens": 1234},
+        args = dict(root=root, prompt="test", tools=[], parameters={"max_tokens": 1234},
                     route={"route_id": "offline", "model": "test", "roles": {"roles": routes}})
         versions = make_versions(store, **args)
-        assert versions.runtime_version.identifier == identity["runtime_version"]
-        assert versions.domain_version.identifier == identity["domain_version"]
+        assert versions.runtime_version.identifier == identity["runtime"]["version_id"]
+        assert versions.domain_version.identifier == identity["domain"]["version_id"]
         assert versions.mode == "role_division"
         assert versions.role_models["elevation_reader"]["reasoning_effort"] == "low"
         assert versions.role_models["plan_reader"]["output_tokens"] == 1234
@@ -108,10 +115,6 @@ def test_current_cli_and_manifest_include_both_lines_and_all_role_parameters(tmp
         args["route"] = {"route_id": "offline", "model": "model-plan_reader"}
         child_versions = make_versions(child, **args)
         assert version_labels(child_versions) == version_labels(versions)
-        # Old journals remain readable; absent new fields are not fabricated.
-        old = {key: value for key, value in versions.model_dump(mode="json").items()
-               if key not in {"runtime_version", "domain_version", "mode", "role_models"}}
-        assert VersionManifest.model_validate(old).runtime_version is None
 
 
 def test_domain_provider_tracks_live_role_guidance_without_changing_single_model(monkeypatch):
@@ -120,16 +123,13 @@ def test_domain_provider_tracks_live_role_guidance_without_changing_single_model
     before = asyncio.run(domain_fingerprints())
     assert len(before["mode_fingerprints"]) == 9
     assert {"mesh_workers/coordinator", "mesh_workers/observer"} <= set(before["mode_fingerprints"])
-    registered = agent_version_record(ROOT)
-    assert before["mode_fingerprints"] == registered["mode_fingerprints"]
-    assert before["tool_catalog_sha256"] == registered["tool_catalog_sha256"]
     monkeypatch.setitem(ROLE_GUIDANCE, "plan_reader", ROLE_GUIDANCE["plan_reader"] + "\nChanged instruction.")
     after = asyncio.run(domain_fingerprints())
     assert [name for name in before["mode_fingerprints"]
             if before["mode_fingerprints"][name] != after["mode_fingerprints"][name]] == ["role_division/plan_reader"]
 
 
-def test_registry_rejects_escape_and_incomplete_migration(tmp_path):
+def test_registry_rejects_escape_old_schema_and_historical_identity(tmp_path):
     root, path, _ = _scratch(tmp_path)
     registry = load_agent_registry(root, path)
     registry["domain_versions"][registry["current_domain_version"]]["files"]["../outside.py"] = {
@@ -137,5 +137,18 @@ def test_registry_rejects_escape_and_incomplete_migration(tmp_path):
     path.write_text(json.dumps(registry), encoding="utf-8")
     with pytest.raises(AgentVersionMismatch):
         release_records(root, registry_path=path)
-    with pytest.raises(ValueError):
-        migrate_registry(root, {"schema_version": "agent-version-registry.v1", "versions": {"one": {}}}, legacy_order=[])
+    registry["schema_version"] = "agent-version-registry.v1"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    with pytest.raises(AgentVersionMismatch, match="unsupported"):
+        load_agent_registry(root, path)
+
+
+def test_historical_metadata_stays_in_dev_and_cannot_run(tmp_path, capsys):
+    root, path, fingerprints = _scratch(tmp_path)
+    previous = load_agent_registry(root, path)["current_domain_version"]
+    (root / "src/agent/tool.py").write_text("changed", encoding="utf-8")
+    register_versions(root, registry_path=path, fingerprints=fingerprints)
+    with pytest.raises(AgentVersionMismatch, match="not current"):
+        agent_version_record(root, previous, registry_path=path)
+    assert main(["verify", "--root", str(root), "--registry", str(path), "--version", previous, "--lookup"]) == 0
+    assert json.loads(capsys.readouterr().out)["version_id"] == previous

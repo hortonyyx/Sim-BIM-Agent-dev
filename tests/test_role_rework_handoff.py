@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from src.agent.runtime_roles.plan_format import audit_plan_replacement
-from src.agent.runtime_roles.trial import PlanTrial
+from src.agent.runtime_roles.trial import PlanTrial, canonical_plan_sha256
 from src.agent.runtime_roles.trial import _expanded_rework_targets, normalize_rework_targets
 from src.agent.runtime_roles.session import envelope
 from src.agent_runtime.adapter import ScriptedAdapter
@@ -65,8 +65,9 @@ def test_rework_session_keeps_full_submission_review_before_any_adapter_request(
     receipt = asyncio.run(prior.run(value))
     # An accepted delivery can retain an earlier successful geometry while also
     # reviewing a warning discovered in a later, unsuccessful trial.
-    review = [*receipt["topology_issues"], {"issue_id": "later-failed-trial", "divider": "P2"}]
-    session.registry.save(task, status="completed", artifact={"plan": value, "evidence": [], "unresolved": []},
+    review = [*receipt.get("topology_issues", []), {"issue_id": "later-failed-trial", "divider": "P2"}]
+    compiled = prior.numeric_plan(receipt)
+    session.registry.save(task, status="completed", artifact={"plan": compiled, "evidence": [], "unresolved": []},
                           validation={**receipt, "validation_passed": True, "topology_issues": review})
     captured = {}
 
@@ -79,7 +80,7 @@ def test_rework_session_keeps_full_submission_review_before_any_adapter_request(
 
     def stop_at_adapter_boundary(*args):
         trial = captured["trial"]
-        assert trial.baseline() == (value, receipt["plan_sha256"])
+        assert trial.baseline() == (compiled, canonical_plan_sha256(compiled))
         assert trial.allowed_rework_targets == ["plan.openings:D1"]
         assert trial.inherited_topology_issues == review
         raise ValueError("handoff checked without requesting an adapter")
@@ -94,27 +95,14 @@ def test_rework_session_keeps_full_submission_review_before_any_adapter_request(
 
 
 class RecoveryTools(Tools):
-    """Deterministic compiler transport; actual declaration/scope checks stay live."""
-
-    async def call_tool(self, name, arguments):
-        result = await super().call_tool(name, arguments)
-        result["structuredContent"].update(drawing_differences={"total": 0, "items": []},
-                                            building_precision={"items": []})
-        if self.ready and self.workspace:
-            result["content"][0]["data"] = base64.b64encode(
-                (self.workspace / "images/north.png").read_bytes()).decode("ascii")
-            (self.workspace / "candidate_01/precision_report.json").write_text(
-                json.dumps({"status": "reported", "items": []}), encoding="utf-8")
-        return result
-
-    def image_origins(self, raw):
-        digest = hashlib.sha256(base64.b64decode(raw["content"][0]["data"])).hexdigest()
-        return {digest: {"sent_sha256": digest, "origin_status": "trial overlay"}}
+    """Tools remain unused: plan trials compile the actual 2D reading locally."""
 
 
-def _append_trial(child, receipt, *, outcome=None):
+def _append_trial(child, receipt, *, outcome=None, audit=True):
     outcome = outcome or ("succeeded" if receipt["status"] == "passed" else "failed")
-    captured = child.capture(envelope(receipt, error=outcome != "succeeded"))
+    from src.agent.runtime_roles.trial_feedback import passed_receipt
+    shown = passed_receipt(receipt) if audit and receipt["status"] == "passed" and "receipt_audit" not in receipt else receipt
+    captured = child.capture(envelope(shown, error=outcome != "succeeded"))
     return child.append(ToolExecutionPayload(
         call_id=f"trial-{len(child.events)}", tool_name="trial_plan_bim", full_arguments={"plan": {}},
         raw_result=captured, shown_result=captured, repeatability="non_idempotent_write",
@@ -271,7 +259,7 @@ def test_passed_unsubmitted_recovery_rejects_changed_products(environment, produ
     session = make()
     _, child, prior, _, passed, _, _ = _passed_unsubmitted(session, profile=True, topology=True)
     if product == "event":
-        changed = {**passed, "candidate_source_sha256": "0" * 64}
+        changed = {**passed, "reading_product_sha256": "0" * 64}
         _append_trial(child, changed)
     elif product == "image":
         path = prior.workspace / "images/north.png"
@@ -281,7 +269,7 @@ def test_passed_unsubmitted_recovery_rejects_changed_products(environment, produ
         (prior.workspace / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
     else:
         relative = {"declaration": passed["input_plan_file"], "numeric": passed["compiled_numeric_plan_file"],
-                    "source": f"{passed['candidate']}/source_model.json",
+                    "source": passed["reading_product_file"],
                     "profile": passed["measurement_profiles"][0]["file"],
                     "receipt": passed["receipt_file"], "topology": passed["receipt_file"],
                     "orientation": passed["receipt_file"]}[product]
@@ -289,7 +277,7 @@ def test_passed_unsubmitted_recovery_rejects_changed_products(environment, produ
         if product in {"receipt", "topology", "orientation"}:
             changed = json.loads(path.read_bytes())
             if product == "receipt":
-                changed["candidate_source_sha256"] = "0" * 64
+                changed["reading_product_sha256"] = "0" * 64
             elif product == "topology":
                 changed["topology_issues"] = []
             else:
@@ -302,7 +290,7 @@ def test_passed_unsubmitted_recovery_rejects_changed_products(environment, produ
         session._task(_rework_arguments())
 
 
-def test_compact_passed_event_binds_complete_receipt_and_rejects_incomplete_legacy(environment):
+def test_compact_passed_event_binds_complete_receipt_and_rejects_missing_identity(environment):
     from src.agent.runtime_roles.trial_feedback import passed_receipt
     _, make = environment
     session = make()
@@ -311,11 +299,36 @@ def test_compact_passed_event_binds_complete_receipt_and_rejects_incomplete_lega
     _append_trial(child, compact)
     admitted = session._task(_rework_arguments())
     assert admitted["previous_task_handoff"]["editable_draft"]["expected_receipt_sha256"] == compact["receipt_audit"]["sha256"]
-    incomplete = {key: compact[key] for key in ("status", "source_geometry_ready", "receipt_file", "plan_sha256",
-                  "compiled_numeric_plan_sha256", "candidate", "candidate_source_sha256")}
-    _append_trial(child, incomplete)
-    with pytest.raises(ValueError, match="full receipt.*event result"):
-        session._task(_rework_arguments())
+    incomplete = {key: value for key, value in compact.items() if key != "receipt_audit"}
+    _append_trial(child, incomplete, audit=False)
+    refused = session._task(_rework_arguments())["previous_task_handoff"]
+    assert "editable_draft" not in refused
+    assert "receipt audit" in refused["draft_recovery"]["reason"]
+
+
+@pytest.mark.parametrize("mutation", ["path", "hash", "projection", "encoding"])
+def test_compact_trial_audit_cannot_redirect_or_rewrite_recovery(environment, mutation):
+    from src.agent.runtime_roles.trial_feedback import passed_receipt
+    _, make = environment
+    session = make()
+    _, child, _, _, passed, _, _ = _passed_unsubmitted(session)
+    compact = passed_receipt(passed)
+    if mutation == "path":
+        compact["receipt_file"] = compact["receipt_audit"]["receipt_file"] = "../outside.json"
+    elif mutation == "hash":
+        compact["receipt_audit"]["sha256"] = "0" * 64
+    elif mutation == "projection":
+        compact["plan_sha256"] = "0" * 64
+    else:
+        compact["receipt_audit"]["hash_encoding"] = "unsupported"
+    _append_trial(child, compact, audit=False)
+    if mutation == "encoding":
+        handoff = session._task(_rework_arguments())["previous_task_handoff"]
+        assert "editable_draft" not in handoff
+        assert "receipt audit" in handoff["draft_recovery"]["reason"]
+    else:
+        with pytest.raises(ValueError, match="escapes|hash mismatch|projection differs"):
+            session._task(_rework_arguments())
 
 
 def test_passed_receipt_is_reverified_after_admission_before_adapter(environment, monkeypatch):

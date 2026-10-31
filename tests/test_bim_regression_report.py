@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from scripts.tool_scripts.bim_regression_report import report
+from scripts.dev.bim_regression_report import report
 
 
 def save(path, value):
@@ -14,7 +14,7 @@ def run_fixture(root, name, *, positions=29, image="same", recovery=False, compl
     run = root / name
     save(run / "summary.json", {"agent_response_completed": completed,
          "delivery": {"candidate": "candidate_01"}, "subscription_invocations": 1})
-    save(run / "inputs.json", {"images": {"plan": {"sha256": image}}, "scope": "same",
+    save(run / "inputs.json", {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24, "images": {"plan": {"sha256": image}}, "scope": "same",
          "provider": "test", "implementation_sha256": {"runner": "same"},
          "input_contents": {"saved_generated_proposal": {"included": recovery}}})
     save(run / "agent_request.json", {"effort": "medium", "system_prompt": "same"})

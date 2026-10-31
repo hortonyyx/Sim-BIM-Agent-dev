@@ -360,7 +360,7 @@ def test_go_external_coordinator_is_rejected_before_credentials(tmp_path):
                     credentials_file='must-not-read.env')
     path=tmp_path/'external.json'
     path.write_text(json.dumps(configuration(selected)))
-    with pytest.raises(ValueError,match='single_model and role_division only'):
+    with pytest.raises(ValueError,match='unsupported run mode'):
         load_configuration(path)
 
 

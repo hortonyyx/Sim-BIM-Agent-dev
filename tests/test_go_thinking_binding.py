@@ -85,7 +85,7 @@ def engine_for(tmp_path, server, *, mode, tools=None):
     states = mode in {"state", "constant_state", "resume", "response_resume", "state_images"}
     engine.context_policy = (ContextPolicy(image_history_batches=1, append_state_history=states)
                             if mode in {"images", "state_images"} else
-                            ContextPolicy(active_window_messages=1) if mode == "compact" else
+                            ContextPolicy(compact_at_tokens=1) if mode == "compact" else
                             ContextPolicy(append_state_history=states))
     if states:
         def update(active, event, raw):

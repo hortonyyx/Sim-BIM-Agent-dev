@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from shapely.geometry import Polygon
 
 from src.agent.geometry.plan_dimension_alignment import align_plan_to_dimensions
-from src.agent.geometry.plan_ink_alignment import align_plan_to_ink, move_straight_wall
+from src.agent.geometry.plan_alignment import move_straight_wall
 from src.agent.runtime_roles.plan_format import plan_format_errors
 from src.agent.runtime_roles import trial as trial_module
 from src.agent.runtime_roles.trial import PlanTrial
@@ -32,8 +32,9 @@ def test_dimension_tick_points_match_axis_scalars_without_rewriting_declarations
 
 
 def _plan():
-    return {
+    return {"reading_type": "plan",
         "floor_id": "F1",
+        "wall_metadata": [dict(target=target, thickness_m=thickness, reference_side="centerline", evidence_status="inferred", basis="Synthetic fixture assumption", source_refs=["plan.png:fixture"]) for target, thickness in [("footprint:*", .2), ("partition:*", .1)]],
         "z_floor": 0.0,
         "ceiling_height": 3.0,
         "x_anchors": [[20, 0.0], [200, 18.0]],
@@ -72,24 +73,6 @@ def _drawing(with_ink=True):
     return image
 
 
-def test_ink_alignment_moves_wall_attached_opening_and_junction_to_supported_lines():
-    aligned, report = align_plan_to_ink(_drawing(), _plan())
-
-    assert aligned["footprint_pixels"] == [[20.0, 20.0], [200.0, 20.0],
-                                            [200.0, 160.0], [20.0, 160.0]]
-    assert aligned["partitions"][0]["points"] == [[110.0, 20.0], [110.0, 160.0]]
-    assert aligned["partitions"][1]["points"][-1] == [110.0, 90.0]
-    assert aligned["openings"][0]["p1"] == [110.0, 75.0]
-    assert aligned["openings"][0]["p2"] == [110.0, 105.0]
-    assert aligned["openings"][1]["p1"] == [110.0, 90.0]
-    assert aligned["openings"][1]["p2"] == [110.0, 120.0]
-    passage_item = next(row for row in report["items"] if row["object"] == "opening:PASS1")
-    assert passage_item["action"] == "not_moved" and "passages" in passage_item["reason"]
-    assert report["search"]["world_radius_m"] == 0.30
-    assert report["summary"]["rejected"] == 0
-    assert any(row["object"] == "partition:P1" and row["action"] == "moved"
-               for row in report["items"])
-    assert aligned["regularization_inputs"]["line_references"][0]["basis"] == "ink"
 
 
 def test_wall_move_assigns_one_exact_coordinate_to_every_attached_endpoint():
@@ -118,7 +101,7 @@ def test_wall_move_assigns_one_exact_coordinate_to_every_attached_endpoint():
 
 
 def test_dimension_move_does_not_amplify_near_perpendicular_junction_gap():
-    value = {
+    value = {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
         "x_anchors": [[0, 0.0], [100, 2.0]],
         "y_anchors": [[0, 0.0], [100, 2.0]],
@@ -150,7 +133,7 @@ def test_dimension_move_does_not_amplify_near_perpendicular_junction_gap():
 
 
 def test_dimension_move_does_not_drag_parallel_gap_endpoint_into_diagonal():
-    value = {
+    value = {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
         "x_anchors": [[0, 0.0], [100, 2.0]],
         "y_anchors": [[0, 0.0], [100, 2.0]],
@@ -184,7 +167,7 @@ def test_dimension_move_does_not_drag_parallel_gap_endpoint_into_diagonal():
 
 
 def test_dimension_move_keeps_split_collinear_footprint_orthogonal():
-    value = {
+    value = {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
         "x_anchors": [[0, 0.0], [100, 10.0]],
         "y_anchors": [[0, 10.0], [100, 0.0]],
@@ -216,7 +199,7 @@ def test_dimension_move_keeps_split_collinear_footprint_orthogonal():
 
 @pytest.mark.parametrize("would_shrink", [False, True])
 def test_dimension_tick_ownership_and_step_guard_preserve_distinct_perimeter_lines(would_shrink):
-    value = {
+    value = {"reading_type": "plan",
         "floor_id": "F2", "z_floor": 4.0, "ceiling_height": 3.6,
         "x_anchors": [[0, 0.0], [100, 10.0]],
         "y_anchors": [[0, 12.0], [120, 0.0]],
@@ -300,7 +283,7 @@ def test_dimensions_bind_once_to_original_ticks_independent_of_chain_order():
 
 
 def _competing_wall_plan():
-    return {
+    return {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
         "x_anchors": [[0, 0.0], [100, 10.0]],
         "y_anchors": [[0, 0.0], [100, 10.0]],
@@ -408,6 +391,7 @@ def test_unassociated_wall_only_uses_normal_grid_in_complete_reading_preparation
     ])
     for wall in value["partitions"]:
         wall["source_refs"] = ["drawing: wall"]
+    value["wall_metadata"] = copy.deepcopy(_plan()["wall_metadata"])
     dimensioned, _ = align_plan_to_dimensions(value, grid_step_m=.1)
 
     aligned, reading, alignment = trial_module._reading_align(
@@ -577,74 +561,10 @@ def test_unresolved_profile_does_not_run_literal_dimension_diagnostic(tmp_path, 
     assert "literal_geometry_diagnostic" not in receipt
 
 
-def test_missing_ink_never_moves_geometry_and_is_explicit():
-    original = _plan()
-    aligned, report = align_plan_to_ink(_drawing(with_ink=False), original)
-
-    assert aligned["footprint_pixels"] == original["footprint_pixels"]
-    assert aligned["partitions"] == original["partitions"]
-    assert aligned["openings"] == original["openings"]
-    assert report["status"] == "unchanged"
-    assert any(row["action"] == "not_moved" and "no sufficiently long" in row["reason"]
-               for row in report["items"] if row["kind"] in {"perimeter", "partition"})
 
 
-def test_low_resolution_scan_never_applies_a_candidate_beyond_world_radius():
-    image = Image.new("RGB", (12, 8), "black")
-    draw = ImageDraw.Draw(image)
-    for x in (5, 7):
-        draw.line((x, 0, x, 7), fill=(128, 128, 128))
-    value = {
-        "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
-        "x_anchors": [[0, 0.0], [10, 6.0]],
-        "y_anchors": [[0, 0.0], [6, 4.0]],
-        "basis": "low resolution physical-radius regression",
-        "footprint_pixels": [[0, 0], [10, 0], [10, 7], [0, 7]],
-        "partitions": [{"id": "P1", "points": [[6, 1], [6, 7]],
-                        "source_refs": ["plan.png: divider"]}],
-        "openings": [], "space_seeds": [], "assumptions": [], "unresolved": [],
-    }
-
-    aligned, report = align_plan_to_ink(image, value)
-
-    assert aligned["partitions"][0]["points"] == [[6, 1], [6, 7]]
-    assert all(abs(row.get("movement_m", 0.0)) <= 0.30
-               for row in report["items"] if row.get("action") == "moved")
-    partition = next(row for row in report["items"] if row["object"] == "partition:P1")
-    assert partition["action"] == "not_moved" and "physical search radius" in partition["reason"]
 
 
-def test_overall_dimension_chain_sets_outer_face_axis_and_overrides_ink_priority():
-    ink_aligned, _ = align_plan_to_ink(_drawing(), _plan())
-    ink_aligned["dimension_chains"] = [{
-        "id": "X_OVERALL", "axis": "x", "segments_mm": [9000, 9000],
-        "total_mm": 18000, "tick_pixels": [20, 110, 200],
-        "source_refs": ["plan.png: lower overall chain"],
-    }]
-    assert plan_format_errors(ink_aligned) == []
-
-    aligned, report = align_plan_to_dimensions(ink_aligned)
-
-    assert "dimension_chains" not in aligned
-    assert aligned["x_anchors"] == [[20.0, 0.0], [200.0, 18.0]]
-    assert aligned["partitions"][0]["points"][0][0] == 110.0
-    line_ref = next(row for row in aligned["regularization_inputs"]["line_references"]
-                    if row["partition_id"] == "P1")
-    assert line_ref["basis"] == "dimension"
-    coordinates = aligned["regularization_inputs"]["coordinate_references"]
-    assert [row["value_m"] for row in coordinates] == [0.0, 9.0, 18.0]
-    assert report["summary"]["chains_supplied"] == 1
-    assert report["summary"]["chains_applied"] == 1
-    assert report["summary"]["axes_calibrated"] == 1
-    assert report["summary"]["partitions_snapped"] == 1
-    assert report["summary"]["footprint_edges_snapped"] == 0
-    assert report["summary"]["rejected"] == 0
-    assert report["items"][0]["origin_basis"] == "legacy_anchor"
-    assert report["items"][0]["anchor_cross_check"]["origin_basis"] == "legacy_anchor"
-    assert report["items"][0]["anchor_cross_check"]["status"] == "consistent"
-    audit = aligned["regularization_inputs"]["reading_alignment"]
-    assert set(audit) == {"schema_version", "ink", "dimensions"}
-    assert set(audit["dimensions"]) == {"summary", "items", "rejections", "search_or_tolerance"}
 
 
 def test_dimension_chain_nonzero_origin_sets_both_axis_endpoints_and_audits_old_anchors():
@@ -718,7 +638,7 @@ def test_dimension_chain_rejects_nonfinite_or_wrong_shape_origin_values():
 
 
 def test_dimension_ticks_move_only_nearby_concave_footprint_edge_with_attached_objects():
-    value = {
+    value = {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
         "x_anchors": [[0, 0.0], [200, 20.0]],
         "y_anchors": [[0, 16.0], [160, 0.0]],
@@ -820,102 +740,28 @@ def test_bad_or_internal_dimension_chain_does_not_replace_axis():
     assert "outer faces" in internal["reason"]
 
 
-def test_concave_footprint_uses_edge_normal_and_keeps_existing_geometry_inside():
-    image = Image.new("RGB", (130, 130), "white")
-    draw = ImageDraw.Draw(image)
-    ring = [[20, 60], [20, 20], [100, 20], [100, 100], [60, 100], [60, 60]]
-    draw.line([*map(tuple, ring), tuple(ring[0])], fill="black", width=1)
-    # The notch's two wall faces straddle the declared representative.  For
-    # this CCW edge the exterior is downward (+pixel y), even though the edge
-    # lies above the footprint's global centroid.
-    draw.line((20, 58, 60, 58), fill="black")
-    draw.line((20, 62, 60, 62), fill="black")
-    value = {
-        "floor_id": "F1", "z_floor": 0.0, "ceiling_height": 3.0,
-        "x_anchors": [[20, 0.0], [100, 8.0]],
-        "y_anchors": [[20, 8.0], [100, 0.0]],
-        "basis": "concave regression", "footprint_pixels": copy.deepcopy(ring),
-        "partitions": [
-            {"id": "near_notch", "points": [[20, 59], [60, 59]],
-             "source_refs": ["plan.png: nearby interior wall"]},
-            {"id": "notch_continuation", "points": [[60, 60], [90, 60]],
-             "source_refs": ["plan.png: continuation from notch"]},
-            {"id": "far_branch", "points": [[90, 60], [90, 90]],
-             "source_refs": ["plan.png: branch at continuation end"]},
-        ],
-        "openings": [], "space_seeds": [], "assumptions": [], "unresolved": [],
-    }
-
-    aligned, report = align_plan_to_ink(image, value)
-
-    assert aligned["footprint_pixels"][0][1] == 62.0
-    assert aligned["footprint_pixels"][5][1] == 62.0
-    continuation = next(row for row in aligned["partitions"] if row["id"] == "notch_continuation")
-    branch = next(row for row in aligned["partitions"] if row["id"] == "far_branch")
-    assert continuation["points"] == [[60, 62.0], [90, 62.0]]
-    assert branch["points"] == [[90, 62.0], [90, 90]]
-    assert all(first[0] == second[0] or first[1] == second[1]
-               for partition in aligned["partitions"]
-               for first, second in zip(partition["points"], partition["points"][1:]))
-    edge = next(row for row in report["items"] if row["object"] == "footprint:5")
-    assert edge["action"] == "moved" and edge["aligned_pixel"] == 62.0
-    assert edge["moved_with_wall"]["walls"] == ["notch_continuation"]
-    assert not any(row.get("object") == "footprint:5" for row in report["rejections"])
 
 
 def test_trial_compiles_aligned_numeric_plan_and_returns_only_compact_summary(tmp_path):
     workspace = tmp_path / "trial"
     (workspace / "images").mkdir(parents=True)
     _drawing().save(workspace / "images" / "plan.png")
-
-    class Tools:
-        async def call_tool(self, name, arguments):
-            assert name == "build_plan_bim"
-            submitted = json.loads(arguments["plan_json"])
-            effective = copy.deepcopy(submitted)
-            effective["regularization"] = {
-                "rule_version": "plan_regularization_v1", "changes": [], "rejections": [],
-            }
-            draft = workspace / "plan_drafts" / "draft_001"
-            draft.mkdir(parents=True)
-            effective_path = draft / "plan.json"
-            effective_path.write_text(
-                json.dumps(effective, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8", newline="\n",
-            )
-            raw = effective_path.read_bytes()
-            candidate = workspace / "candidate_01"
-            candidate.mkdir()
-            (candidate / "source_model.json").write_text(
-                json.dumps({"spaces": [], "boundaries": []}), encoding="utf-8", newline="\n",
-            )
-            return {"structuredContent": {
-                "source_geometry_ready": True,
-                "candidate": "candidate_01",
-                "plan_input": {"plan_file": "plan_drafts/draft_001/plan.json",
-                               "plan_sha256": hashlib.sha256(raw).hexdigest(),
-                               "image": "plan.png",
-                               "regularization": {"rule_version": "plan_regularization_v1",
-                                                  "status": "passed"}},
-                "drawing_differences": {"status": "reported", "total": 0, "items": []},
-                "building_precision": {"status": "reported", "items": []},
-            }, "content": []}
-
-        def image_origins(self, raw):
-            return {}
-
     value = _plan()
+    # This test exercises dimension binding, not an aperture crossing a T junction.
+    value["openings"] = []
     value["dimension_chains"] = [{
         "id": "X_OVERALL", "axis": "x", "segments_mm": [9000, 9000],
         "total_mm": 18000, "tick_pixels": [20, 110, 200], "source_refs": ["plan.png: dimensions"],
     }]
 
     async def scenario():
-        trial = PlanTrial(Tools(), image_name="plan.png", workspace=workspace,
+        trial = PlanTrial(object(), image_name="plan.png", workspace=workspace,
                           receipt_directory=workspace / "trial_receipts", grid_step_m=None)
         envelope = await trial.call(value)
         receipt = trial.receipts[-1]
-        assert receipt["status"] == "passed"
+        assert receipt["status"] == "passed", receipt.get("reason")
+        assert receipt["reading_geometry_ready"] is True
+        assert receipt["source_geometry_ready"] is False
         assert receipt["reading_alignment"]["ink"]["status"] == "not_applied"
         assert receipt["reading_alignment"]["dimensions"]["summary"]["chains_applied"] == 1
         visible = envelope["structuredContent"]
@@ -924,55 +770,49 @@ def test_trial_compiles_aligned_numeric_plan_and_returns_only_compact_summary(tm
         assert trial.read_draft(field='report:/reading_alignment/ink/status')['value'] == 'not_applied'
         numeric = trial.numeric_plan(receipt)
         assert receipt["unaligned_numeric_input_file"] != receipt["aligned_numeric_input_file"]
-        unaligned = json.loads(
-            (workspace / receipt["unaligned_numeric_input_file"]).read_text(encoding="utf-8")
-        )
+        unaligned = json.loads((workspace / receipt["unaligned_numeric_input_file"]).read_bytes())
         assert unaligned["partitions"][0]["points"][0][0] == 109
         assert receipt["aligned_numeric_input_file"] != receipt["compiled_numeric_plan_file"]
-        aligned_input = json.loads(
-            (workspace / receipt["aligned_numeric_input_file"]).read_text(encoding="utf-8")
-        )
-        assert "regularization" not in aligned_input
         assert receipt["compiled_numeric_plan_sha256"] == receipt["compiled_plan_sha256"]
+        saved = workspace / receipt["compiled_numeric_plan_file"]
+        assert hashlib.sha256(saved.read_bytes()).hexdigest() == receipt["compiled_plan_sha256"]
+        assert numeric["reading_type"] == "plan"
         assert "dimension_chains" not in numeric
-        assert numeric["regularization"]["rule_version"] == "plan_regularization_v1"
         assert numeric["partitions"][0]["points"][0][0] == 110.0
         assert numeric["regularization_inputs"]["reading_alignment"]["dimensions"]["items"]
+        product = workspace / receipt["reading_product_file"]
+        assert hashlib.sha256(product.read_bytes()).hexdigest() == receipt["reading_product_sha256"]
+        assert json.loads(product.read_bytes())["schema"] == "plan_reading_v1"
+        assert not list(workspace.rglob("source_model.json"))
 
     asyncio.run(scenario())
 
 
-def test_trial_rejects_unverified_regularized_toolkit_plan(tmp_path):
+def test_trial_rejects_changed_saved_plan_reading(tmp_path, monkeypatch):
+    from src.agent.runtime_roles import plan_reading
     workspace = tmp_path / "trial"
     (workspace / "images").mkdir(parents=True)
     _drawing().save(workspace / "images" / "plan.png")
+    build = plan_reading.build_reading
 
-    class Tools:
-        async def call_tool(self, name, arguments):
-            draft = workspace / "plan_drafts" / "draft_001"
-            draft.mkdir(parents=True)
-            (draft / "plan.json").write_text(arguments["plan_json"], encoding="utf-8", newline="\n")
-            return {"structuredContent": {
-                "source_geometry_ready": True,
-                "candidate": "candidate_01",
-                "plan_input": {
-                    "plan_file": "plan_drafts/draft_001/plan.json",
-                    "plan_sha256": "0" * 64,
-                    "image": "plan.png",
-                    "regularization": {"rule_version": "plan_regularization_v1",
-                                       "status": "passed"},
-                },
-            }, "content": []}
+    def changed_output(*args, **kwargs):
+        raw = build(*args, **kwargs)
+        metadata = raw["structuredContent"]
+        saved = workspace / metadata["plan_input"]["plan_file"]
+        # Still parseable, but its bytes differ from the compiler's bound digest.
+        saved.write_bytes(saved.read_bytes() + b"\n")
+        return raw
 
-        def image_origins(self, raw):
-            return {}
+    monkeypatch.setattr(plan_reading, "build_reading", changed_output)
+    value = _plan()
+    value["openings"] = []
 
     async def scenario():
-        trial = PlanTrial(Tools(), image_name="plan.png", workspace=workspace,
+        trial = PlanTrial(object(), image_name="plan.png", workspace=workspace,
                           receipt_directory=workspace / "trial_receipts", grid_step_m=None)
-        receipt = await trial.run(_plan())
+        receipt = await trial.run(value)
         assert receipt["status"] == "failed"
-        assert "Toolkit effective plan changed or is missing" in receipt["reason"]
+        assert "plan trial output changed or is missing" in receipt["reason"]
         assert receipt["aligned_numeric_input_file"]
         assert receipt["compiled_numeric_plan_file"] is None
         assert receipt["compiled_numeric_plan_sha256"] is None

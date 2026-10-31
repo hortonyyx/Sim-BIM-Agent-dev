@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from src.agent.correction.parse import ensure_corrected_geometry
-from src.agent.correction.schema import FootprintRing
+from src.agent.geometry_model.parse import parse_geometry
+from src.agent.geometry_model.schema import FootprintRing
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.parametric_proposal import expand_parametric_proposal
 from src.agent.geometry.source_bim import build_source_bim
@@ -17,7 +17,7 @@ from tests.test_source_enclosure import _declaration, _evidence
 
 
 def source_from(proposal):
-    geometry = ensure_corrected_geometry(proposal["geometry"])
+    geometry = parse_geometry(proposal["geometry"])
     for floor in geometry.floors:
         if isinstance(floor.footprint, dict):
             floor.footprint = FootprintRing.model_validate(floor.footprint)

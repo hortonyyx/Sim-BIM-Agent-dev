@@ -114,8 +114,6 @@ class Frozen:
     async def list_tools(self):
         tools = []
         for name in ELEVATION_READER_TOOL_NAMES:
-            if name == "pixel_profile":
-                continue
             properties = {"name": {"type": "string"}}
             if name == "view_image":
                 properties["coordinate_grid"] = {"type": "boolean"}

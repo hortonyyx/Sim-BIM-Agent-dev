@@ -1,14 +1,14 @@
 import pytest
 from shapely.geometry import Polygon
 
-from src.agent.correction.schema import CorrectedGeometry, FootprintRing
+from src.agent.geometry_model.schema import GeometryInput, FootprintRing
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_enclosure import apply_source_enclosure
 
 
 def _source():
     """A low volume whose ceiling is partly shared with a smaller upper one."""
-    geometry = CorrectedGeometry.model_validate({
+    geometry = GeometryInput.model_validate({
         "schema_version": "2",
         "footprint_x": [0, 4],
         "footprint_y": [0, 4],

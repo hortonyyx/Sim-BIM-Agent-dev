@@ -10,7 +10,7 @@ def test_observation_reminder_counts_all_looks_survives_resume_and_stops_at_tria
         tools = ReaderTools(Frozen(tmp_path), role_id="plan_reader", image_name="plan.png", trial=Trial())
         for name in ("inputs", "get_bim_reference"):
             await tools.call_tool(name, {})
-        for index, name in enumerate(("view_image", "pixel_profile", "view_pixel_region_overview",
+        for index, name in enumerate(("view_image", "view_pixel_profile", "view_pixel_region_overview",
                                      "view_pixel_region", "map_pixels", "map_dimension_chain"), 1):
             result = await tools.call_tool(name, {})
             assert len(result["content"]) == (2 if index == PRETRIAL_REMINDER_THRESHOLD else 1)

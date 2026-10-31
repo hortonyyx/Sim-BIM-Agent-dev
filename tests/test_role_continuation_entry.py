@@ -20,7 +20,7 @@ def _hashes(directory):
 
 
 def test_terminal_new_run_reuses_six_readers_and_delivers_real_viewer(tmp_path, monkeypatch):
-    source = make_fixture("sm25", tmp_path)
+    source = make_fixture("sm21", tmp_path)
 
     def terminal_failure():
         raise ModelServiceError({"category": "service_unavailable", "retryable": False,
@@ -37,7 +37,7 @@ def test_terminal_new_run_reuses_six_readers_and_delivers_real_viewer(tmp_path, 
     assert first["status"] == "service_unavailable"
     before = _hashes(source.output)
     args = copy.copy(source.args)
-    args.out = tmp_path / "sm25-continuation"
+    args.out = tmp_path / "sm21-continuation"
     args.continue_from = source.output
     args.source_events_sha256 = before["events.jsonl"]
     target = replace(source, output=args.out, args=args, adapters=[])

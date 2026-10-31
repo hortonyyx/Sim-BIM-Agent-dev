@@ -1,20 +1,14 @@
-"""Offline coverage for explicit building declarations in the BIM-agent CLI."""
+"""Explicit declarations are frozen without following embedded paths."""
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from pathlib import Path
-import sys
-from types import SimpleNamespace
 
 from PIL import Image
 import pytest
 
-from scripts.tool_scripts import run_bim_agent as runner
-from scripts.tool_scripts.bim_agent_inputs import freeze_plan_input
-from src.agent.execution.source_proposal import export_source_proposal
-from tests.test_bim_agent_tools import _json_result, _server_session
+from src.agent.bim_inputs import prepare_bim_inputs
 
 
 def _images(folder: Path) -> Path:
@@ -24,56 +18,23 @@ def _images(folder: Path) -> Path:
     return folder
 
 
-def _completed_receipt(run: Path) -> dict:
-    receipt = {"elapsed_seconds": 0, "result": {"is_error": False, "total_cost_usd": 0}}
-    runner.dump(run / "agent_receipt.json", receipt)
-    return receipt
+def _prepare(run, images, declaration=None):
+    return prepare_bim_inputs(run, images_path=images, mesh_path=None,
+        building_input_path=declaration, scope="explicit input test",
+        image_kind="drawings", max_candidates=4)
 
 
-def _proposal() -> dict:
-    return {
-        "geometry": {
-            "schema_version": "2",
-            "footprint_x": [0, 6],
-            "footprint_y": [0, 4],
-            "floors": [{
-                "name": "F1", "z_floor": 0, "ceiling_height": 3,
-                "cells": [{"id": "office", "role": "office", "x": [0, 6], "y": [0, 4]}],
-            }],
-            "windows": [],
-            "openings": [],
-        },
-        "assumptions": ["test fixture"],
-        "unresolved": [],
-    }
-
-
-def test_cli_freezes_exact_json_and_exposes_structured_declaration(tmp_path, monkeypatch):
+def test_freezes_exact_json_and_exposes_structured_declaration(tmp_path):
     images = _images(tmp_path / "images")
     building_path = tmp_path / "formal declaration.json"
-    raw = (b'{\n  "TestName": "utf8-\\u5efa\\u7b51",\n'
-           b'  "Number of floors": 1,\n'
-           b'  "Floor plans": [{"floor": 1, "path": "case/plan.png", "thermal_zones": 8}],\n'
-           b'  "East view path of the building": "elsewhere/east.png",\n'
-           b'  "Unprovided view path": "private/never-read.png"\n}\n')
+    declared = {"name": "建筑", "floors": 1,
+        "Floor plans": [{"floor": 1, "path": "case/plan.png"}],
+        "East view path": "elsewhere/east.png",
+        "Unprovided view path": "private/never-read.png"}
+    raw = (json.dumps(declared, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     building_path.write_bytes(raw)
-    captured = {}
-
-    def offline_subscription(run, prompt, **kwargs):
-        captured["prompt"] = prompt
-        captured["inputs"] = runner.Toolkit(run).manifest
-        return _completed_receipt(run)
-
-    monkeypatch.setattr(runner, "subscription", offline_subscription)
     out = tmp_path / "run"
-    monkeypatch.setattr(sys, "argv", [
-        str(Path(runner.__file__)), "run", "--images", str(images),
-        "--building-input", str(building_path), "--out", str(out), "--timeout", "30",
-    ])
-    runner.main()
-
-    manifest = captured["inputs"]
-    declared = json.loads(raw)
+    manifest = _prepare(out, images, building_path)
     assert (out / "building_input.json").read_bytes() == raw
     assert manifest["building_input"]["raw_sha256"] == hashlib.sha256(raw).hexdigest()
     assert manifest["building_input"]["declaration"] == declared
@@ -81,196 +42,38 @@ def test_cli_freezes_exact_json_and_exposes_structured_declaration(tmp_path, mon
     assert manifest["input_contents"] == {
         "original_png_images": {"included": True, "count": 2},
         "building_declaration": {"included": True},
-        "saved_generated_proposal": {"included": False},
         "ground_truth_or_evaluation": {"included": False},
     }
     associations = {row["json_pointer"]: row for row in
                     manifest["building_input"]["image_path_associations"]}
     assert associations["/Floor plans/0/path"]["authorized_image"] == "plan.png"
-    assert associations["/East view path of the building"]["authorized_image"] == "east.png"
+    assert associations["/East view path"]["authorized_image"] == "east.png"
     assert associations["/Unprovided view path"]["status"] == "not_in_authorized_image_inventory"
     assert associations["/Unprovided view path"]["authorized_image"] is None
-    assert "thermal_zones describes downstream simulation zoning" in captured["prompt"]
     assert manifest["building_input"]["source_path"] == str(building_path.resolve())
     assert "scripts/tool_scripts/bim_agent_inputs.py" in manifest["implementation_sha256"]
 
-    summary = json.loads((out / "summary.json").read_text())
-    assert summary["building_input_sha256"] == hashlib.sha256(raw).hexdigest()
-    assert summary["source_input_mode"] == "original_images_with_building_declaration"
 
-
-def test_omitted_building_input_stays_png_only_and_does_not_read_neighbor_json(tmp_path, monkeypatch):
+def test_omitted_declaration_does_not_read_neighbor_json(tmp_path):
     images = _images(tmp_path / "images")
     sentinel = "MUST_NOT_ENTER_PNG_ONLY_RUN"
-    (images / "testdata_prompt.json").write_text(json.dumps({"secret": sentinel}))
-    captured = {}
-
-    def offline_subscription(run, prompt, **kwargs):
-        captured["prompt"] = prompt
-        captured["manifest"] = runner.Toolkit(run).manifest
-        return _completed_receipt(run)
-
-    monkeypatch.setattr(runner, "subscription", offline_subscription)
-    args = SimpleNamespace(images=images, out=tmp_path / "run", scope="PNG-only probe",
-                           timeout=30, effort="low", resume_candidate=None,
-                           building_input=None)
-    runner.run_experiment(args)
-
-    manifest = captured["manifest"]
+    (images / "private.json").write_text(json.dumps({"secret": sentinel}), encoding="utf-8")
+    out = tmp_path / "run"
+    manifest = _prepare(out, images)
     assert manifest["source_input_mode"] == "original_images_only"
     assert manifest["input_contents"]["building_declaration"] == {"included": False}
     assert "building_input" not in manifest
-    assert "No structured building declaration was supplied" in captured["prompt"]
-    assert not (args.out / "building_input.json").exists()
-    assert set(path.name for path in (args.out / "images").iterdir()) == {"plan.png", "east.png"}
-    assert sentinel not in (args.out / "inputs.json").read_text()
+    assert not (out / "building_input.json").exists()
+    assert set(path.name for path in (out / "images").iterdir()) == {"plan.png", "east.png"}
+    assert sentinel not in (out / "inputs.json").read_text(encoding="utf-8")
 
 
-def test_building_declaration_and_saved_candidate_recovery_are_independent_modes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("raw", [b"[]", b"null", b"not-json", b"\xff"])
+def test_declaration_requires_utf8_json_object(tmp_path, raw):
     images = _images(tmp_path / "images")
-    building_path = tmp_path / "building.json"
-    building_path.write_text(json.dumps({
-        "Building type": "Office",
-        "Floor plans": [{"path": "plan.png", "thermal_zones": 3}],
-    }))
-    seed = tmp_path / "candidate"
-    export_source_proposal(_proposal(), seed)
-
-    def offline_subscription(run, prompt, **kwargs):
-        manifest = runner.Toolkit(run).manifest
-        assert manifest["input_mode"] == "saved_candidate_recovery"
-        assert manifest["source_input_mode"] == "original_images_with_building_declaration"
-        assert manifest["input_contents"]["saved_generated_proposal"] == {"included": True}
-        assert manifest["building_input"]["declaration"]["Building type"] == "Office"
-        assert (run / "seed/source_model.json").exists()
-        return _completed_receipt(run)
-
-    monkeypatch.setattr(runner, "subscription", offline_subscription)
-    args = SimpleNamespace(
-        images=images, building_input=building_path, out=tmp_path / "recovery",
-        scope="resume with declarations", timeout=30, effort="medium", resume_candidate=seed,
-    )
-    runner.run_experiment(args)
-
-    summary = json.loads((args.out / "summary.json").read_text())
-    assert summary["input_mode"] == "saved_candidate_recovery"
-    assert summary["source_input_mode"] == "original_images_with_building_declaration"
-    assert summary["delivery"]["candidate"] == "seed"
-
-
-def test_opus_is_explicit_experimental_choice_and_not_a_fallback(tmp_path, monkeypatch):
-    images=_images(tmp_path/'images')
-    captured={}
-    def offline_subscription(run,prompt,**kwargs):
-        captured.update(kwargs)
-        return _completed_receipt(run)
-    monkeypatch.setattr(runner,'subscription',offline_subscription)
-    args=SimpleNamespace(images=images,out=tmp_path/'run',scope='migration test',
-        timeout=30,effort='medium',resume_candidate=None,building_input=None,exploratory_opus=True)
-    runner.run_experiment(args)
-    assert captured['model']=='opus' and captured['exploratory_opus'] is True
-    assert runner.Toolkit(args.out).manifest['exploratory_opus'] is True
-
-
-def test_resume_plan_freezes_unbuildable_json_and_exposes_only_declared_input(tmp_path, monkeypatch):
-    images = _images(tmp_path / "images")
-    old = tmp_path / "old_run"
-    old.mkdir()
-    raw = b'{\n  "floor_id": "F1", "partitions": "not executable yet"\n}\n'
-    plan = old / "failed_plan.json"
-    plan.write_bytes(raw)
-    for name in ("source_model.json", "report.json", "gt.json"):
-        (old / name).write_text("do-not-import-old-output")
-    captured = {}
-
-    def offline_subscription(run, prompt, **kwargs):
-        captured["prompt"] = prompt
-        captured["manifest"] = runner.Toolkit(run).manifest
-        assert not (run / "seed").exists()
-        assert not (run / "plan_drafts").exists()
-        assert not list(run.glob("candidate_*"))
-        return _completed_receipt(run)
-
-    monkeypatch.setattr(runner, "subscription", offline_subscription)
-    out = tmp_path / "recovery"
-    monkeypatch.setattr(sys, "argv", [
-        str(Path(runner.__file__)), "run", "--images", str(images),
-        "--resume-plan", str(plan), "--plan-image", "plan.png",
-        "--out", str(out), "--timeout", "30",
-    ])
-    runner.main()
-    manifest = captured["manifest"]
-    recovery = manifest["plan_recovery"]
-    assert (out / "resume_plan.json").read_bytes() == raw
-    assert recovery["raw_sha256"] == hashlib.sha256(raw).hexdigest()
-    assert recovery["source_path"] == str(plan.resolve())
-    assert recovery["declaration"] == json.loads(raw)
-    assert recovery["image"] == "plan.png"
-    assert recovery["image_sha256"] == manifest["images"]["plan.png"]["sha256"]
-    assert recovery["status"] == "unverified_pixel_plan_declaration_not_compiled"
-    assert manifest["input_mode"] == "saved_plan_recovery"
-    assert manifest["input_contents"]["saved_pixel_plan"]["included"] is True
-    assert manifest["input_contents"]["saved_generated_proposal"]["included"] is False
-    assert manifest["input_contents"]["ground_truth_or_evaluation"]["included"] is False
-    assert "inputs.plan_recovery.declaration" in captured["prompt"]
-    assert "may fail compilation" in captured["prompt"]
-    assert "do-not-import-old-output" not in (out / "inputs.json").read_text()
-    assert not any((out / name).exists() for name in ("source_model.json", "report.json", "gt.json"))
-    summary = json.loads((out / "summary.json").read_text())
-    assert summary["input_mode"] == "saved_plan_recovery"
-    assert summary["candidate_results"] == [] and summary["delivery"] is None
-
-    async def mcp_inputs():
-        async with _server_session(out, readonly=False) as session:
-            return _json_result(await session.call_tool("inputs", {}))
-
-    visible = asyncio.run(mcp_inputs())
-    assert visible["plan_recovery"] == recovery
-
-
-@pytest.mark.parametrize("raw", [b"[]", b"null", b"not-json"])
-def test_resume_plan_requires_json_object(tmp_path, raw):
     source = tmp_path / "bad.json"
     source.write_bytes(raw)
-    run = tmp_path / "run"
-    run.mkdir()
-    with pytest.raises(ValueError, match="--resume-plan"):
-        freeze_plan_input(source, run, {"plan.png": {"sha256": "x"}}, "plan.png")
-    assert not (run / "resume_plan.json").exists()
-
-
-def test_resume_plan_parameter_combinations_fail_before_output_creation(tmp_path, monkeypatch):
-    images = _images(tmp_path / "images")
-    plan = tmp_path / "plan.json"
-    plan.write_text("{}")
-    seed = tmp_path / "candidate"
-    seed.mkdir()
-
-    out = tmp_path / "both"
-    monkeypatch.setattr(sys, "argv", ["runner", "run", "--images", str(images),
-        "--resume-plan", str(plan), "--plan-image", "plan.png",
-        "--resume-candidate", str(seed), "--out", str(out)])
-    with pytest.raises(SystemExit):
-        runner.main()
-    assert not out.exists()
-
-    out = tmp_path / "missing-image"
-    monkeypatch.setattr(sys, "argv", ["runner", "run", "--images", str(images),
-        "--resume-plan", str(plan), "--plan-image", "missing.png", "--out", str(out)])
-    with pytest.raises(ValueError, match="--plan-image"):
-        runner.main()
-    assert not out.exists()
-
-    out = tmp_path / "missing-name"
-    monkeypatch.setattr(sys, "argv", ["runner", "run", "--images", str(images),
-        "--resume-plan", str(plan), "--out", str(out)])
-    with pytest.raises(ValueError, match="requires --images and --plan-image"):
-        runner.main()
-    assert not out.exists()
-
-    out = tmp_path / "orphan-name"
-    monkeypatch.setattr(sys, "argv", ["runner", "run", "--images", str(images),
-        "--plan-image", "plan.png", "--out", str(out)])
-    with pytest.raises(ValueError, match="--plan-image requires --resume-plan"):
-        runner.main()
-    assert not out.exists()
+    with pytest.raises(ValueError, match="building input"):
+        _prepare(tmp_path / "run", images, source)
+    assert not (tmp_path / "run/inputs.json").exists()
+    assert source.read_bytes() == raw

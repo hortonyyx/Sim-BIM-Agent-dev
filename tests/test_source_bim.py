@@ -8,8 +8,8 @@ import pytest
 from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon, box
 
-from src.agent.correction.parse import ensure_corrected_geometry
-from src.agent.correction.schema import CorrectedGeometry, WallOpening
+from src.agent.geometry_model.parse import parse_geometry
+from src.agent.geometry_model.schema import GeometryInput, WallOpening
 from src.agent.geometry.source_bim import EPS, build_source_bim, source_view_geometry, _on_wall, _space_overlap_area
 from src.agent.geometry.source_model import _digest
 
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def three_rooms():
-    return CorrectedGeometry.model_validate({
+    return GeometryInput.model_validate({
         "schema_version": "2", "footprint_x": [0,6], "footprint_y": [0,6],
         "floors": [{"name":"F1", "z_floor":0, "ceiling_height":3, "cells":[
             {"id":"hall", "x":[0,3], "y":[0,6]},
@@ -29,20 +29,7 @@ def three_rooms():
     })
 
 
-def test_long_boundary_contacts_multiple_rooms_without_splitting_or_ep(monkeypatch):
-    import src.agent.geometry.build as build
-    import src.agent.geometry.split_pairing as pairing
-    import src.agent.geometry.to_idf as idf
-    import src.validator.interzone as interzone
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("source BIM invoked the EP geometry path")
-
-    monkeypatch.setattr(build, "pair_surfaces", forbidden)
-    monkeypatch.setattr(pairing, "pair_surfaces", forbidden)
-    monkeypatch.setattr(build, "build_geometry", forbidden)
-    monkeypatch.setattr(idf, "building_to_idf", forbidden)
-    monkeypatch.setattr(interzone, "validate_interzone_surface_pairs", forbidden)
+def test_long_boundary_contacts_multiple_rooms_without_splitting():
     source = build_source_bim(three_rooms(), capability_profile="orthogonal_polygon")
     assert source["validation"]["status"] == "pass"
     hall_walls = [b for b in source["boundaries"] if b["space_id"] == "hall" and b["geometry_type"] == "wall"]
@@ -209,7 +196,7 @@ def test_source_overlap_filter_preserves_geometry_and_original_volume(width, con
 
 @pytest.mark.parametrize("offset", [2e7, 2e8, 1e9])
 def test_source_overlap_does_not_disappear_at_large_world_coordinates(offset):
-    geom = CorrectedGeometry.model_validate({
+    geom = GeometryInput.model_validate({
         "schema_version": "2",
         "footprint_x": [offset, offset + 6],
         "footprint_y": [-offset, 100 - offset],
@@ -250,7 +237,7 @@ def test_identical_footprints_in_adjacent_storeys_keep_length_tolerance_in_z(z_o
 
 
 def test_display_preserves_full_boundary_area_holes_and_partial_contact_visibility():
-    from src.agent.correction.schema import SourceBoundary
+    from src.agent.geometry_model.schema import SourceBoundary
     geom=three_rooms()
     source=build_source_bim(geom,capability_profile="orthogonal_polygon")
     display=source_view_geometry(source)
@@ -266,27 +253,3 @@ def test_display_preserves_full_boundary_area_holes_and_partial_contact_visibili
     assert source["source_model_sha256"]==_digest({k:v for k,v in source.items() if k!="source_model_sha256"})
     changed=copy.deepcopy(source);changed["spaces"][0]["height"]+=1
     with pytest.raises(ValueError,match="digest"): source_view_geometry(changed)
-
-
-
-
-
-
-def test_export_source_bim_is_separate_readonly_and_rejects_overwrite(tmp_path):
-    from src.agent.execution.source_bim import export_source_bim
-    out=tmp_path/"bim"
-    run = tmp_path / "input"
-    input_file = run / "1_correction/attempts/001/output.json"
-    input_file.parent.mkdir(parents=True)
-    input_file.write_text(three_rooms().model_dump_json(), encoding="utf-8")
-    original = input_file.read_bytes()
-    report=export_source_bim(run,out,capability_profile="orthogonal_polygon", candidate_attempt=1)
-    assert report["source_geometry_ready"]
-    assert report["drawing_fidelity"]=="not_evaluated"
-    assert report["model_calls"]==report["solver_calls"]==0
-    assert (out/"viewer.html").exists() and (out/"source_model.json").exists()
-    assert not (out/"_run/geometry_approval.json").exists()
-    assert input_file.read_bytes() == original
-    with pytest.raises(FileExistsError): export_source_bim(run,out,capability_profile="orthogonal_polygon", candidate_attempt=1)
-    bad=export_source_bim(tmp_path/"missing",tmp_path/"failure",capability_profile="rectangular")
-    assert bad["status"]=="error" and not bad["source_geometry_ready"]

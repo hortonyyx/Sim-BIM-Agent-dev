@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from shapely.geometry import Point, Polygon
 
-from src.agent.correction.parse import ensure_corrected_geometry
+from src.agent.geometry_model.parse import parse_geometry
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.architectural_regularization import regularize_architectural_plan, regularize_architectural_proposal
 from src.agent.geometry.parametric_proposal import expand_parametric_proposal
@@ -14,7 +14,7 @@ from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_enclosure import _boundary_frame, apply_source_enclosure
 from src.agent.geometry.source_plan_view import render_source_plan
 from src.agent.geometry.source_visibility import source_depth_buffer
-from src.agent.judge.source_partition import compare_partitions
+from scripts.dev.evaluation.source_partition import compare_partitions
 
 
 def plan():
@@ -34,7 +34,7 @@ def plan():
 
 
 def build(value):
-    return build_source_bim(ensure_corrected_geometry(value['geometry']), capability_profile='simple_polygon')
+    return build_source_bim(parse_geometry(value['geometry']), capability_profile='simple_polygon')
 
 
 def area(boundary):
@@ -138,12 +138,3 @@ def test_open_cap_keeps_hole_and_omits_only_the_selected_display_surface():
     assert not display['display_surface_parts'].get(cap['id'])
     core_cap = next(b for b in result['boundaries'] if b['space_id']=='C0:core0' and b['geometry_type']=='ceiling')
     assert display['display_surface_parts'][core_cap['id']]
-
-
-def test_wall_convention_preserves_and_changes_inner_ring_without_filling_it():
-    from src.agent.judge.conventions import _variant
-    office = dict(polygon=[[0,0],[12,0],[12,10],[0,10]], holes=[[[3,3],[5,3],[5,6],[3,6]]])
-    changed, used = _variant(office, [dict(axis=0,span_m=[3,6],reference_m=3,target_m=3.1)])
-    assert used and len(changed.interiors)==1
-    assert changed.area == pytest.approx(114.3)
-    assert not changed.covers(Point(4,4))

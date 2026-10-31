@@ -36,7 +36,7 @@ def prepared(tmp_path):
         image=Image.new("RGB", (4, 4), "gray"))
     asset = run / "assets/input.glb"
     asset.write_bytes(trimesh.Scene(mesh).export(file_type="glb"))
-    manifest = {"mesh_input": {"frozen_path": "assets/input.glb", "sha256": _sha(asset)},
+    manifest = {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24, "mesh_input": {"frozen_path": "assets/input.glb", "sha256": _sha(asset)},
                 "images": {}, "scope": "Synthetic review contract; no fidelity assertion"}
     _write(run / "inputs.json", manifest)
     candidate = "candidate_01"
@@ -72,7 +72,7 @@ def _review(coverage="whole_building", **updates):
 
 
 def _admit_auxiliary_inputs(toolkit):
-    from scripts.tool_scripts.bim_agent_inputs import freeze_building_input, freeze_plan_input
+    from scripts.tool_scripts.bim_agent_inputs import freeze_building_input
 
     (toolkit.run / "images").mkdir()
     image = toolkit.run / "images/sketch.png"
@@ -80,12 +80,10 @@ def _admit_auxiliary_inputs(toolkit):
     toolkit.manifest["images"] = {"sketch.png": {"sha256": _sha(image), "size": [12, 8]}}
     for field, source_name, freeze in (
         ("building_input", "user.json", freeze_building_input),
-        ("plan_recovery", "saved_plan.json", freeze_plan_input),
     ):
         source = toolkit.run.parent / source_name
         _write(source, {"path": "private/never_opened.png", "notes": "relationship sketch only"})
-        toolkit.manifest[field] = freeze(source, toolkit.run, toolkit.manifest["images"],
-            *( ["sketch.png"] if field == "plan_recovery" else [] ))
+        toolkit.manifest[field] = freeze(source, toolkit.run, toolkit.manifest["images"])
     _write(toolkit.run / "inputs.json", toolkit.manifest)
 
 
@@ -218,11 +216,11 @@ def test_mixed_inputs_freeze_all_admitted_auxiliary_evidence(prepared):
     _admit_auxiliary_inputs(toolkit)
     assert carry_mesh_review(toolkit, candidate, _review())["status"] == "current"
     record = json.loads((toolkit.run / candidate / "mesh_review.json").read_bytes())
-    for name in ("images/sketch.png", "building_input.json", "resume_plan.json"):
+    for name in ("images/sketch.png", "building_input.json"):
         assert record["evidence"]["file_sha256"][name] == _sha(toolkit.run / name)
 
 
-@pytest.mark.parametrize("relative", ["images/sketch.png", "building_input.json", "resume_plan.json"])
+@pytest.mark.parametrize("relative", ["images/sketch.png", "building_input.json"])
 @pytest.mark.parametrize("review_already_saved", [False, True])
 def test_changed_frozen_auxiliary_input_cannot_create_or_preserve_review(prepared, relative, review_already_saved):
     toolkit, candidate = prepared
@@ -258,7 +256,7 @@ def test_first_finish_rejects_observation_image_not_bound_at_overlay_creation(pr
     assert mesh_review_status(toolkit, candidate)["status"] == "missing"
 
 
-@pytest.mark.parametrize("field", ["images", "building_input", "plan_recovery"])
+@pytest.mark.parametrize("field", ["images", "building_input"])
 def test_manifest_auxiliary_paths_cannot_authorize_new_paths(prepared, field):
     toolkit, candidate = prepared
     _admit_auxiliary_inputs(toolkit)

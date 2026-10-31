@@ -80,7 +80,7 @@ def test_successful_audit_keeps_current_scope_and_status_without_coordinate_hist
 
 
 def test_input_paths_identity_scope_and_view_state_survive():
-    data = {"scope": "Only declared floors; keep uncertainty.",
+    data = {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24, "scope": "Only declared floors; keep uncertainty.",
             "images": {"plan.png": {"size": [900, 800], "sha256": "p" * 64}},
             "implementation_sha256": {f"source/{i}.py": "h" * 64 for i in range(100)},
             "building_input": {"source_path": "D:/original/building.json", "frozen_path": "building_input.json",
@@ -137,7 +137,7 @@ def test_existing_domain_reference_keeps_hash_pointer_and_current_values():
 def test_cli_and_python_keep_full_receipt_and_original_image_bytes(tmp_path, monkeypatch, capsys):
     # Exercise the real SDK response boundary with a no-model tool result.
     pixels = b"lossless image payload, never transformed by the SDK"
-    data = {"images": {}, "scope": "preserve scope", "implementation_sha256": {"file.py": "a" * 64}}
+    data = {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24, "images": {}, "scope": "preserve scope", "implementation_sha256": {"file.py": "a" * 64}}
     calls = []
 
     def session_factory(run, **kwargs):

@@ -415,3 +415,46 @@ def test_execute_model_validation_error_still_blocks_before_run_preparation(tmp_
         asyncio.run(entry.execute(args))
     assert checked == ["gpt-6-sol", "gpt-6-luna"]
     assert not args.out.exists()
+
+
+@pytest.mark.parametrize("kind", ["missing", "json", "input", "root", "missing_field",
+                                 "case_shape", "limit_shape", "missing_output"])
+def test_configuration_cli_reports_expected_errors_without_traceback(tmp_path, monkeypatch, capsys, kind):
+    from src.agent.runtime_configuration import main
+    path = tmp_path / "configuration.json"
+    if kind == "json":
+        path.write_text("{", encoding="utf-8")
+    elif kind == "input":
+        value = case()
+        value["input"] = str(tmp_path / "missing-input")
+        path.write_text(json.dumps(configuration(value)), encoding="utf-8")
+    elif kind != "missing":
+        value = configuration(case())
+        if kind == "root":
+            value = []
+        elif kind == "missing_field":
+            del value["maximum_seconds_per_case"]
+        elif kind == "case_shape":
+            value["cases"] = ["invalid"]
+        elif kind == "limit_shape":
+            value["cases"][0]["limits"] = []
+        elif kind == "missing_output":
+            del value["cases"][0]["output"]
+        path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["runtime_configuration", "check", str(path)])
+    with pytest.raises(SystemExit) as stopped:
+        main()
+    assert stopped.value.code == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["status"] == "error"
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_configuration_cli_does_not_hide_unexpected_errors(monkeypatch):
+    from src.agent import runtime_configuration as module
+    monkeypatch.setattr(sys, "argv", ["runtime_configuration", "check", "unused.json"])
+    def unexpected(*args, **kwargs):
+        raise RuntimeError("unexpected bug")
+    monkeypatch.setattr(module, "load_configuration", unexpected)
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        module.main()

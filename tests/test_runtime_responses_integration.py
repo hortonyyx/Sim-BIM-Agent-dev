@@ -621,7 +621,7 @@ def test_external_coordinator_rejects_subscription_before_credentials(tmp_path):
     value = case("external_coordinator_mcp")
     value.update(provider=ROUTE, model="gpt-6-astra", reasoning_effort="low")
     value.pop("credentials_file")
-    with pytest.raises(ValueError, match="external_coordinator_mcp is not supported"):
+    with pytest.raises(ValueError, match="unsupported run mode"):
         load(tmp_path, value)
 
 

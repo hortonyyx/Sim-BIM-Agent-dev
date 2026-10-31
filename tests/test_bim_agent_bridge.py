@@ -25,18 +25,3 @@ def test_bridge_preserves_images_records_calls_and_excludes_model_delegation(tmp
     assert json.loads((Path(result['record']) / 'requests.json').read_text())[0]['tool'] == 'view_image'
     with pytest.raises(ValueError, match="admitted"):
         asyncio.run(invoke(run, [{"tool": "review_detail", "arguments": {}}]))
-
-
-def test_preparation_never_invokes_model_and_deadline_starts_with_controller(tmp_path, monkeypatch):
-    seed = _run_with_one_image(tmp_path)
-    def forbidden(*args, **kwargs):
-        raise AssertionError("preparation must not call a model")
-    monkeypatch.setattr(runner, "subscription", forbidden)
-    args = SimpleNamespace(out=tmp_path / "prepared", images=seed / "images", mesh=None,
-        scope="synthetic", timeout=3600, prepare_only=True)
-    result = runner.run_experiment(args)
-    manifest = json.loads((args.out / 'inputs.json').read_text())
-    assert result['model_calls'] == 0
-    assert manifest['deadline_epoch'] is None
-    assert (args.out / 'guide.txt').exists() and (args.out / 'task.txt').exists()
-    assert not (args.out / 'agent_receipt.json').exists()

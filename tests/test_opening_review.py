@@ -2,14 +2,14 @@ import copy
 
 import pytest
 
-from src.agent.correction.schema import CorrectedGeometry, FootprintRing
+from src.agent.geometry_model.schema import GeometryInput, FootprintRing
 from src.agent.geometry.opening_review import facade_inventory, opening_inventory, review_openings
 from src.agent.geometry.source_bim import build_source_bim
 from src.agent.geometry.source_model import _digest
 
 
 def _source():
-    geom = CorrectedGeometry.model_validate({
+    geom = GeometryInput.model_validate({
         "footprint_x": [0, 4], "footprint_y": [0, 2],
         "floors": [{"name": "F1", "z_floor": 0, "ceiling_height": 3, "cells": [
             {"id": "A", "x": [0, 2], "y": [0, 2]},
@@ -26,7 +26,7 @@ def _source():
 
 def _partly_shared_wall_source():
     """A's north wall contacts B on x=0..2 and is exposed on x=2..6."""
-    geom = CorrectedGeometry.model_validate({
+    geom = GeometryInput.model_validate({
         "schema_version": "2", "footprint_x": [0, 6], "footprint_y": [0, 4],
         "floors": [{"name": "F1", "z_floor": 0, "ceiling_height": 3, "cells": [
             {"id": "A", "x": [0, 6], "y": [0, 2]},
@@ -46,7 +46,7 @@ def _partly_shared_wall_source():
 
 def _partly_shared_height_source():
     """The full wall length contacts B below z=1.5, then faces outdoors."""
-    geom = CorrectedGeometry.model_validate({
+    geom = GeometryInput.model_validate({
         "schema_version": "2", "footprint_x": [0, 4], "footprint_y": [0, 4],
         "floors": [
             {"name": "TALL", "z_floor": 0, "ceiling_height": 3,

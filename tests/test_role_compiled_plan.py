@@ -9,53 +9,21 @@ from contextlib import asynccontextmanager
 import pytest
 
 from src.agent.runtime_roles.trial import PlanTrial, canonical_plan_sha256
-from tests.test_bim_agent_plan_partition import example
+from tests.test_role_trial import example
 from tests.test_role_session import dispatch, environment  # noqa: F401
 
 
-class RegularizingTools:
-    """Small offline compiler double whose saved plan differs from its input."""
-
-    def __init__(self, workspace):
-        self.workspace = workspace
-
-    async def call_tool(self, name, arguments):
-        assert name == "build_plan_bim"
-        effective = json.loads(arguments["plan_json"])
-        effective["regularization"] = {
-            "rule_version": "plan_regularization_v1",
-            "changes": [{"rule": "test", "action": "metadata_only"}],
-            "rejections": [],
-        }
-        draft = self.workspace / "plan_drafts/draft_001"
-        draft.mkdir(parents=True, exist_ok=True)
-        plan_path = draft / "plan.json"
-        plan_path.write_text(
-            json.dumps(effective, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8", newline="\n",
-        )
-        candidate = self.workspace / "candidate_01"
-        candidate.mkdir(exist_ok=True)
-        (candidate / "source_model.json").write_text(
-            json.dumps({"spaces": [], "boundaries": [], "openings": []}),
-            encoding="utf-8", newline="\n",
-        )
-        return {"structuredContent": {
-            "source_geometry_ready": True,
-            "candidate": "candidate_01",
-            "plan_input": {
-                "plan_file": "plan_drafts/draft_001/plan.json",
-                "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
-                "image": "north.png",
-                "regularization": effective["regularization"],
-            },
-            "drawing_differences": {"status": "reported", "items": []},
-            "building_precision": {"status": "reported", "items": []},
-        }}
-
-    @staticmethod
-    def image_origins(raw):
-        return {}
+@pytest.fixture(autouse=True)
+def effective_plan_metadata(monkeypatch):
+    """Keep the real planar compiler; distinguish its verified output from input."""
+    from src.agent.runtime_roles import plan_reading
+    compile_reading = plan_reading.build_reading
+    def compile_effective(plan, **kwargs):
+        effective = copy.deepcopy(plan)
+        effective["regularization"] = {"rule_version": "plan_regularization_v1",
+            "changes": [{"rule": "fixture", "action": "metadata_only"}], "rejections": []}
+        return compile_reading(effective, **kwargs)
+    monkeypatch.setattr(plan_reading, "build_reading", compile_effective)
 
 
 def _save_delivery(session, task_id, *, artifact_kind="compiled", validation_changes=None,
@@ -73,7 +41,7 @@ def _save_delivery(session, task_id, *, artifact_kind="compiled", validation_cha
         "size": [100, 100],
     }}}), encoding="utf-8", newline="\n")
     trial = PlanTrial(
-        RegularizingTools(workspace), image_name="north.png", workspace=workspace,
+        None, image_name="north.png", workspace=workspace,
         receipt_directory=workspace / "trial_receipts",
     )
     original = example()
@@ -98,18 +66,22 @@ def _save_delivery(session, task_id, *, artifact_kind="compiled", validation_cha
     return row, original, compiled, workspace
 
 
-def test_build_consumes_verified_compiled_plan_for_current_and_legacy_artifacts(environment):
+def test_build_uses_compiled_delivery_and_rejects_original_declaration(environment):
     _, make = environment
     session = make()
-    for task_id, artifact_kind in (("plan-current", "compiled"), ("plan-legacy", "original")):
+    for task_id, artifact_kind in (("plan-current", "compiled"), ("plan-original", "original")):
         row, _, compiled, _ = _save_delivery(
             session, task_id, artifact_kind=artifact_kind,
         )
-        result = asyncio.run(session.build_from_artifact(
-            task_id, row["artifact"]["sha256"],
-        ))
-        assert not result.get("isError")
-        assert json.loads(session.frozen.calls[-1][1]["plan_json"]) == compiled
+        if artifact_kind == "original":
+            with pytest.raises(ValueError, match="differs from.*compiled"):
+                asyncio.run(session.build_from_artifact(task_id, row["artifact"]["sha256"]))
+        else:
+            result = asyncio.run(session.build_from_artifact(task_id, row["artifact"]["sha256"]))
+            assert not result.get("isError")
+            sent = json.loads(session.frozen.calls[-1][1]["plan_json"])
+            assert sent["regularization"] == compiled["regularization"]
+            assert sent["footprint_pixels"] == compiled["footprint_pixels"]
 
 
 def test_build_rejects_forgery_escape_changed_bytes_and_nonobject_json(environment):
@@ -151,13 +123,13 @@ def test_build_rejects_forgery_escape_changed_bytes_and_nonobject_json(environme
     assert len(session.frozen.calls) == calls_before
 
 
-def test_rework_resumes_verified_compiled_plan_from_current_or_legacy_delivery(
+def test_rework_uses_compiled_delivery_and_rejects_original_declaration(
     environment, monkeypatch,
 ):
     store, make = environment
     session = make()
     expected = {}
-    for suffix, artifact_kind in (("current", "compiled"), ("legacy", "original")):
+    for suffix, artifact_kind in (("current", "compiled"), ("original", "original")):
         _, original, compiled, _ = _save_delivery(
             session, f"plan-{suffix}", artifact_kind=artifact_kind,
         )
@@ -180,12 +152,12 @@ def test_rework_resumes_verified_compiled_plan_from_current_or_legacy_delivery(
         raise ValueError("compiled rework baseline checked")
 
     session.adapter_factory = stop_at_adapter_boundary
-    for suffix in ("current", "legacy"):
+    for suffix in ("current", "original"):
         result = asyncio.run(session.delegate_many([{
             **dispatch(f"next-{suffix}"), "role_id": "plan_reader", "target": "F1",
             "previous_task_id": f"plan-{suffix}", "issues": ["correct the declared wall"],
             "rework_targets": ["plan.partitions:wall-A"],
         }]))["results"][0]
         assert result["status"] == "failed"
-        assert "compiled rework baseline checked" in result["reason"]
+        assert ("compiled rework baseline checked" if suffix == "current" else "differs from its successful trial") in result["reason"]
     assert not any(event.payload.event_type == "adapter_request" for event in store.all_events)

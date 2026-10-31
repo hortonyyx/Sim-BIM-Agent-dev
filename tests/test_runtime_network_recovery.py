@@ -209,7 +209,7 @@ def test_resume_conserves_interrupted_backoff_reservation_and_does_not_repeat_wr
 def test_resume_does_not_promote_unknown_summary_into_primary_request(tmp_path):
     limits = RunLimits(model_calls=6, tool_calls=3, seconds=None, tokens=None,
         max_model_retries=1, retry_backoff_seconds=0.001, model_reconnect_seconds=2, summary_every=1)
-    policy = ContextPolicy(active_window_messages=16, preserve_initial_messages=2)
+    policy = ContextPolicy(preserve_initial_messages=2)
     engine = runtime(tmp_path, [response(("saved", "save", {"value": 4})), ConnectionError("offline")],
                      limits=limits)
     engine.context_policy = policy

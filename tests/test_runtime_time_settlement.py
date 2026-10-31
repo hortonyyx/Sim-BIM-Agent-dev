@@ -18,7 +18,7 @@ from src.harness_contracts import (
     UsageReported,
 )
 
-from test_agent_runtime import Tools, role, versions
+from test_agent_runtime import Tools, role, versions, record_reserved_request
 
 
 def _runtime_with_reservation(
@@ -70,6 +70,7 @@ def _runtime_with_reservation(
         versions=versions(),
         limits=child_limits,
     )
+    record_reserved_request(engine, reservation)
     engine.started = time.monotonic()
     engine.started_epoch = time.time()
     engine.elapsed_before = 0.0

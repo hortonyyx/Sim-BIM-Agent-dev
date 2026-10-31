@@ -179,7 +179,7 @@ def test_t_partition_keeps_all_spaces_and_resolves_openings_without_resizing():
         "inferred_partitions": False,
     }
     assert metadata["calibration"]["world_metres_per_pixel"]["y"] < 0
-    assert proposal["unresolved"] == plan["unresolved"]
+    assert proposal["unresolved"] == _plan()["unresolved"]
 
 
 def test_folded_partition_preserves_nonrectangular_cells_and_collinear_cleanup():
@@ -371,6 +371,7 @@ def test_seed_use_evidence_is_validated_without_changing_geometry(basis):
     from src.agent.runtime_roles.plan_format import plan_format_errors
 
     plan = _plan()
+    plan["reading_type"] = "plan"
     seed = plan["space_seeds"][0]
     seed["role"] = "unknown" if basis == "unknown" else "office"
     bare, metadata = compile_plan_partition(plan, image_size=(100, 100), image_name="plan.png")

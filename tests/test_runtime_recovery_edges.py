@@ -282,7 +282,7 @@ def test_summary_response_replay_does_not_request_another_summary(tmp_path):
         tokens=100_000,
         summary_every=1,
     )
-    policy = ContextPolicy(active_window_messages=16, preserve_initial_messages=2)
+    policy = ContextPolicy(preserve_initial_messages=2)
     engine = runtime(
         tmp_path,
         [response(("view-once", "view", {})), _summary_response],
@@ -335,7 +335,6 @@ def test_summary_retry_does_not_turn_following_primary_request_into_retry(tmp_pa
         limits=limits,
     )
     engine.context_policy = ContextPolicy(
-        active_window_messages=16,
         preserve_initial_messages=2,
     )
 

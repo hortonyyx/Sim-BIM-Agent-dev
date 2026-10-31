@@ -9,7 +9,7 @@ Inside the running suite the gate is already installed (it arms at import, first
 in ``addopts``), so there is no "before the gate" moment to reproduce in-process.
 This lock therefore spawns a fresh ``python -m pytest`` on a tiny generated tree
 where a probe plugin is loaded *after* the real gate plugin (``-p
-ep_no_billed_gate -p early_probe`` — the same ordering ``addopts`` pins in the
+no_billed_gate -p early_probe`` — the same ordering ``addopts`` pins in the
 real suite) and:
 
   * connects at its own module-import time (carrier 1),
@@ -47,7 +47,7 @@ def test_gate_plugin_is_pinned_first_in_addopts():
 
     The subprocess lock below proves the import-time install stops both carriers
     *when the gate loads before the probe*. But the real suite gets that ordering
-    only because ``pyproject.toml`` ``addopts`` pins ``-p ep_no_billed_gate``
+    only because ``pyproject.toml`` ``addopts`` pins ``-p no_billed_gate``
     ahead of every other ``-p`` (ini addopts ``-p`` load before PYTEST_ADDOPTS
     and command-line ``-p``). If someone moved it after another ``-p`` — or
     dropped it — the mechanism lock would still pass while the real suite went
@@ -61,10 +61,10 @@ def test_gate_plugin_is_pinned_first_in_addopts():
         for i, tok in enumerate(addopts)
         if tok == "-p" and i + 1 < len(addopts)
     ]
-    assert "ep_no_billed_gate" in p_plugins, (
+    assert "no_billed_gate" in p_plugins, (
         f"gate plugin missing from addopts -p list: {addopts!r}"
     )
-    assert p_plugins[0] == "ep_no_billed_gate", (
+    assert p_plugins[0] == "no_billed_gate", (
         f"gate plugin must be the FIRST -p in addopts so it installs before any "
         f"other plugin can bind a pre-gate socket reference; got {p_plugins!r}"
     )
@@ -74,7 +74,7 @@ def test_gate_plugin_is_pinned_first_in_addopts():
 _EARLY_PROBE = textwrap.dedent(
     """
     import socket
-    from ep_no_billed_gate import ProviderCallBlocked
+    from no_billed_gate import ProviderCallBlocked
 
     _TARGET = ("192.0.2.1", 80)  # RFC 5737 TEST-NET-1, never a real provider
 
@@ -112,7 +112,7 @@ _EARLY_PROBE = textwrap.dedent(
 _INNER_TEST = textwrap.dedent(
     """
     import early_probe
-    from ep_no_billed_gate import ProviderCallBlocked
+    from no_billed_gate import ProviderCallBlocked
 
     _TARGET = ("192.0.2.1", 80)
 
@@ -154,7 +154,7 @@ def _run_child(tmp_path: pathlib.Path) -> subprocess.CompletedProcess:
     (tmp_path / "test_inner.py").write_text(_INNER_TEST, encoding="utf-8")
 
     env = dict(os.environ)
-    # ep_no_billed_gate must resolve in the child; early_probe/test_inner resolve
+    # no_billed_gate must resolve in the child; early_probe/test_inner resolve
     # from cwd (the tmp tree). Drop inherited addopts so we control -p ordering
     # and don't drag -n/xdist into this tiny run.
     env["PYTHONPATH"] = os.pathsep.join(
@@ -173,7 +173,7 @@ def _run_child(tmp_path: pathlib.Path) -> subprocess.CompletedProcess:
             "pytest",
             "test_inner.py",
             "-p",
-            "ep_no_billed_gate",  # the REAL gate, first (mirrors addopts order)
+            "no_billed_gate",  # the REAL gate, first (mirrors addopts order)
             "-p",
             "early_probe",  # probe loaded AFTER the gate
             "-p",
@@ -209,7 +209,7 @@ def _run_selfcheck(tmp_path: pathlib.Path, gate_on: bool) -> subprocess.Complete
     selfcheck.py``) in a fresh tree that has NO ``tests/conftest.py`` (so nothing
     re-imports and auto-arms the gate). ``-o addopts=`` drops the ini pin, so with
     ``gate_on=False`` the gate is genuinely absent; with ``gate_on=True`` we load
-    it explicitly via ``-p ep_no_billed_gate`` (resolved off the repo root on
+    it explicitly via ``-p no_billed_gate`` (resolved off the repo root on
     PYTHONPATH)."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     probe = tmp_path / "test_probe.py"
@@ -223,7 +223,7 @@ def _run_selfcheck(tmp_path: pathlib.Path, gate_on: bool) -> subprocess.Complete
     env.pop("OPENAI_API_KEY", None)
     cmd = [sys.executable, "-m", "pytest", "test_probe.py", "-o", "addopts=", "-q"]
     if gate_on:
-        cmd += ["-p", "ep_no_billed_gate"]
+        cmd += ["-p", "no_billed_gate"]
     cmd += ["-p", "no:cacheprovider"]
     return subprocess.run(
         cmd, cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=120

@@ -260,7 +260,7 @@ class D1Fixture:
 
         def view_position_evidence(index):
             rows = pending_positions()
-            assert len(rows) == 3
+            assert len(rows) == 2
             return response((
                 f"position-evidence-{index}",
                 "role_state",
@@ -269,7 +269,7 @@ class D1Fixture:
 
         def decide_positions():
             rows = pending_positions()
-            assert len(rows) == 3
+            assert len(rows) == 2
             views = [path.stem for path in sorted((run / "image_views").glob("view_*.json"))]
             assert len(views) == 2 * len(rows)
             edits = [{
@@ -290,7 +290,7 @@ class D1Fixture:
             ))
 
         # Deterministic regularization needs no assembly acknowledgement. sm24
-        # retains three real >30 cm conflicts, so the scripted coordinator must
+        # retains two real >30 cm conflicts, so the scripted coordinator must
         # view both saved reader crops and decide them before delivery.
         sequence: list[Callable[[], dict[str, Any]]] = [
             lambda: response(("coordinator-inputs", "inputs", {})),
@@ -299,10 +299,15 @@ class D1Fixture:
             ),
             lambda: response(("assemble-readers", "assemble_from_readers", {})),
         ]
+        if self.case_name == "sm25":
+            # These unchanged floor coordinates have a 0.1 m cross-storey
+            # conflict. The current rule rejects it; a scripted reader must
+            # not turn that failed assembly into a claimed complete building.
+            return sequence + [lambda: response(text="Cross-storey alignment remains unresolved; no complete building was produced.")]
         if self.case_name == "sm24":
             sequence.extend([
                 lambda index=index: view_position_evidence(index)
-                for index in range(3)
+                for index in range(2)
             ])
             sequence.extend([
                 decide_positions,

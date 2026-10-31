@@ -254,14 +254,14 @@ def test_tampered_accepted_artifact_is_rejected():
         materialize(plan(), {"north": observed})
 
 
-@pytest.mark.parametrize("planar,expected", [(True, [4.6, 6.2]), (False, [5.0, 6.6])])
-def test_level_resolution_preserves_absolute_2d_observations_and_legacy_relative_heights(planar, expected):
+def test_level_resolution_preserves_absolute_2d_observations_and_rejects_untyped_plan():
     from src.agent.runtime_roles.levels import apply_resolved_levels
     reading = plan()
     reading["openings"] = [{**reading["openings"][0], "z": [4.6, 6.2]}]
-    if not planar:
-        reading.pop("reading_type")
-    resolved = apply_resolved_levels(reading, {
-        "z_floor": {"value_m": 4.0}, "ceiling_height": {"value_m": 3.6}})
-    assert resolved["openings"][0]["z"] == pytest.approx(expected)
+    resolution = {"z_floor": {"value_m": 4.0}, "ceiling_height": {"value_m": 3.6}}
+    resolved = apply_resolved_levels(reading, resolution)
+    assert resolved["openings"][0]["z"] == [4.6, 6.2]
     assert reading["openings"][0]["z"] == [4.6, 6.2]
+    reading.pop("reading_type")
+    with pytest.raises(ValueError, match="requires a 2D plan reading"):
+        apply_resolved_levels(reading, resolution)

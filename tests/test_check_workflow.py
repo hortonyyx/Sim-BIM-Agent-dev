@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.dev import check
-from tests import archive_paths, check_selection
+from tests import check_selection
 
 
 def test_default_selection_excludes_archive_and_node_imports():
@@ -20,22 +20,12 @@ def test_default_selection_excludes_archive_and_node_imports():
     assert check_selection.unclassified() == []
 
 
-def test_explicit_current_node_can_run_but_history_requires_opt_in():
+def test_explicit_current_node_can_run_but_unknown_test_is_rejected():
     assert check.select("targeted", ["tests/test_role_end_to_end.py"], None) == ["tests/test_role_end_to_end.py"]
-    with pytest.raises(ValueError, match="historical"):
+    with pytest.raises(ValueError, match="select a test module explicitly"):
         check.select("targeted", ["tests/test_harness_stage0_history.py"], None)
 
 
-def test_archive_root_is_explicit_and_cannot_escape(monkeypatch, tmp_path):
-    monkeypatch.delenv("SIM_BIM_TEST_ARCHIVE_ROOT", raising=False)
-    with pytest.raises(RuntimeError, match="explicit"):
-        archive_paths.archive_path("AI_agent/logs/example.json")
-    monkeypatch.setenv("SIM_BIM_TEST_ARCHIVE_ROOT", str(tmp_path / "archive"))
-    monkeypatch.setenv("SIM_BIM_TEST_CASES_ROOT", str(tmp_path / "cases"))
-    assert archive_paths.archive_path("AI_agent/logs/example.json") == tmp_path / "archive/AI_agent/logs/example.json"
-    assert archive_paths.archive_path("case_tests/e2e_tests/example") == tmp_path / "cases/e2e_tests/example"
-    with pytest.raises(ValueError, match="relative"):
-        archive_paths.archive_path("../example")
 
 
 def test_default_new_test_is_reported_and_explicit_selection_is_allowed(monkeypatch, tmp_path):
@@ -64,7 +54,7 @@ def test_check_command_retains_gate_and_places_all_temporary_output_in_cache(mon
     assert check.main(["fast", "tests/test_check_workflow.py", "--cache-root", str(tmp_path / "cache")]) == 0
     command, env = seen["command"], seen["env"]
     assert command[command.index("-n") + 1] == "0"
-    assert "ep_no_billed_gate" in command and "-o" not in command
+    assert "no_billed_gate" in command and "-o" not in command
     assert env["PYTHONPATH"] == str(check.ROOT)
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert Path(env["TEMP"]).is_relative_to(tmp_path / "cache")

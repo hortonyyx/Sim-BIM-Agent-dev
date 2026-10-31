@@ -6,7 +6,7 @@ import math
 import pytest
 from shapely.geometry import Point, Polygon
 
-from src.agent.correction.parse import ensure_corrected_geometry
+from src.agent.geometry_model.parse import parse_geometry
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.proposal_edits import apply_proposal_edits
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
@@ -43,7 +43,7 @@ def arc_proposal(*, shared=False):
 
 
 def build(proposal):
-    return build_source_bim(ensure_corrected_geometry(proposal['geometry']), capability_profile='simple_polygon')
+    return build_source_bim(parse_geometry(proposal['geometry']), capability_profile='simple_polygon')
 
 
 def test_arc_sagitta_provenance_single_opening_and_saved_geometry(tmp_path):
@@ -184,7 +184,7 @@ def test_floor_footprint_hole_preserves_declared_spaces_and_has_no_fake_slab(tmp
 
 def test_curves_require_explicit_source_schema_and_profile():
     value = arc_proposal()
-    geometry = ensure_corrected_geometry(value['geometry'])
+    geometry = parse_geometry(value['geometry'])
     with pytest.raises(ValueError, match='capability_profile'):
         build_source_bim(geometry, capability_profile='orthogonal_polygon')
     with pytest.raises(ValueError, match='source_polygon_v1'):

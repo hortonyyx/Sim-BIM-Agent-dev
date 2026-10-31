@@ -7,7 +7,7 @@ from src.agent.runtime_roles.readers import ReaderTools, validate_plan_artifact
 
 
 def plan():
-    return {
+    return {"reading_type": "plan",
         "floor_id": "F1", "z_floor": 0, "ceiling_height": 3,
         "x_anchors": [[10, 0], [110, 10]], "y_anchors": [[10, 10], [110, 0]],
         "basis": "observed dimension anchors", "footprint_pixels": [[10, 10], [110, 10], [110, 110], [10, 110]],
@@ -59,7 +59,7 @@ class Frozen:
     async def list_tools(self):
         from src.agent.runtime_roles.readers import ELEVATION_READER_TOOL_NAMES
         return [{"name": name, "description": name, "inputSchema": {"type": "object"}}
-                for name in ELEVATION_READER_TOOL_NAMES if name != "pixel_profile"]
+                for name in ELEVATION_READER_TOOL_NAMES]
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
@@ -98,7 +98,7 @@ def test_reader_tools_filter_catalog_enforce_one_image_and_reference_provenance(
         frozen = Frozen()
         tools = ReaderTools(frozen, role_id="plan_reader", image_name="plan.png", trial=Trial())
         catalog = await tools.list_tools()
-        assert {row["name"] for row in catalog} >= {"pixel_profile", "view_pixel_profile", "trial_plan_bim"}
+        assert {row["name"] for row in catalog} >= {"view_pixel_profile", "trial_plan_bim"}
         trial_description = next(row["description"] for row in catalog if row["name"] == "trial_plan_bim")
         assert "segments_mm" in trial_description
         assert "printed_segments_mm" not in trial_description
@@ -108,9 +108,9 @@ def test_reader_tools_filter_catalog_enforce_one_image_and_reference_provenance(
             await tools.call_tool("view_image", {"name": "other.png"})
         with pytest.raises(ValueError, match="not returned"):
             await tools.call_tool("map_pixels", {"profile": "profile_999"})
-        await tools.call_tool("view_pixel_profile", {"name": "plan.png"})
+        await tools.call_tool("view_pixel_profile", {"name": "plan.png", "include_image": False})
         await tools.call_tool("map_pixels", {"profile": "profile_001"})
-        await tools.call_tool("pixel_profile", {"name": "plan.png"})
+        await tools.call_tool("view_pixel_profile", {"name": "plan.png", "include_image": False})
         assert frozen.calls[-1] == ("view_pixel_profile", {"name": "plan.png", "include_image": False})
         assert tools.repeatability("trial_plan_bim") == "non_idempotent_write"
     asyncio.run(scenario())

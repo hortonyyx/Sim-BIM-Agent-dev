@@ -1,193 +1,82 @@
-"""Contract locks for the deterministic affected-test selector."""
-
-from __future__ import annotations
-
+"""The dependency selector follows imports and refuses incomplete coverage."""
 import subprocess
 import sys
 from pathlib import Path
+import pytest
+from scripts.dev import affected_tests as affected
 
-
-from scripts.tool_scripts import affected_tests as affected
-
-
-def _path(*parts: str) -> str:
-    return "/".join(parts)
-
-
-def _result(*parts: str) -> affected.MappingResult:
-    return affected.affected_tests([_path(*parts)])
-
+@pytest.fixture
+def graph(tmp_path, monkeypatch):
+    files = {
+        "src/middle.py": "import src.leaf\n",
+        "src/leaf.py": "REFERENCE = 'tests/test_unrelated.py'\n",
+        "src/uncovered.py": "VALUE = 1\n",
+        "scripts/tool_scripts/probe.py": "VALUE = 2\n",
+        "tests/helpers.py": "import src.middle\n",
+        "tests/test_imports.py": "from tests import helpers\n",
+        "tests/test_command.py": "COMMAND = 'scripts/tool_scripts/probe.py'\n",
+        "tests/test_unrelated.py": "def test_ok(): pass\n",
+        "README.md": "Instructions\n",
+        "pyproject.toml": "[project]\n",
+    }
+    for name, data in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(data, encoding="utf-8")
+    monkeypatch.setattr(affected, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(affected, "first_class_files", lambda: tuple(n for n in files if n.endswith(".py")))
+    return tuple(n for n in files if n.endswith(".py"))
 
 def test_deterministic_output_and_cli_contract(monkeypatch):
-    path = _path("src", "agent", "judge", "tarch_normalize.py")
-    first = affected.render(_result(*path.split("/")), "test", explain=True)
-    original_files = affected.first_class_files()
-    monkeypatch.setattr(affected, "first_class_files", lambda: tuple(reversed(original_files)))
-    second = affected.render(_result(*path.split("/")), "test", explain=True)
-    assert first == second
+    path = "src/agent/geometry/source_volume.py"
+    first = affected.render(affected.affected_tests([path]), "test", explain=True)
+    files = affected.first_class_files()
+    monkeypatch.setattr(affected, "first_class_files", lambda: tuple(reversed(files)))
+    assert affected.render(affected.affected_tests([path]), "test", explain=True) == first
     assert first.startswith("SCOPE: SUBSET\npython scripts/dev/check.py ")
-    assert "跑测声明：实际选择 = " in first
-    assert "EXPLAIN: " in first
-
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "scripts/tool_scripts/affected_tests.py",
-            "--changed",
-            path,
-            "--explain",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert completed.returncode == 0
+    completed = subprocess.run([sys.executable, "scripts/dev/affected_tests.py", "--changed", path, "--explain"], text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
     assert completed.stdout.startswith("SCOPE: SUBSET\n")
     assert "EXPLAIN: " in completed.stdout
 
-
-def test_tarch_import_edges_select_the_locked_tests():
-    result = _result("src", "agent", "judge", "tarch_normalize.py")
+def test_transitive_import_keeps_helper_edges_but_selects_only_tests(graph):
+    result = affected.affected_tests(["src/leaf.py"])
     assert result.scope == "SUBSET"
-    assert {
-        "tests/test_tarch_converter_p1_geometry.py",
-        "tests/test_tarch_converter_p2_geometry.py",
-        "tests/test_tarch_converter_gate_mutations.py",
-    } <= set(result.tests)
+    assert result.tests == ("tests/test_imports.py",)
+    chain = affected.find_path(affected.build_edges(graph), "tests/test_imports.py", "src/leaf.py")
+    assert len(chain) == 3
+    assert all(edge.kind == "import" for edge in chain)
 
+def test_string_path_selects_command_without_production_to_test_bridge(graph):
+    result = affected.affected_tests(["scripts/tool_scripts/probe.py"])
+    assert result.tests == ("tests/test_command.py",)
+    edges = affected.build_edges(graph)
+    assert affected.Edge("tests/test_command.py", "scripts/tool_scripts/probe.py", "string-path") in edges
+    assert not [e for e in edges if not e.source.startswith("tests/") and e.target.startswith("tests/")]
 
-def test_root_entrypoint_string_path_reaches_mcp_server():
-    result = _result("src", "mcp", "server.py")
-    test = "tests/test_mcp_stdio.py"
-    assert result.scope == "SUBSET"
-    assert test in result.tests
-    files = affected.first_class_files()
-    edges = affected.build_edges(files)
-    chain = affected.find_path(edges, test, "src/mcp/server.py")
-    assert chain is not None
-    assert affected.Edge(test, "main.py", "string-path") in chain
-    assert affected.Edge("main.py", "src/mcp/server.py", "import") in chain
-
-
-def test_transitive_import_edge_is_not_a_direct_edge():
-    target = _path("src", "agent", "judge", "score_inputs.py")
-    result = _result(*target.split("/"))
-    test = "tests/test_audit_remediation_accepted_inputs.py"
-    assert test in result.tests
-    explanation = result.explanations[test]
-    assert any("scripts/tool_scripts/run_stage.py" in line for line in explanation)
-    files = affected.first_class_files()
-    edges = affected.build_edges(files)
-    assert not any(edge.source == test and edge.target == target for edge in edges)
-    assert len(affected.find_path(edges, test, target) or ()) >= 2
-
-
-def test_string_path_edge_is_recorded_for_gt_from_dxf():
-    edges = affected.build_edges(affected.first_class_files())
-    assert any(
-        edge.source == "tests/test_gt_from_dxf.py"
-        and edge.target == "scripts/tool_scripts/gt_from_dxf.py"
-        and edge.kind == "string-path"
-        for edge in edges
-    )
-
-
-def test_pure_string_path_subprocess_edge_selects_cv_toolbox():
-    source = "tests/test_cv_toolbox.py"
-    target = "scripts/tool_scripts/cv_probe.py"
-    result = _result(*target.split("/"))
-    assert result.scope == "SUBSET"
-    assert source in result.tests
-    edges = affected.build_edges(affected.first_class_files())
-    assert any(
-        edge.source == source
-        and edge.target == target
-        and edge.kind == "string-path"
-        for edge in edges
-    )
-    assert not any(
-        edge.source == source and edge.target == target and edge.kind == "import"
-        for edge in edges
-    )
-
-
-def test_subset_contains_only_runnable_test_files_and_keeps_helper_transit():
-    result = _result("src", "agent", "pipeline.py")
-    assert result.scope == "SUBSET"
-    assert "tests/b4b_contract_fixture.py" not in result.tests
-    assert "tests/b5_test_helpers.py" not in result.tests
-    assert all(Path(path).name.startswith("test_") for path in result.tests)
-
-    edges = affected.build_edges(affected.first_class_files())
-    assert affected.Edge(
-        "tests/test_c2_b4b_phase_b.py",
-        "tests/b4b_contract_fixture.py",
-        "import",
-    ) in edges
-    assert affected.Edge(
-        "tests/b4b_contract_fixture.py",
-        "src/agent/correction/facade_visibility.py",
-        "import",
-    ) in edges
-
-
-def test_production_string_paths_cannot_bridge_through_test_nodes():
-    changed = "scripts/tool_scripts/cv_probe.py"
-    result = _result(*changed.split("/"))
-    assert result.scope == "SUBSET"
-    assert "tests/test_cv_toolbox.py" in result.tests
-    assert "tests/test_gt_from_dxf.py" not in result.tests
-    edges = affected.build_edges(affected.first_class_files())
-    # Real consumers grow when a shared test fixture starts using cv_probe.
-    # Protect the actual no-production-to-test bridge rule, not a stale count.
-    assert not [edge for edge in edges if edge.kind == "string-path"
-                and not edge.source.startswith("tests/") and edge.target.startswith("tests/")]
-    assert affected.Edge(
-        "src/agent/judge/gt.py",
-        "tests/test_gt_discipline.py",
-        "string-path",
-    ) not in edges
-
-
-def test_fail_closed_for_non_first_class_path():
-    result = affected.affected_tests(["README.md"])
+@pytest.mark.parametrize("path,message", [
+    ("README.md", "not a first-class Python file"),
+    ("pyproject.toml", "full-scope trigger matched"),
+    ("src/absent.py", "deleted or absent"),
+    ("src/uncovered.py", "has no covering test"),
+])
+def test_unknown_or_uncovered_changes_fail_closed(graph, path, message):
+    result = affected.affected_tests([path])
     assert result.scope == "FULL"
-    assert "not a first-class Python file" in result.reasons[0]
+    assert message in result.reasons[0]
 
-
-def test_fail_closed_for_full_scope_trigger():
-    result = affected.affected_tests(["pyproject.toml"])
-    assert result.scope == "FULL"
-    assert "full-scope trigger matched" in result.reasons[0]
-
-
-def test_incomplete_mapping_reports_node_selection_without_full_coverage_claim():
-    rendered = affected.render(affected.MappingResult("FULL", (), ("unknown interface",), {}), "test", False)
-    assert rendered.startswith("SCOPE: NODE\npython scripts/dev/check.py node\nMAPPING: INCOMPLETE\n")
-    assert "不覆盖未映射接口、可选定向检查或历史证据" in rendered
-    assert "全仓" not in rendered and "SCOPE: FULL" not in rendered
-
-
-def test_fail_closed_for_deleted_file():
-    result = _result("src", "agent", "does_not_exist.py")
-    assert result.scope == "FULL"
-    assert "deleted or absent" in result.reasons[0]
-
-
-def test_fail_closed_for_broken_rules_table(tmp_path, monkeypatch):
+def test_fail_closed_for_broken_rules_table(graph, tmp_path, monkeypatch):
     broken = tmp_path / "broken.yaml"
     broken.write_text("full_scope: [", encoding="utf-8")
     monkeypatch.setattr(affected, "RULES_PATH", broken)
-    result = _result("src", "agent", "pipeline.py")
+    result = affected.affected_tests(["src/leaf.py"])
     assert result.scope == "FULL"
     assert "rules table cannot be parsed" in result.reasons[0]
 
-
-def test_uncovered_first_class_module_falls_back_to_full_scope():
-    result = _result("scripts", "tool_scripts", "baseline_record.py")
-    assert result.scope == "FULL"
-    assert "has no covering test" in result.reasons[0]
-
+def test_incomplete_mapping_does_not_claim_full_coverage():
+    rendered = affected.render(affected.MappingResult("FULL", (), ("unknown interface",), {}), "test", False)
+    assert rendered.startswith("SCOPE: NODE\npython scripts/dev/check.py node\nMAPPING: INCOMPLETE\n")
+    assert "SCOPE: FULL" not in rendered
 
 def test_since_uses_committed_range_only(tmp_path, monkeypatch):
     def git(*args: str) -> str:

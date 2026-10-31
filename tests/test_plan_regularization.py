@@ -1067,7 +1067,7 @@ def test_evidence_backed_complete_open_passage_follows_terminal_boundaries():
          ("right", [[60, 0], [60, 50]]),
          ("opening-host", [[0, 50], [100, 50]])],
         openings=[{
-            "id": "passage", "kind": "door", "state": "open",
+            "id": "passage", "kind": "open", "state": "open",
             "p1": [41, 50], "p2": [59, 50], "z": [0.0, 2.1],
             "source_refs": ["drawing:structured-passage-evidence"],
         }],
@@ -1095,7 +1095,7 @@ def test_evidence_backed_complete_open_passage_follows_terminal_boundaries():
     assert adjustment["after"]["width_m"] == 1.6
     assert adjustment["width_change_m"] == -.2
     assert adjustment["inference"] == {
-        "basis": "structured_complete_open_passage_compatibility",
+        "basis": "structured_complete_open_passage",
         "state": "open", "structured_gap_support": True,
         "complete_between_terminal_boundaries": True,
         "hard_width_reference": False,
@@ -1110,7 +1110,7 @@ def test_complete_open_passage_rejects_distinct_terminal_boundary_ambiguity():
          ("right-far", [[61, 0], [61, 50]]),
          ("opening-host", [[0, 50], [100, 50]])],
         openings=[{
-            "id": "passage", "kind": "door", "state": "open",
+            "id": "passage", "kind": "open", "state": "open",
             "p1": [41, 50], "p2": [59, 50], "z": [0.0, 2.1],
             "source_refs": ["drawing:structured-passage-evidence"],
         }],
@@ -1135,7 +1135,7 @@ def test_complete_open_passage_deduplicates_collinear_terminal_segments():
          ("right-b", [[60, 0], [60, 50]]),
          ("opening-host", [[0, 50], [100, 50]])],
         openings=[{
-            "id": "passage", "kind": "door", "state": "open",
+            "id": "passage", "kind": "open", "state": "open",
             "p1": [41, 50], "p2": [59, 50], "z": [0.0, 2.1],
             "source_refs": ["drawing:structured-passage-evidence"],
         }],
@@ -1569,7 +1569,7 @@ def _mixed_boundary_stack(offset=2):
 
 
 def _stack_source_precision(items):
-    from src.agent.correction.schema import CorrectedGeometry, FootprintRing
+    from src.agent.geometry_model.schema import GeometryInput, FootprintRing
     from src.agent.geometry.building_precision import precision_report
     from src.agent.geometry.plan_assembly import assemble_plan_proposals
     from src.agent.geometry.source_bim import build_source_bim
@@ -1581,7 +1581,7 @@ def _stack_source_precision(items):
         compiled.append({"proposal": proposal, "floor_id": item["floor_id"],
                          "z_floor": item["z_floor"], "source_ref": item["source_ref"]})
     proposal = assemble_plan_proposals(compiled)
-    geometry = CorrectedGeometry.model_validate(proposal["geometry"])
+    geometry = GeometryInput.model_validate(proposal["geometry"])
     for floor in geometry.floors:
         if isinstance(floor.footprint, dict):
             floor.footprint = FootprintRing.model_validate(floor.footprint)

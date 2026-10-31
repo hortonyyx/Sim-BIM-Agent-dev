@@ -14,7 +14,7 @@ import urllib.request
 
 import pytest
 
-from ep_no_billed_gate import ProviderCallBlocked, _is_local
+from no_billed_gate import ProviderCallBlocked, _is_local
 
 # RFC 5737 TEST-NET-1: guaranteed non-routable, never a real provider.
 _REMOTE = ("192.0.2.1", 80)

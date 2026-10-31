@@ -41,9 +41,9 @@ def test_alias_error_and_image_results_survive_real_stdio(tmp_path):
             result = await session.call_tool("view_image", {"name": "PLAN", "display_scale": 0.5})
             assert not result.isError and any(c.type == "image" for c in result.content)
             assert "actual filename 'plan.png'" in "\n".join(c.text for c in result.content if c.type == "text")
-            bad = await session.call_tool("pixel_profile", dict(name="p1", box=[0, 0, 4, 4], axis="x", rgb=[255, 255, 255]))
+            bad = await session.call_tool("view_pixel_profile", dict(name="p1", box=[0, 0, 4, 4], axis="x", rgb=[255, 255, 255]))
             assert bad.isError and "Available filenames: [\"plan.png\"]" in bad.structuredContent['error']
-            assert {"view_image", "pixel_profile"} <= {tool.name for tool in (await session.list_tools()).tools}
+            assert {"view_image", "view_pixel_profile"} <= {tool.name for tool in (await session.list_tools()).tools}
     asyncio.run(scenario())
 
 
@@ -82,8 +82,8 @@ def test_drawing_process_tool_errors_link_to_their_actual_format(tmp_path):
                 result = await session.call_tool(tool, arguments)
                 assert result.isError
                 hint = result.structuredContent["repair_hint"]
-                assert 'topic="drawing_process"' in hint
-                assert "plan_partition" not in hint
+                topic = "plan_partition" if tool == "revise_plan_bim" else "drawing_process"
+                assert f'topic="{topic}"' in hint
         assert not list(run.glob("candidate_*"))
     asyncio.run(scenario())
 

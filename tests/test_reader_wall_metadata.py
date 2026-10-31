@@ -8,13 +8,13 @@ import pytest
 from PIL import Image
 
 from scripts.tool_scripts.render_geometry_viewer import build_viewer_html, wall_properties
-from src.agent.correction.parse import ensure_corrected_geometry
+from src.agent.geometry_model.parse import parse_geometry
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.component_attributes import thickness_record, validate_component_attributes
 from src.agent.geometry.plan_assembly import assemble_plan_proposals
 from src.agent.geometry.plan_partition import compile_plan_partition
 from src.agent.geometry.reader_wall_metadata import (
-    bind_wall_metadata, bind_wall_readings, validate_wall_metadata, wall_reading_input, require_wall_thickness,
+    bind_wall_readings, validate_wall_metadata, wall_reading_input, require_wall_thickness,
 )
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_model import _digest
@@ -31,7 +31,7 @@ def _known(target="partition:P_vertical", thickness=.2):
 def example():
     plan = _plan()
     proposal, metadata = compile_plan_partition(plan, image_size=(100, 100), image_name="plan.png")
-    source = build_source_bim(ensure_corrected_geometry(proposal["geometry"]),
+    source = build_source_bim(parse_geometry(proposal["geometry"]),
                               capability_profile="orthogonal_polygon")
     plan["wall_metadata"] = [_known()]
     return plan, proposal, metadata, source
@@ -75,7 +75,7 @@ def test_segment_override_inherits_remaining_whole_partition_values():
 def test_t_junction_binds_each_partial_side_without_changing_geometry(example):
     plan, _, metadata, source = example
     before = copy.deepcopy((plan, metadata, source))
-    patch = bind_wall_metadata(source, plan, metadata)
+    patch = bind_wall_readings(source, [wall_reading_input(plan, metadata)])
     assert (plan, metadata, source) == before
     known = patch["component_attributes"]
     assert len(known) == 3  # One long side and two separate room sides.
@@ -98,15 +98,15 @@ def test_t_junction_binds_each_partial_side_without_changing_geometry(example):
 def test_authored_footprint_edge_and_world_side_do_not_follow_ring_orientation(example):
     plan, _, metadata, source = example
     plan["wall_metadata"] = [_known("footprint:0", .3)]
-    patch = bind_wall_metadata(source, plan, metadata)
+    patch = bind_wall_readings(source, [wall_reading_input(plan, metadata)])
     boundaries = {r["id"]: r for r in source["boundaries"]}
     assert patch["component_attributes"]
     assert all({p[1] for p in boundaries[r["boundary_ids"][0]]["vertices"]} == {8.9}
                for r in patch["component_attributes"])
     plan["wall_metadata"] = [_known()]
-    baseline = bind_wall_metadata(source, plan)
+    baseline = bind_wall_readings(source, [wall_reading_input(plan)])
     plan["partitions"][0]["points"].reverse()
-    assert bind_wall_metadata(source, plan) == baseline
+    assert bind_wall_readings(source, [wall_reading_input(plan)]) == baseline
 
 
 @pytest.mark.parametrize("x_sign", [-1, 1])
@@ -179,6 +179,8 @@ def test_perimeter_alias_retains_raw_observation_beside_canonical_product_and_so
     plan["wall_metadata"] = [dict(_known("footprint:0", .3), reference_side="outer_face"),
         dict(_known("footprint:*", .24), reference_side="outer_face"), _known("partition:*", .12)]
     before = copy.deepcopy(plan)
+    plan["reading_type"] = "plan"
+    before = copy.deepcopy(plan)
     assert plan_format_errors(plan) == []
     (tmp_path / "images").mkdir()
     Image.new("RGB", (100, 100), "white").save(tmp_path / "images/plan.png")
@@ -229,6 +231,8 @@ def test_face_alias_waits_for_actual_trial_quantity_and_profile_resolution(tmp_p
         plan["x_anchors"][0][0] = {"profile": "profile_001", "candidate": "C01"}
         plan["footprint_pixels"][0][0] = {"profile": "profile_001", "candidate": "C02"}
     before = copy.deepcopy(plan)
+    plan["reading_type"] = "plan"
+    before = copy.deepcopy(plan)
     assert plan_format_errors(plan) == []
     # Deferral is exclusive to declaration preflight; a saved-product caller
     # cannot silently accept unresolved geometry by using the default API.
@@ -258,7 +262,7 @@ def test_partial_thickness_and_nearby_wall_cannot_be_silently_spread(example):
     plan, _, metadata, source = example
     plan["wall_metadata"] = [_known("partition:P_vertical:0")]
     with pytest.raises(ValueError, match="different wall metadata"):
-        bind_wall_metadata(source, plan, metadata)
+        bind_wall_readings(source, [wall_reading_input(plan, metadata)])
     plan["wall_metadata"] = [_known()]
     shifted = copy.deepcopy(source)
     for wall in shifted["boundaries"]:
@@ -266,7 +270,7 @@ def test_partial_thickness_and_nearby_wall_cannot_be_silently_spread(example):
             for point in wall["vertices"]:
                 point[0] += .01
     with pytest.raises(ValueError, match="not fully covered"):
-        bind_wall_metadata(shifted, plan, metadata)
+        bind_wall_readings(shifted, [wall_reading_input(plan, metadata)])
 
 
 def test_floor_assembly_rebinds_duplicate_local_ids_and_retains_values_on_reload(example, tmp_path):
@@ -299,7 +303,7 @@ def test_floor_assembly_rebinds_duplicate_local_ids_and_retains_values_on_reload
 
 def test_viewer_shows_known_unknown_and_conflicting_values_with_basis(example):
     plan, _, metadata, source = example
-    source.update(bind_wall_metadata(source, plan, metadata))
+    source.update(bind_wall_readings(source, [wall_reading_input(plan, metadata)]))
     source["source_model_sha256"] = _digest({k: v for k, v in source.items() if k != "source_model_sha256"})
     properties = wall_properties(source)
     known = next(k for k, v in properties.items() if v["thickness_m"] == .2)
@@ -325,7 +329,7 @@ def test_tool_build_and_assembly_keep_thickness_without_model_calls(tmp_path):
     (run / "images").mkdir(parents=True)
     image = run / "images/plan.png"
     Image.new("RGB", (100, 100), "white").save(image)
-    (run / "inputs.json").write_text(json.dumps({
+    (run / "inputs.json").write_text(json.dumps({"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24,
         "images": {"plan.png": {"size": [100, 100], "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}},
         "scope": "synthetic wall metadata", "only_input": "synthetic image"}), encoding="utf-8")
     toolkit = Toolkit(run)

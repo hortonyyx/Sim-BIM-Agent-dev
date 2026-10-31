@@ -2,7 +2,7 @@
 import json
 
 from src.agent.execution.bim_claim_state import project
-from src.agent.execution.bim_height_coverage import compact_height_coverage, height_coverage
+from src.agent.execution.bim_height_coverage import height_coverage
 from src.agent.geometry.source_model import _digest
 from tests.test_bim_claims import adopt, claim, setup_run
 
@@ -49,11 +49,6 @@ def test_actual_absolute_heights_start_unchecked_and_empty_facades_do_not_claim_
     assert empty["drawing_fidelity"] == "not_evaluated"
     assert floor["non_facade"]["actual_opening_ids"] == ["door"]
 
-    compact = compact_height_coverage(report)
-    assert compact["summary"] == report["summary"]
-    assert all("retained_image_evidence" not in row for row in compact["openings"])
-    assert all("exterior_boundary_ids" not in facade
-               for row in compact["floors"] for facade in row["facades"])
     assert "retained_image_evidence" in _opening(report, "window")
 
 
@@ -137,7 +132,7 @@ def test_changed_height_invalidates_check_and_reports_new_source_vertices(tmp_pa
 def test_cross_floor_opening_is_unchecked_in_each_host_floor_scope(tmp_path):
     run, toolkit = setup_run(tmp_path)
     source_path = run / "seed/source_model.json"
-    source = json.loads(source_path.read_text())
+    source = json.loads(source_path.read_text(encoding="utf-8"))
     source["floors"].append({**source["floors"][0], "id": "ANNEX"})
     next(row for row in source["spaces"] if row["id"] == "room")["floor_id"] = "ANNEX"
     source["source_model_sha256"] = _digest({

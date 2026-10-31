@@ -191,11 +191,13 @@ def test_confirmation_tool_stdio_and_readonly_exclusion(tmp_path):
         run, toolkit = setup_run(tmp_path)
         row = window_claim(toolkit)
         async with _server_session(run, readonly=True) as session:
-            assert 'confirm_claims' not in {t.name for t in (await session.list_tools()).tools}
+            assert 'claim_transaction' not in {t.name for t in (await session.list_tools()).tools}
         async with _server_session(run, readonly=False) as session:
-            result = _json_result(await session.call_tool('confirm_claims', {
-                'candidate': 'seed', 'operations_json': json.dumps([window_check(row['id'])])}))
-            assert result['status'] == 'confirmed_unchanged'
+            result = _json_result(await session.call_tool('claim_transaction', {
+                'candidate': 'seed', 'entries_json': json.dumps([{'claim_id': row['id'],
+                    'action': 'confirm', 'operations': [window_check(row['id'])]}])}))
+            assert result['status'] == 'completed'
+            assert result['entries'][0]['status'] == 'confirmed_unchanged'
             current = _json_result(await session.call_tool('claim_status', {'candidate': 'seed'}))
             assert current['claims'][0]['state'] == 'confirmed_unchanged'
     asyncio.run(scenario())

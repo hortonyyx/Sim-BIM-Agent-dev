@@ -26,6 +26,7 @@ from src.agent_runtime.store import EventStore
 from src.harness_contracts import ToolInvocationPayload
 from tests.test_bim_claims import setup_run
 from tests.test_source_proposal import _proposal
+from tests.reader_delivery_fixtures import comparison_reading_bytes
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -461,8 +462,8 @@ class _Registry:
             "plan-f1": {
                 "artifact": {"sha256": "artifact-sha"},
                 "validation": {
-                    "candidate": "candidate_01",
-                    "candidate_source_sha256": source_sha256,
+                    "reading_product_file": "reading_product.json",
+                    "reading_product_sha256": hashlib.sha256((task_directory / "bim/trial_workspace/reading_product.json").read_bytes()).hexdigest(),
                 },
             }
         }
@@ -494,9 +495,9 @@ def _bound_review_environment(tmp_path):
     expected = _source(tmp_path, "expected")
     raw = json.dumps(expected, ensure_ascii=False, sort_keys=True).encode()
     task = tmp_path / "reader-task"
-    accepted = task / "bim/trial_workspace/candidate_01/source_model.json"
+    accepted = task / "bim/trial_workspace/reading_product.json"
     accepted.parent.mkdir(parents=True)
-    accepted.write_bytes(raw)
+    accepted.write_bytes(comparison_reading_bytes(json.loads(raw)))
     run = tmp_path / "run"
     candidate = run / "candidate_01/source_model.json"
     candidate.parent.mkdir(parents=True)
@@ -741,17 +742,17 @@ def _coverage_review(tmp_path, records, tasks, floors, used_task):
     }
     raw = json.dumps(source, ensure_ascii=False, sort_keys=True).encode()
     records[used_task]["validation"].update({
-        "candidate": "candidate_01",
-        "candidate_source_sha256": hashlib.sha256(raw).hexdigest(),
+        "reading_product_file": "reading_product.json",
+        "reading_product_sha256": hashlib.sha256(comparison_reading_bytes(source)).hexdigest(),
     })
     run = tmp_path / "run"
     candidate = run / "candidate_01/source_model.json"
     candidate.parent.mkdir(parents=True)
     candidate.write_bytes(raw)
     task = tmp_path / "reader-task"
-    accepted = task / "bim/trial_workspace/candidate_01/source_model.json"
+    accepted = task / "bim/trial_workspace/reading_product.json"
     accepted.parent.mkdir(parents=True)
-    accepted.write_bytes(raw)
+    accepted.write_bytes(comparison_reading_bytes(json.loads(raw)))
     limits = RunLimits(model_calls=1, tool_calls=1, seconds=10, tokens=1000)
     store = EventStore(
         tmp_path / "journal",
@@ -765,7 +766,7 @@ def _coverage_review(tmp_path, records, tasks, floors, used_task):
     store.write_json("role_floor_sources.json", {"F1": {
         "task_id": used_task,
         "artifact_sha256": bound["artifact"]["sha256"],
-        "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "source_sha256": hashlib.sha256(comparison_reading_bytes(source)).hexdigest(),
     }})
     store.write_json("role_operations/build.json", {
         "tool": "build_plan_bim",
@@ -872,7 +873,9 @@ def test_timeout_fallback_runs_the_same_delivery_guard(tmp_path, monkeypatch):
     assert result["delivery"] is None
 
 
-def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
+@pytest.mark.parametrize("with_openings", [False, True])
+@pytest.mark.parametrize("receipt_state", ["completed", "intent_only", "missing", "changed_arguments", "changed_compiled"])
+def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path, with_openings, receipt_state):
     run, _ = setup_run(tmp_path)
     limits = RunLimits(model_calls=1, tool_calls=4, seconds=30, tokens=10_000)
     routes = load_roles(
@@ -890,6 +893,13 @@ def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
 
     class Frozen:
         run_directory = run
+
+        def __init__(self):
+            self.calls = []
+
+        async def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            raise AssertionError("receipt recovery must never execute a building write")
 
         def snapshot_state(self):
             return {}
@@ -926,14 +936,30 @@ def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
             limits=limits,
             root=ROOT,
         )
-        plan = {"floor_id": "F1", "partitions": [], "openings": []}
+        from src.agent.runtime_roles.plan_materialization import materialize_plan_reading
+        from tests.test_role_trial import example
+        plan = example()
+        if not with_openings:
+            plan["openings"] = []
+        workspace = tmp_path / "reader-task/bim/trial_workspace"
+        workspace.mkdir(parents=True)
+        raw_plan = json.dumps(plan).encode()
+        (workspace / "compiled.json").write_bytes(raw_plan)
+        # Materialization is an upstream concern here; preserve its actual request
+        # shape in the durable operation fixture rather than bypassing recovery.
+        from PIL import Image
+        with Image.open(run / "images/plan.png") as image:
+            image_size = image.size
+        materialized, decisions = materialize_plan_reading(plan, elevations={}, image_size=image_size, image_name="plan.png")
+        assert bool(decisions) is with_openings
 
         class RecoveryRegistry:
             records = {
                 "plan-f1": {
                     "artifact": {"sha256": "artifact-sha"},
                     "image": "plan.png",
-                    "validation": {"validation_passed": True},
+                    "validation": {"validation_passed": True, "compiled_numeric_plan_file": "compiled.json",
+                                   "compiled_numeric_plan_sha256": hashlib.sha256(raw_plan).hexdigest()},
                 }
             }
 
@@ -945,6 +971,9 @@ def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
                 )
                 return {"plan": plan}
 
+            def child(self, task_id):
+                return SimpleNamespace(task_directory=tmp_path / "reader-task")
+
             def state(self):
                 return {"tasks": {}}
 
@@ -952,24 +981,25 @@ def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
         probe = AssemblyProbe()
         session.assembly = probe
         arguments = {"task_id": "plan-f1", "sha256": "artifact-sha"}
-        identity = "plan:plan-f1"
+        identity = session._build_identity("plan-f1", {"materialization": decisions})
         operation_path = hashlib.sha256(identity.encode()).hexdigest()
         durable_result = envelope(
             {"candidate": "candidate_01", "source_geometry_ready": True}
         )
-        store.write_json(
-            "role_operations/" + operation_path + ".json",
-            {
-                "operation_id": identity,
-                "tool": "build_plan_bim",
-                "arguments": {
-                    "image": "plan.png",
-                    "plan_json": json.dumps(plan, ensure_ascii=False),
-                },
-                "reference": arguments,
-                "result": durable_result,
-            },
-        )
+        saved_operation = {
+            "operation_id": identity, "tool": "build_plan_bim",
+            "arguments": {"image": "plan.png", "plan_json": json.dumps(materialized, ensure_ascii=False)},
+            "reference": arguments, "result": durable_result,
+        }
+        if receipt_state == "intent_only":
+            saved_operation.pop("result")
+        elif receipt_state == "changed_arguments":
+            saved_operation["arguments"]["plan_json"] = "{}"
+        elif receipt_state == "changed_compiled":
+            (workspace / "compiled.json").write_bytes(raw_plan + b" ")
+        if receipt_state != "missing":
+            store.write_json("role_operations/" + operation_path + ".json", saved_operation)
+        operation_files_before = {p.name: p.read_bytes() for p in (store.directory / "role_operations").glob("*.json")}
         invocation = store.append(
             ToolInvocationPayload(
                 call_id="recover-build",
@@ -980,8 +1010,25 @@ def test_recovered_build_receipt_still_binds_and_checks_reader_floor(tmp_path):
             )
         )
 
-        recovered = asyncio.run(session.recover_pending())
-
-    assert recovered == [invocation.event_id]
-    assert probe.binds == ["plan-f1"]
-    assert probe.checks == [("candidate_01", False)]
+        if receipt_state in {"changed_arguments", "changed_compiled"}:
+            with pytest.raises(ValueError, match="different arguments|compiled reader plan hash mismatch"):
+                asyncio.run(session.recover_pending())
+            recovered = []
+        else:
+            recovered = asyncio.run(session.recover_pending())
+        assert session.frozen.calls == []
+        assert {p.name: p.read_bytes() for p in (store.directory / "role_operations").glob("*.json")} == operation_files_before
+        if receipt_state == "completed":
+            assert recovered == [invocation.event_id]
+            assert probe.binds == ["plan-f1"]
+            assert probe.checks == [("candidate_01", False)]
+            execution = next(event for event in store.events if event.payload.event_type == "tool_execution")
+            assert execution.payload.invocation_event_id == invocation.event_id
+            assert execution.payload.outcome == "succeeded"
+            recovered_result = store.resolve(execution.payload.raw_result)
+            assert recovered_result["structuredContent"].get("materialization", []) == decisions
+            assert asyncio.run(session.recover_pending()) == []
+            assert probe.binds == ["plan-f1"]
+        else:
+            assert recovered == [] and probe.binds == probe.checks == []
+            assert not any(event.payload.event_type == "tool_execution" for event in store.events)

@@ -254,6 +254,7 @@ def test_context_estimate_uses_same_reasoning_sources_as_wire(tmp_path, monkeypa
         return original(body, **kwargs)
 
     monkeypatch.setattr(loop_module, "estimate_chat_request", capture)
+    monkeypatch.setattr("src.agent_runtime.adapter.estimate_chat_request", capture)
     engine = runtime(tmp_path, [response(("read", "view", {}), reasoning=True), response(text="done")])
     engine.reasoning_history = "current_tool_chain"
     engine.context_policy = ContextPolicy()

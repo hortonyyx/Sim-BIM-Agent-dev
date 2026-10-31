@@ -92,7 +92,7 @@ def test_visibility_is_invariant_under_source_frame_rotation(tmp_path):
 @pytest.mark.parametrize('kind,state,seen', [('open', 'open', True), ('door', 'open', True),
                                            ('door', 'unknown', False), ('door', 'closed', False)])
 def test_explicit_passages_expose_rear_window_but_unknown_doors_occlude(kind, state, seen):
-    from src.agent.correction.parse import ensure_corrected_geometry
+    from src.agent.geometry_model.parse import parse_geometry
     from src.agent.geometry.source_bim import build_source_bim
     from test_source_simple_polygon import cell
     floors = [{'name': name, 'z_floor': 0, 'ceiling_height': 3,
@@ -104,7 +104,7 @@ def test_explicit_passages_expose_rear_window_but_unknown_doors_occlude(kind, st
                 for name, x in [('entry', 0), ('exit', 2)]]
     apertures.append({'id':'window', 'kind':'window', 'space_id':'rear', 'other_space_id':None, 'p1':[4,2],
                      'p2':[4,3], 'z':[1,2], 'source_refs':['synthetic rear window']})
-    saved = build_source_bim(ensure_corrected_geometry({'schema_version':'source_polygon_v1',
+    saved = build_source_bim(parse_geometry({'schema_version':'source_polygon_v1',
         'footprint_x':[0,6], 'footprint_y':[0,6], 'floors':floors, 'openings':apertures}),
         capability_profile='simple_polygon')
     assert saved['validation']['status'] == 'pass'

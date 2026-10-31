@@ -45,7 +45,7 @@ def _case(tmp_path):
 def _load(tmp_path, case):
     path = tmp_path / "configuration.json"
     path.write_text(json.dumps({
-        "schema_version": 1, "approval_required_before_launch": True,
+        "schema_version": 1, "batch_id": "mesh-input-fixture", "approval_required_before_launch": True,
         "maximum_seconds_per_case": 60, "cases": [case],
     }), encoding="utf-8")
     return runtime_configuration.load_configuration(path)["cases"][0]

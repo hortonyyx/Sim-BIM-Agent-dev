@@ -695,7 +695,30 @@
           "Corridor/SE-room step wall at y = 3.44 m is measured (not dimensioned).",
           "Interior door jambs from measured wall gaps snapped to 10 mm."
         ],
-        "unresolved": []
+        "unresolved": [],
+        "reading_type": "plan",
+        "wall_metadata": [
+          {
+            "target": "footprint:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
+            ]
+          },
+          {
+            "target": "partition:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
+            ]
+          }
+        ]
       },
       "evidence": [
         {

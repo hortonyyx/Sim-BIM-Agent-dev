@@ -239,7 +239,7 @@ def test_generic_optional_role_and_unique_implicit_window_host_preserve_input_fi
 
 
 @pytest.mark.parametrize('offset', [0, .024])
-def test_generic_legacy_common_footprint_is_declared_and_can_be_regularized(tmp_path, offset):
+def test_generic_shared_footprint_is_declared_and_can_be_regularized(tmp_path, offset):
     from tests.test_source_proposal import _proposal
 
     raw = _proposal()
@@ -265,7 +265,7 @@ def test_generic_legacy_common_footprint_is_declared_and_can_be_regularized(tmp_
     assert [c['id'] for c in floor['cells']] == ['hall','room']
     assert adopted['geometry']['openings'][0]['p1'] == [3,1]
     assert adopted['geometry']['openings'][0]['z'] == [0,2.1]
-    basis = next(row for row in audit['diagnostics'] if row.get('basis')=='legacy_common_footprint')
+    basis = next(row for row in audit['diagnostics'] if row.get('basis')=='shared_footprint')
     assert basis['footprint_x'] == before['geometry']['footprint_x']
     report = export_source_proposal(adopted, tmp_path/'legacy')
     assert report['source_geometry_ready'], report

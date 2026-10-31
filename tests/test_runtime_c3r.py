@@ -194,7 +194,7 @@ def test_budget_bridge_reads_settled_usage_and_counts_pending_tool_once(tmp_path
         assert asyncio.run(engine.run(MESSAGES))["status"] == "completed"
         status = seen[0]
         assert status["scope"] == "runtime_managed_requests_only"
-        assert status["external_coordinator_usage"] == "unavailable"
+        assert "external_coordinator_usage" not in status
         assert status["dimensions"]["calls"]["remaining"] == "3"
         assert status["dimensions"]["tool_calls"]["remaining"] == "4"
         assert 0 < int(status["dimensions"]["tokens"]["remaining"]) < 100000
@@ -204,7 +204,7 @@ def test_budget_bridge_reads_settled_usage_and_counts_pending_tool_once(tmp_path
 def test_explicit_registry_still_rejects_changed_source_and_relative_override(tmp_path, monkeypatch):
     from src.agent_runtime.agent_registry import agent_version_record, load_agent_registry, AgentVersionMismatch
     registry = load_agent_registry(ROOT)
-    current = registry["versions"][registry["current_version"]]
+    current = registry["domain_versions"][registry["current_domain_version"]]
     current["files"][next(iter(current["files"]))]["sha256"] = "0" * 64
     path = tmp_path / "registry.json"
     path.write_text(json.dumps(registry))

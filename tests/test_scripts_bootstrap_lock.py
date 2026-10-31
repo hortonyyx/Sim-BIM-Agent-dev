@@ -44,9 +44,6 @@ def _launch(tmp_path, arguments, *, module=False):
 
 @pytest.mark.parametrize("entry", [
     "scripts/tool_scripts/run_bim_agent.py",
-    "scripts/tool_scripts/run_stage.py",
-    "scripts/tool_scripts/diagnose_source_bim.py",
-    "scripts/tool_scripts/gt_from_dxf.py",
 ])
 def test_real_bare_entry_loads_own_checkout_from_foreign_directory(tmp_path, entry):
     result, loaded = _launch(tmp_path, [str(ROOT / entry), "--help"])
@@ -58,7 +55,8 @@ def test_real_bare_entry_loads_own_checkout_from_foreign_directory(tmp_path, ent
 
 def test_real_viewer_module_launch_executes_deferred_src_imports(tmp_path):
     geometry = tmp_path / "geometry.json"
-    geometry.write_text(json.dumps({"zones": [], "walls": [], "windows": [], "doors": []}))
+    from tests.test_geometry_viewer import _GEO
+    geometry.write_text(json.dumps(_GEO), encoding="utf-8")
     output = tmp_path / "viewer.html"
     result, loaded = _launch(tmp_path, ["-P", "-m", "scripts.tool_scripts.render_geometry_viewer",
         str(geometry), "--out", str(output)], module=True)

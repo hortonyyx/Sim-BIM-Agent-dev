@@ -1,7 +1,7 @@
 """Cross-storey membership must not duplicate a shaft or add intermediate slabs."""
 import json
 import pytest
-from src.agent.correction.schema import CorrectedGeometry, Floor, Cell, FootprintRing
+from src.agent.geometry_model.schema import GeometryInput, Floor, Cell, FootprintRing
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.source_bim import build_source_bim
 
@@ -14,7 +14,7 @@ def geometry():
     floors.append(Floor(name='CORE', z_floor=0, ceiling_height=6,
         cells=[Cell(id='core', role='stairwell', x=[3,4], y=[0,4])],
         footprint=FootprintRing(vertices=[(3,0),(4,0),(4,4),(3,4)])))
-    return CorrectedGeometry(schema_version='2', footprint_x=[0,4], footprint_y=[0,4], floors=floors, windows=[])
+    return GeometryInput(schema_version='2', footprint_x=[0,4], footprint_y=[0,4], floors=floors, windows=[])
 
 
 def test_reference_covers_storeys_without_new_space_or_middle_slab(tmp_path):

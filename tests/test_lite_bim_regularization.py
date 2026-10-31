@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 
@@ -38,7 +39,7 @@ def chain(**kwargs):
 def test_cumulative_dimension_chain_closes_without_independent_width_rounding():
     original = plan()
     original["dimension_chains"] = [chain()]
-    assert plan_format_errors(original) == []
+    assert plan_format_errors({**original, "reading_type": "plan"}) == []
     aligned, report = align_plan_to_dimensions(original, grid_step_m=.1)
     row = report["items"][0]
     assert row["adopted_tick_world_m"] == [0, 3.9, 7.9, 12]
@@ -67,7 +68,7 @@ def test_explicit_fine_dimensions_hosts_xyz_and_idempotent_recompile():
 
 
 def test_trusted_grid_parameter_overrides_plan_audit_and_keeps_original_readings():
-    from src.agent.geometry.plan_ink_alignment import _set_reading_alignment
+    from src.agent.geometry.plan_alignment import _set_reading_alignment
     original = plan()
     _set_reading_alignment(original, "dimensions", {"status": "not_supplied"})
     original["regularization_inputs"]["reading_alignment"]["lite_bim"] = {"grid_step_m": .2}
@@ -190,14 +191,18 @@ def test_reader_first_draft_default_uses_grid_and_keeps_located_failure(tmp_path
     Image.new("RGB", SIZE, "white").save(image)
     trial = PlanTrial(None, image_name="plan.png")
     assert trial.grid_step_m == .1
-    value, reading, alignment = _reading_align(plan(), image_path=image, image_name="plan.png", grid_step_m=.1)
+    current = plan()
+    current["reading_type"] = "plan"
+    current["wall_metadata"] = [dict(target=t, thickness_m=.1, reference_side="centerline", evidence_status="inferred", basis="Synthetic assumption", source_refs=["plan.png:fixture"]) for t in ("footprint:*", "partition:*")]
+    value, reading, alignment = _reading_align(current, image_path=image, image_name="plan.png", grid_step_m=.1)
     assert alignment["status"] == "lite_grid_applied"
     assert reading["lite_bim"]["compiled_grid"]["status"] == "pass"
     assert value["partitions"][0]["points"][0][0] == 490
-    broken = plan()
+    broken = copy.deepcopy(current)
     broken["openings"][0]["p1"][0] += 200
-    with pytest.raises(PlanRegularizationError, match="opening D"):
+    with pytest.raises(PlanRegularizationError, match="adjusted draft") as failure:
         _reading_align(broken, image_path=image, image_name="plan.png", grid_step_m=.1)
+    assert "opening D" in json.dumps(failure.value.report)
 
 
 def test_stack_preserves_grid_and_shared_storey_levels():

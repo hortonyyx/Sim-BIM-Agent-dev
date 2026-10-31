@@ -21,19 +21,19 @@ vars) and asserts the attempt is turned into ``ProviderCallBlocked``.
 
 Why a behaviour probe and NOT a flag read
 -----------------------------------------
-It deliberately does **not** read ``ep_no_billed_gate._INSTALLED`` — that flag is
+It deliberately does **not** read ``no_billed_gate._INSTALLED`` — that flag is
 a *proxy* for "the gate says it is installed". We measure the thing that
 actually matters: "the gate really intercepts egress".
 
 It is equally deliberate that this module does **not** ``import
-ep_no_billed_gate`` at top level. Importing that module runs ``_install()`` and
+no_billed_gate`` at top level. Importing that module runs ``_install()`` and
 arms the gate — which would mask exactly the runs we want to catch (a startup
 config that left the gate OFF: ``-o addopts=``, a ``PYTEST_ADDOPTS`` override,
-``-c <other config>``, dropping ``-p ep_no_billed_gate``, a foreign rootdir with
+``-c <other config>``, dropping ``-p no_billed_gate``, a foreign rootdir with
 no ``tests/conftest.py``, …). The blocking exception is therefore identified by
 class name/module, without importing anything.
 
-Honest scope (see T2 note in ``ep_no_billed_gate`` docstring)
+Honest scope (see T2 note in ``no_billed_gate`` docstring)
 ------------------------------------------------------------
 This is a **detector, not an interceptor**. A test that runs *before* this one
 in the same process and truly reached the network has already spent the money;
@@ -57,10 +57,10 @@ _TIMEOUT_S = 0.05
 
 def _is_provider_call_blocked(exc: BaseException) -> bool:
     """True iff *exc* is the gate's ``ProviderCallBlocked`` — checked WITHOUT
-    importing ``ep_no_billed_gate`` (importing it would arm the gate and defeat
+    importing ``no_billed_gate`` (importing it would arm the gate and defeat
     the purpose of this probe)."""
     cls = type(exc)
-    return cls.__name__ == "ProviderCallBlocked" and cls.__module__ == "ep_no_billed_gate"
+    return cls.__name__ == "ProviderCallBlocked" and cls.__module__ == "no_billed_gate"
 
 
 def test_egress_gate_behaviorally_blocks_a_real_connection():
@@ -81,11 +81,11 @@ def test_egress_gate_behaviorally_blocks_a_real_connection():
                 f"failed only at the network layer ({type(exc).__name__}: {exc}). "
                 "The way this suite was started disabled the no-billed-calls gate "
                 "(e.g. `-o addopts=`, a PYTEST_ADDOPTS override, `-c <other "
-                "config>`, dropping `-p ep_no_billed_gate`, or running from a "
+                "config>`, dropping `-p no_billed_gate`, or running from a "
                 "rootdir with no tests/conftest.py), so tests in this run could "
                 "make real, billed provider calls. Start pytest so addopts keeps "
-                "`-p ep_no_billed_gate` first (see pyproject.toml / "
-                "ep_no_billed_gate.py)."
+                "`-p no_billed_gate` first (see pyproject.toml / "
+                "no_billed_gate.py)."
             ) from exc
         else:
             raise AssertionError(

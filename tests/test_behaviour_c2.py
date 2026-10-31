@@ -7,19 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.runtime_behaviour import load_behaviour, tool_result_data, write_behaviour_report
+from src.agent.runtime_behaviour import load_behaviour, tool_result_data, write_behaviour_report, summarise, render_timeline
 
 
-def test_metadata_survives_time_tail_and_transport_wrappers():
+def test_metadata_requires_complete_json_in_native_transport_wrappers():
     data = {"name": "North.png", "display_scale_actual": [2, 2], "original_size": [900, 600]}
-    text = json.dumps(data) + '\n已用 40 分钟；剩余 60 分钟。'
+    text = json.dumps(data)
     forms = [text, {"content": [{"type": "text", "text": text}]},
-             {"structuredContent": data, "content": [{"type": "text", "text": text}]},
-             {"tool_message": {"content": json.dumps({"content": [{"type": "text", "text": text}]})}}]
+             {"structuredContent": data, "content": [{"type": "text", "text": text}]}]
     assert all(tool_result_data(value) == data for value in forms)
-    truncated = '{"candidate":"candidate_04","source_geometry_ready":true,"evidence":['
-    assert tool_result_data(truncated) == {"candidate": "candidate_04", "source_geometry_ready": True,
-                                          "_partial_json": True}
+    for incomplete in ('{"candidate":"candidate_04","source_geometry_ready":true,"evidence":[',
+                       text + '\nadditional text'):
+        assert tool_result_data(incomplete) == {}
 
 
 def test_saved_claims_domain_outcomes_and_unanswered_calls_are_not_conflated(tmp_path):
@@ -33,11 +32,13 @@ def test_saved_claims_domain_outcomes_and_unanswered_calls_are_not_conflated(tmp
     steps = []
     def add(tool, data, *, error=False, args=None):
         steps.append(dict(index=len(steps)+1, t_call=len(steps), tool=tool, arguments=args or {},
-                          result_text=json.dumps(data)+'\n剩余 1 分钟。', is_error=error,
+                          result_text=json.dumps(data)+'\n剩余 1 分钟。', result_data=data, is_error=error,
+                          outcome="failed" if error else "succeeded",
                           model_text_before="", thinking_tokens_before=0))
     add("view_image", {"name": "West.png", "display_scale_actual": [2, 2]}, args={"name": "West.png"})
     add("build_plan_bim", {"status": "error", "source_geometry_ready": False})
-    add("revise_plan_bim", {"candidate": "candidate_01", "source_geometry_ready": True})
+    add("revise_plan_bim", {"candidate": "candidate_01", "source_geometry_ready": True,
+        "saved_candidate": "candidate_01", "save_effects": {"created_candidates": ["candidate_01"], "geometry_applied": True, "audit_written": True}})
     add("record_claim", {"id": "claim_0001", "sources": [{"image": "wrong-return.png"}]},
         args={"claim_json": json.dumps(claim)})
     add("revise_bim", {"status": "error"}, error=True)
@@ -47,24 +48,26 @@ def test_saved_claims_domain_outcomes_and_unanswered_calls_are_not_conflated(tmp
     # Reading a failed candidate is a successful inspection, not another failed build.
     add("inspect_candidate", {"candidate": "candidate_02", "report": {"source_geometry_ready": False}})
     record = dict(run="fixture", receipt={}, invocations=[dict(invocation=1, stream="archive", steps=steps)])
-    archive = tmp_path / "record.json.gz"
-    with gzip.open(archive, "wt") as stream:
-        json.dump(record, stream)
-    loaded = load_behaviour(archive, source_root=run)
-    summary = loaded["summary"]
+    loaded = {**record, "source_format": "event_envelope_jsonl", "_source_root": str(run), "gaps": []}
+    summary = summarise(loaded)
     assert (summary["call_errors"], summary["domain_failures"], summary["usable_source_drafts"]) == (1, 2, 1)
     assert summary["first_build_attempt_s"] == 1 and summary["first_draft_s"] == 2
     assert summary["full_views_before_first_build_attempt"] == 1
     assert summary["height_provenance_claims"][0]["sources"] == ["West.png"]
     assert summary["height_provenance_claims"][0]["evidence_capture"] == "saved_claim_file"
     assert summary["claims_from_saved_files"] == 1
-    assert '剩余 1 分钟' in loaded["invocations"][0]["steps"][0]["result_text"]
-    out = tmp_path / "reports"
-    write_behaviour_report(archive, out, source_root=run)
-    assert "调用报错 | 领域未成功 | 可用源稿" in (out/"timeline.md").read_text()
+    assert "调用报错 | 领域未成功 | 可用源稿" in render_timeline({**loaded, "summary": summary})
 
 
-def _projected_transaction_archive(tmp_path, *, root_projection=False):
+def test_expanded_old_archive_cannot_bypass_native_journal_verification(tmp_path):
+    archive = tmp_path / "record.json.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as stream:
+        json.dump({"run": "fixture", "receipt": {}, "invocations": []}, stream)
+    with pytest.raises(ValueError, match="verified native event-log reference"):
+        load_behaviour(archive)
+
+
+def _projected_transaction_record(tmp_path, *, root_projection=False):
     from scripts.tool_scripts.bim_agent_replies import compact_reply
 
     run = tmp_path / "run"
@@ -91,23 +94,23 @@ def _projected_transaction_archive(tmp_path, *, root_projection=False):
                                                 "details_file", "details_sha256", "details_read")}
         visible["report_view"] = {"reference": {"report_file": visible["details_file"],
             "report_sha256": visible["details_sha256"], "json_pointer": ""}}
-    archive = tmp_path / "record.json.gz"
+    record = {}
     def save():
-        record = {"run": "fixture", "receipt": {}, "invocations": [{"invocation": 1,
-            "stream": "archive", "steps": [{"index": 1, "t_call": 7, "tool": "claim_transaction",
-                "arguments": {}, "result_text": json.dumps(visible), "is_error": False,
-                "model_text_before": "", "thinking_tokens_before": 0}]}]}
-        with gzip.open(archive, "wt", encoding="utf8") as stream:
-            json.dump(record, stream)
+        record.clear()
+        record.update({"run": "fixture", "source_format": "event_envelope_jsonl",
+            "_source_root": str(run), "gaps": [], "receipt": {}, "invocations": [{"invocation": 1,
+            "stream": "events", "steps": [{"index": 1, "t_call": 7, "tool": "claim_transaction",
+                "arguments": {}, "result_data": visible, "result_text": json.dumps(visible), "is_error": False,
+                "model_text_before": "", "thinking_tokens_before": 0}]}]})
     save()
-    return run, archive, visible, full, save
+    return run, record, visible, full, save
 
 
 @pytest.mark.parametrize("root_projection", [False, True])
 def test_projected_transaction_entries_report_preserves_partial_commits(tmp_path, root_projection):
-    run, archive, visible, full, _ = _projected_transaction_archive(tmp_path, root_projection=root_projection)
-    record = load_behaviour(archive, source_root=run)
-    summary = record["summary"]
+    run, record, visible, full, _ = _projected_transaction_record(tmp_path, root_projection=root_projection)
+    summary = summarise(record)
+    record["summary"] = summary
     assert summary["tool_calls"] == 1
     assert summary["claim_transactions"] == {"calls": 1, "entries": 3,
         "status_counts": {"confirmed": 1, "applied": 1, "failed": 1}, "recorded_claims": 2, "applied_entries": 1}
@@ -116,9 +119,7 @@ def test_projected_transaction_entries_report_preserves_partial_commits(tmp_path
     step = record["invocations"][0]["steps"][0]
     assert step["result_data"] == visible
     assert step["transaction_entries_source"] == {"file": visible["details_file"], "sha256": visible["details_sha256"]}
-    out = tmp_path / "report"
-    write_behaviour_report(archive, out, source_root=run)
-    assert (out / "timeline.md").is_file()
+    assert "claim_transaction" in render_timeline(record)
     assert json.loads((run / visible["details_file"]).read_bytes()) == full
 
 
@@ -130,7 +131,7 @@ def test_projected_transaction_entries_report_preserves_partial_commits(tmp_path
 def test_projected_transaction_entries_refuse_unbound_or_changed_evidence(tmp_path, damage, match):
     import hashlib
 
-    run, archive, visible, full, save = _projected_transaction_archive(tmp_path)
+    run, record, visible, full, save = _projected_transaction_record(tmp_path)
     path = run / visible["details_file"]
     if damage == "hash":
         path.write_bytes(path.read_bytes() + b" ")
@@ -151,7 +152,7 @@ def test_projected_transaction_entries_refuse_unbound_or_changed_evidence(tmp_pa
         visible.update(details_file=target.relative_to(run).as_posix(), details_sha256=digest)
     save()
     with pytest.raises(ValueError, match=match):
-        load_behaviour(archive, source_root=run)
+        summarise(record)
 
 
 def test_projected_failed_transaction_without_entries_keeps_its_error(tmp_path):
@@ -352,16 +353,17 @@ def test_responses_report_rejects_text_rewrite_with_unrelated_valid_context(resp
 
 
 @pytest.mark.parametrize("damage", [None, "wrong_original_hash", "unrelated_execution"])
-def test_responses_report_binds_text_reference_to_original_result(responses_run, damage):
+def test_responses_report_rejects_retired_text_reference_even_with_valid_hash(responses_run, damage):
     from src.agent.runtime_behaviour import _captured
-    from src.agent_runtime.context import _message_content_sha
+    import hashlib
+    from src.agent_runtime.store import json_bytes
 
     store = responses_run
     events, presentation, request, visible, body = _responses_evidence(store)
     execution_id = presentation["payload"]["tool_execution_event_id"]
     execution = next(event for event in events if event["event_id"] == execution_id)
     original = _captured(execution["payload"]["shown_result"], store.directory)["tool_message"]
-    content_sha = _message_content_sha(original) if damage != "wrong_original_hash" else "0" * 64
+    content_sha = hashlib.sha256(json_bytes(original.get("content"))).hexdigest() if damage != "wrong_original_hash" else "0" * 64
     reference = {"content_sha256": content_sha, "full_result_history_id": "history-full-result",
                  "reason": "exact repeated large tool result"}
     text = json.dumps({"context_reference": reference}, sort_keys=True, separators=(",", ":"))
@@ -382,8 +384,5 @@ def test_responses_report_binds_text_reference_to_original_result(responses_run,
         event["sequence"] = index
     presentation["payload"]["context_event_id"] = context["event_id"]
     path = _write_responses_evidence(store, events, presentation, request, visible, body)
-    if damage:
-        with pytest.raises(ValueError, match="not explained by its context decisions"):
-            load_behaviour(path)
-    else:
-        assert load_behaviour(path)["invocations"][0]["steps"][0]["delivered_to_model"]
+    with pytest.raises(ValueError, match="not explained by its context decisions"):
+        load_behaviour(path)

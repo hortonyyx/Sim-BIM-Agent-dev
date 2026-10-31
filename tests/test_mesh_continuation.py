@@ -88,7 +88,7 @@ def test_import_claim_waits_for_durable_checkpoint_and_resume_does_not_reimport(
         result = asyncio.run(resumed.run([], resume=True))
         assert result["status"] == "completed"
         assert len(resumed.adapter.requests) == 1 and resumed.tools.calls == []
-        assert sum(e.payload.event_type == "external_coordinator_mcp" for e in resumed.store.events) == 1
+        assert sum(e.payload.event_type == "context_import" for e in resumed.store.events) == 1
     assert tree_hashes(source.directory) == before
 
 
@@ -134,7 +134,7 @@ def test_context_import_does_not_reset_unfinished_consecutive_truncation(tmp_pat
 @pytest.mark.parametrize("worker_count", [0, 1])
 def test_native_mesh_saved_candidate_continues_to_handoff_and_resume(tmp_path, monkeypatch, worker_count):
     from src.agent import runtime_entry
-    from src.agent_runtime.agent_registry import register_versions
+    from scripts.dev.agent_versions import register_versions
     from tests.test_mesh_input_admission import _case
     from tests.test_mesh_worker_entry import _response
     from tests.test_source_proposal import _proposal

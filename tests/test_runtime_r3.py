@@ -21,7 +21,6 @@ from src.agent import runtime_entry
 from src.agent.runtime_configuration import argv_for, load_configuration
 from src.agent_runtime import loop
 from src.agent_runtime.agent_registry import load_agent_registry
-from src.agent.runtime_delegation import run_observer
 from src.agent.runtime_tools import FrozenBimTools, local_observer_role
 from src.agent_runtime.adapter import ScriptedAdapter
 from src.agent_runtime.loop import RunLimits
@@ -75,7 +74,7 @@ async def _scenario(tmp_path, monkeypatch, actions, *, model_calls=20, preparati
     for name in ("plan.png", "upstairs.png"):
         Image.new("RGB", (12, 8), "white").save(images / name)
     clock, clients, requests = [1000.0], [], []
-    fake_time = SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0] + monotonic() * 1e-6)
+    fake_time = SimpleNamespace(perf_counter=monotonic, time=lambda: clock[0], monotonic=lambda: clock[0] + monotonic() * 1e-6)
     for module in (loop, runtime_entry, runner, bim_agent_budget):
         monkeypatch.setattr(module, "time", fake_time)
 
@@ -147,7 +146,7 @@ async def _scenario(tmp_path, monkeypatch, actions, *, model_calls=20, preparati
     assert manifest["time_budget_seconds"] == seconds
     assert receipt["started_epoch"] == manifest["started_epoch"]
     assert receipt["deadline_epoch"] == manifest["deadline_epoch"]
-    assert receipt["agent_version"] == load_agent_registry(ROOT)["current_version"]
+    assert receipt["agent_version"] == load_agent_registry(ROOT)["current_domain_version"]
     return out, receipt, requests, events
 
 
@@ -184,15 +183,6 @@ def test_tool_preparation_uses_the_same_start_and_does_not_restart_clock(tmp_pat
     assert receipt["started_epoch"] == 1000 and receipt["deadline_epoch"] == 7000
 
 
-def test_claude_receipt_identifies_registered_agent_without_starting_model(tmp_path):
-    run = tmp_path / "expired"
-    run.mkdir()
-    (run / "inputs.json").write_text(json.dumps({"images": {}, "started_epoch": 1, "deadline_epoch": 2}))
-    with patch("src.agent_runtime.versions.source_commit", return_value="offline-git-fixture"), \
-            patch.object(runner.subprocess, "Popen", side_effect=AssertionError("model launch forbidden")):
-        receipt = runner.subscription(run, "offline expired run", model="sonnet", name="agent")
-    assert receipt["agent_version"] == load_agent_registry(ROOT)["current_version"]
-    assert receipt["timed_out"] and receipt["model_process_started"] is False
 
 
 @pytest.mark.parametrize("ending", ["deadline", "normal", "model_limit"])
@@ -450,25 +440,6 @@ def test_read_timeout_after_finish_preserves_selection_without_task_completion(t
                for name, sha in saved["delivery_artifact_sha256"].items())
 
 
-def test_external_coordinator_also_finalizes_saved_work(tmp_path, monkeypatch):
-    from src.agent.runtime_coordinator import CoordinatorSession
-    from src.agent.runtime_tools import coordinator_role
-    from src.agent_runtime.agent_registry import agent_version_record
-    out, _, _, _ = asyncio.run(_scenario(tmp_path, monkeypatch, [_build(), {}], model_calls=2))
-    source = out / "bim/candidate_01/source_model.json"
-    before = source.read_bytes()
-    limits = RunLimits(model_calls=2, tool_calls=2, tokens=100000, seconds=6000)
-    with EventStore(tmp_path / "external", run_id="external", task_id="coordinator",
-                    budget_limit=limits.ledger_limit()) as store:
-        tools = FrozenBimTools(None, coordinator_role(limits.ledger_limit()), run_directory=out / "bim")
-        session = CoordinatorSession(store=store, tools=tools, observer_tools=tools,
-            adapter_factory=None, model="test", parameters={}, limits=limits, start_epoch=1000)
-        session.agent_version = agent_version_record(ROOT)
-        receipt = session.finalize("time_budget_exhausted")
-        assert receipt["finalization"]["delivery"]["candidate"] == "candidate_01"
-        assert receipt["finalization"]["delivery"]["complete_building"] is False
-        assert source.read_bytes() == before
-        store.validate()
 
 
 def test_floor_scope_configuration_and_input_rejection(tmp_path):
@@ -494,58 +465,3 @@ def test_floor_scope_configuration_and_input_rejection(tmp_path):
     hint = json.loads((run / "inputs.json").read_bytes())
     assert hint["floor_plan_images"] == ["1f_view.png"]
     assert hint["floor_scope_source"] == "input_filename_hint"
-
-
-@pytest.mark.parametrize("child_seconds, actual_seconds", [(30, 30), (300, 100)])
-def test_observer_service_uses_own_deadline_and_cannot_extend_parent(tmp_path, monkeypatch, child_seconds, actual_seconds):
-    from src.agent import runtime_delegation, runtime_tools
-    from tests.test_runtime_delegation import _registered_view, _package, _response, _answer
-
-    async def scenario():
-        clock = [1000.0]
-        fake_time = SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0] + monotonic() * 1e-6)
-        for module in (loop, runtime_delegation, runner, bim_agent_budget):
-            monkeypatch.setattr(module, "time", fake_time)
-
-        @asynccontextmanager
-        async def local(run_directory, readonly=False, repository_root=None):
-            yield LocalClient(run_directory, clock, readonly=readonly)
-
-        monkeypatch.setattr(runtime_tools, "frozen_bim_client", local)
-        root_limits = RunLimits(model_calls=6, tool_calls=6, tokens=1_000_000, seconds=1000)
-        limits = RunLimits(model_calls=3, tool_calls=3, tokens=500_000, seconds=child_seconds)
-        with EventStore(tmp_path / "audit", run_id="r3-observer", task_id="coordinator",
-                        budget_limit=root_limits.ledger_limit()) as store:
-            view = _registered_view(store)
-            run = tmp_path / "parent"
-            run.mkdir()
-            manifest_path = run / "inputs.json"
-            manifest_path.write_text(json.dumps({"images": {}, "image_kind": "drawings",
-                "started_epoch": 1000, "deadline_epoch": 1100, "time_budget_seconds": 100}))
-            parent_before = manifest_path.read_bytes()
-            frozen = FrozenBimTools(None, local_observer_role(root_limits.ledger_limit()), run_directory=run)
-            def nearing(_):
-                clock[0] = 1000 + actual_seconds * .9
-                return _response(calls=[("reference", "get_bim_reference", {"topic": "geometry"})])
-            adapter = ScriptedAdapter([nearing, _response(text=_answer())])
-            child = store.for_task("observer-1", parent_task_id="coordinator")
-            result = await run_observer(store=child, frozen_tools=frozen, adapter=adapter,
-                model="test", parameters={"max_tokens": 4096}, limits=limits,
-                package=_package(view), views=[view], notes=[], root=ROOT,
-                route={"route_id": "scripted", "model": "test"}, parent_deadline_epoch=1100)
-            assert result["status"] == "completed", result
-            manifest = json.loads((child.task_directory / "bim/inputs.json").read_bytes())
-            assert manifest["started_epoch"] == 1000
-            assert manifest["deadline_epoch"] == 1000 + actual_seconds <= 1100
-            assert manifest["time_budget_seconds"] == actual_seconds
-            assert manifest_path.read_bytes() == parent_before
-            tail = adapter.requests[1].decode()
-            assert "剩余不足15%" in tail and "停止新范围探索" in tail
-            assert "返回已有观察与未核项" in tail
-            assert "先按已读信息保存全楼草稿" not in adapter.requests[1].decode()
-            store.validate()
-            _evidence(f"observer_{child_seconds}", {"model_requests": 0,
-                "status": result["status"], "timing": {key: manifest[key] for key in
-                    ("started_epoch", "deadline_epoch", "time_budget_seconds")},
-                "parent_deadline": 1100, "parent_unchanged": True, "readonly_reminder": True})
-    asyncio.run(scenario())

@@ -1,7 +1,6 @@
 """A2-T: safe inheritance and one-call evidence lifecycles, without model calls."""
 import asyncio
 import copy
-import gzip
 import json
 
 import pytest
@@ -235,17 +234,16 @@ def test_transaction_stdio_and_readonly_boundary(tmp_path):
 
 
 def test_shared_behaviour_record_counts_transactions_and_preserves_partial_failure(tmp_path):
-    from src.agent.runtime_behaviour import load_behaviour
+    from src.agent.runtime_behaviour import summarise
     run, toolkit = setup_run(tmp_path)
     result = transaction(toolkit, "seed", [dict(claim=claim(), action="apply", operations=[edit("$claim")]),
         dict(claim_id="claim_9999", action="confirm", operations=[edit("claim_9999")])])
     assert result["status"] == "partial"
     step = dict(index=1, t_call=0, tool="claim_transaction", arguments={},
-        result_text=json.dumps(result), is_error=False, model_text_before="", thinking_tokens_before=0)
-    archive = tmp_path / "record.json.gz"
-    with gzip.open(archive, "wt") as stream:
-        json.dump(dict(run="fixture", receipt={}, invocations=[dict(invocation=1, stream="archive", steps=[step])]), stream)
-    summary = load_behaviour(archive, source_root=run)["summary"]
+        result_text=json.dumps(result), result_data=result, is_error=False, model_text_before="", thinking_tokens_before=0)
+    record = dict(run="fixture", receipt={}, source_format="event_envelope_jsonl",
+        _source_root=str(run), gaps=[], invocations=[dict(invocation=1, stream="events", steps=[step])])
+    summary = summarise(record)
     assert summary["tools"]["claim_transaction"] == 1
     assert summary["claim_transactions"] == dict(calls=1, entries=2,
         status_counts={"applied":1, "failed":1}, recorded_claims=1, applied_entries=1)

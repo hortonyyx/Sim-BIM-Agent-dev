@@ -160,7 +160,7 @@ def test_cited_levels_reach_real_compiled_source_and_preserve_reader_bytes(tmp_p
     with height_session(tmp_path) as session:
         task = session._task({"task_id": "plan", "role_id": "plan_reader", "image": "plan.png",
                               "target": "F1", "instructions": "simple floor"})
-        plan = {"floor_id": "F1", "z_floor": 0, "ceiling_height": 3,
+        plan = {"reading_type": "plan", "floor_id": "F1", "z_floor": 0, "ceiling_height": 3,
             "x_anchors": [[1, 0], [11, 10]], "y_anchors": [[1, 6], [7, 0]],
             "basis": "plan height assumption", "footprint_pixels": [[1, 1], [11, 1], [11, 7], [1, 7]],
             "partitions": [], "openings": [], "space_seeds": [{"id": "room", "point": [5, 4]}],
@@ -168,12 +168,16 @@ def test_cited_levels_reach_real_compiled_source_and_preserve_reader_bytes(tmp_p
         trial = session.registry.child("plan").task_directory / "bim/trial_workspace"
         shutil.copytree(session.run_directory / "images", trial / "images")
         shutil.copy2(session.run_directory / "inputs.json", trial / "inputs.json")
-        result = Toolkit(trial).build_plan("plan.png", json.dumps(plan))
-        assert result["source_geometry_ready"], result
-        source_file = trial / result["candidate"] / "source_model.json"
-        row = session.registry.save(task, status="completed", artifact={"plan": plan}, validation={
-            "validation_passed": True, "candidate": result["candidate"],
-            "candidate_source_sha256": hashlib.sha256(source_file.read_bytes()).hexdigest()})
+        from tests.test_role_trial import example, Tools
+        from src.agent.runtime_roles.trial import PlanTrial
+        plan["wall_metadata"] = example()["wall_metadata"]
+        reading = PlanTrial(Tools(), image_name="plan.png", workspace=trial,
+                            receipt_directory=trial / "trial_receipts")
+        result = asyncio.run(reading.run(plan))
+        assert result["reading_geometry_ready"], result
+        row = session.registry.save(task, status="completed",
+            artifact={"plan": reading.numeric_plan(result)},
+            validation={**result, "validation_passed": True})
         artifact = session.store.directory / row["artifact"]["path"]
         before = artifact.read_bytes()
         built = asyncio.run(session.build_from_artifact(task_id="plan", sha256=row["artifact"]["sha256"],
@@ -213,13 +217,14 @@ def test_all_facades_survive_parallel_writes_and_repeated_supplements_do_not_sav
         assert len(list((session.run_directory / "claims").glob("confirmation_*.json"))) >= 1
 
 
-def test_changed_xy_rejects_old_match_without_writing_and_legacy_id_resolves(tmp_path):
+def test_changed_xy_rejects_old_match_without_writing_and_old_alias_is_rejected(tmp_path):
     with height_session(tmp_path) as session:
         match = session.match("West", "candidate_01")
         assert "match_id" not in match["result"]
         legacy = "elevation_match:" + _canonical_hash({k: v for k, v in match["result"].items()
                                                        if k != "source_file_sha256"})[:24]
-        assert load_match(session, legacy)["match_id"] == match["match_id"]
+        with pytest.raises(ValueError, match="hash returned by match_elevation"):
+            load_match(session, legacy)
         result = session.frozen.toolkit.revise("candidate_01", json.dumps([{
             "op": "update_window", "id": "West", "changes": {"span": [1.1, 2.1]},
             "reason": "new observed XY", "source_refs": ["plan.png: shifted jambs"]}]))

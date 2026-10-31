@@ -6,12 +6,13 @@ from unittest.mock import patch
 
 from mcp.server.fastmcp import FastMCP
 
-from scripts.tool_scripts.bim_agent_guidance import REPLAY_ONLY_TOOLS, filter_tool_catalog
 from scripts.tool_scripts.run_bim_agent import Toolkit, serve
 from src.agent.geometry.source_naming import build_public_names
 from tests.test_bim_agent_tools import _run_with_one_image, _two_room_proposal
 from tests.test_source_naming import source
 
+
+RETIRED_TOOLS = {'preview_space_trace', 'pixel_profile', 'record_claim', 'view_claim_evidence', 'select_space_trace', 'decide_claim', 'confirm_claims', 'view_space_trace', 'view_candidate'}
 
 def server(run, **kwargs):
     servers = []
@@ -31,16 +32,13 @@ def test_default_readonly_and_coordinator_hide_replay_handlers(tmp_path):
     run = _run_with_one_image(tmp_path)
     for readonly in (False, True):
         full = asyncio.run(server(run, readonly=readonly).list_tools())
-        visible = asyncio.run(server(run, readonly=readonly, enabled_only=True).list_tools())
-        assert not {t.name for t in visible} & REPLAY_ONLY_TOOLS
-        assert [t.name for t in visible] == [t['name'] for t in filter_tool_catalog(
-            [t.model_dump(mode='json', by_alias=True) for t in full])]
-        assert {'pixel_profile', 'preview_space_trace', 'view_space_trace', 'select_space_trace'} <= {t.name for t in full}
+        assert not RETIRED_TOOLS & {t.name for t in full}
+
 
 
 def test_profile_without_picture_has_identical_measured_values_and_saved_ids(tmp_path):
     run = _run_with_one_image(tmp_path)
-    api = server(run, enabled_only=True)
+    api = server(run)
     name = next(iter(Toolkit(run).manifest['images']))
     args = dict(name=name, box=[0, 0, 4, 4], axis='x', rgb=[0, 0, 0])
     image_reply = asyncio.run(api.call_tool('view_pixel_profile', args))
@@ -50,7 +48,7 @@ def test_profile_without_picture_has_identical_measured_values_and_saved_ids(tmp
     text_blocks = getattr(text_reply, 'content', text_reply)
     assert any(b.type == 'image' for b in image_blocks)
     assert all(b.type != 'image' for b in text_blocks)
-    first, second = [json.loads(p.read_text()) for p in sorted((run/'pixel_profiles').glob('profile_*.json'))]
+    first, second = [json.loads(p.read_text(encoding="utf-8")) for p in sorted((run/'pixel_profiles').glob('profile_*.json'))]
     for key in ('matching_pixels', 'candidates', 'cross_axis_profile', 'threshold_excluded_support', 'crop_context'):
         assert first[key] == second[key]
     assert second['profile_id'] != first['profile_id']
@@ -66,21 +64,19 @@ def test_merged_profile_retains_weak_unthresholded_local_maxima(tmp_path):
         for y in range(height):
             pic.putpixel((x,y), (0,0,0))
     pic.save(path)
-    manifest = json.loads((run/'inputs.json').read_text())
+    manifest = json.loads((run/'inputs.json').read_text(encoding="utf-8"))
     manifest['images']['plan.png']['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
     (run/'inputs.json').write_text(json.dumps(manifest))
     toolkit = Toolkit(run)
-    old = toolkit.profile('plan.png', [0,0,12,8], 'x', [0,0,0], 0)
     _, metadata = toolkit.view_profile('plan.png', [0,0,12,8], 'x', [0,0,0], 0, .5)
     new = json.loads(metadata)
-    assert new['positive_support_runs'] == old['runs']
     assert [p['count'] for p in new['positive_support_runs'][0]['support_peaks']] == [2,6,3]
     assert len(new['candidates']) == 1 and new['candidates'][0]['peak'] == 5
 
 
 def test_saved_claim_view_routes_to_the_existing_hash_checked_reader(tmp_path):
     run = _run_with_one_image(tmp_path)
-    api = server(run, enabled_only=True)
+    api = server(run)
     from mcp.types import CallToolResult, TextContent
     reply = CallToolResult(content=[TextContent(type='text', text='saved evidence')])
     with patch.object(Toolkit, 'view_claim_evidence', return_value=reply) as read:
@@ -99,7 +95,7 @@ def test_merged_candidate_view_and_annotated_position_use_saved_source(tmp_path)
     candidate = built['candidate']
     path = run/candidate/'source_model.json'
     before = path.read_bytes()
-    api = server(run, enabled_only=True)
+    api = server(run)
     reply = asyncio.run(api.call_tool('inspect_candidate', dict(candidate=candidate, include_plan=True)))
     assert not reply.isError and any(b.type == 'image' for b in reply.content)
     assert reply.structuredContent['source_plan_view']['candidate'] == candidate
@@ -134,7 +130,7 @@ def test_summary_inspection_is_opt_in_and_never_selects_or_changes_source(tmp_pa
     run = _run_with_one_image(tmp_path)
     toolkit = Toolkit(run)
     candidate = toolkit.build(json.loads(_two_room_proposal()))['candidate']
-    api = server(run, enabled_only=True)
+    api = server(run)
     source = run/candidate/'source_model.json'
     original = source.read_bytes()
     with patch.object(saved, 'candidate_review', side_effect=AssertionError('not requested')):
@@ -176,7 +172,7 @@ def test_summary_inspection_preserves_stale_calibration_and_original_evidence(tm
                           'x_anchors':anchors,'y_anchors':anchors},
         'conclusion':'consistent_with_supplied_observations','findings':[]}), encoding='utf-8')
     original = path.read_bytes()
-    api = server(run, enabled_only=True)
+    api = server(run)
     args = {'candidate':candidate, 'include_geometry':False}
     first = response_body(asyncio.run(api.call_tool('inspect_candidate',args)))['current_checks']
     assert first['opening_review']['current_reviews_count'] == 1
@@ -201,7 +197,7 @@ def test_summary_inspection_bounds_large_notes_and_keeps_exact_totals_and_reads(
     proposal = json.loads(_two_room_proposal())
     proposal['unresolved'] = [f'question-{i}: ' + 'uncertain evidence ' * 100 for i in range(250)]
     candidate = toolkit.build(proposal)['candidate']
-    api = server(run, enabled_only=True)
+    api = server(run)
     reply = asyncio.run(api.call_tool('inspect_candidate', {'candidate':candidate, 'include_geometry':False}))
     body = response_body(reply)
     assert len(json.dumps(body,ensure_ascii=False).encode()) <= 24000
@@ -224,7 +220,7 @@ def test_summary_inspection_reprojects_claim_decisions_without_height_cache_reus
     from src.agent.execution import bim_claim_state
     run, toolkit = setup_run(tmp_path)
     row = window_claim(toolkit)
-    api = server(run, enabled_only=True)
+    api = server(run)
     args = {'candidate':'seed','include_geometry':False}
     with patch.object(bim_claim_state, 'project', wraps=bim_claim_state.project) as projected:
         first = response_body(asyncio.run(api.call_tool('inspect_candidate',args)))['current_checks']
@@ -254,7 +250,7 @@ def test_summary_inspection_without_source_still_has_exact_readable_snapshot(tmp
     run = _run_with_one_image(tmp_path)
     candidate = Toolkit(run).build(json.loads(_two_room_proposal()))['candidate']
     (run/candidate/'source_model.json').unlink()
-    api = server(run, enabled_only=True)
+    api = server(run)
     reply = response_body(asyncio.run(api.call_tool('inspect_candidate',
         {'candidate':candidate,'include_geometry':False})))
     checks = reply['current_checks']

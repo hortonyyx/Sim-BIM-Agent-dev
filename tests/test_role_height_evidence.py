@@ -29,6 +29,7 @@ def observed_west(session):
         {"id": "eave", "kind": "eave", "value_m": 3, "evidence_type": "annotation", "bbox": [0, .5, 12, 1.5]},
     ]
     artifact["openings"][0]["bbox"] = [8, 2.4, 10, 5.2]
+    artifact["openings"][0]["opening_bbox"] = [8, 2.4, 10, 5.2]
     return rebuilt_elevation(artifact)
 
 
@@ -79,6 +80,7 @@ def test_missing_or_unrelated_reader_coordinates_are_not_manufactured(tmp_path, 
                 level["evidence_type"] = "assumption"
         else:
             artifact["openings"][0]["bbox"] = [0, 0, 2, 2]
+            artifact["openings"][0]["opening_bbox"] = [0, 0, 2, 2]
         artifact = rebuilt_elevation(artifact)
         before = copy.deepcopy(artifact)
         report = height_locations(artifact, match, [12, 8])
@@ -94,7 +96,7 @@ def test_single_level_scale_needs_independent_image_corroboration(tmp_path):
         artifact = rebuilt_elevation(artifact)
         match = {"tolerances_m": {"position": .35, "width": .25}, "matches": []}
         assert height_locations(artifact, match, [12, 8])["status"] == "uncorroborated_vertical_scale"
-        other = {**artifact["openings"][0], "id": "second", "x_px": [2, 4], "bbox": [2, 2.4, 4, 5.2]}
+        other = {**artifact["openings"][0], "id": "second", "x_px": [2, 4], "bbox": [2, 2.4, 4, 5.2], "opening_bbox": [2, 2.4, 4, 5.2]}
         artifact["openings"].insert(0, other)
         artifact["counts"][0]["window_count"] = 2
         artifact = rebuilt_elevation(artifact)

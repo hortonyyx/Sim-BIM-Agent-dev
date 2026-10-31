@@ -9,6 +9,7 @@ import pytest
 
 from scripts.release import product_projection as projection
 from src.agent_runtime import agent_registry
+from scripts.dev import agent_versions
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,7 +22,7 @@ def sources():
 
 
 def test_forbidden_import_and_unresolved_dynamic_import_fail_closed(sources):
-    for extra, message in [(b"\nimport src.rag.rag\n", "excluded subsystem"),
+    for extra, message in [(b"\nimport scripts.dev.agent_versions\n", "excluded subsystem"),
                            (b"\nimport importlib\nimportlib.import_module(variable)\n", "Unresolved dynamic")]:
         changed = dict(sources)
         changed["src/agent/product_cli.py"] += extra
@@ -29,24 +30,20 @@ def test_forbidden_import_and_unresolved_dynamic_import_fail_closed(sources):
             projection.project_sources(changed)
 
 
-def test_product_precheck_rejects_undistributed_mode_but_development_retains_it(tmp_path, monkeypatch):
+def test_precheck_rejects_retired_mode_and_missing_current_entrypoint(tmp_path, monkeypatch):
     from src.agent import runtime_configuration as configuration
     monkeypatch.setattr(configuration, "ROOT", tmp_path)
-    registry = tmp_path / agent_registry.REGISTRY_RELATIVE_PATH
-    registry.parent.mkdir(parents=True)
-    registry.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(agent_registry, "load_agent_registry", lambda root: {"product_projection": {"present": True}})
     config = tmp_path / "configuration.json"
-    config.write_text(json.dumps({"schema_version": 1, "approval_required_before_launch": True,
-                                 "cases": [{"case_id": "old-mode", "mode": "external_coordinator_mcp"}]}))
-    with pytest.raises(ValueError, match="not included"):
+    from tests.test_release_paths import _configuration
+    value = _configuration(tmp_path, tmp_path / "runs")
+    value["cases"] = [{**value["cases"][0], "mode": "external_coordinator_mcp"}]
+    config.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="unsupported run mode"):
         configuration.load_configuration(config)
-    with pytest.raises(ValueError, match="not included"):
+    with pytest.raises(ValueError, match="unsupported run mode"):
         configuration.argv_for({"mode": "external_coordinator_mcp"})
     with pytest.raises(ValueError, match="entrypoint is missing"):
         configuration.entrypoint_for("single_model")
-    monkeypatch.setattr(agent_registry, "load_agent_registry", lambda root: {})
-    assert configuration.entrypoint_for("external_coordinator_mcp") == "src.agent.runtime_coordinator"
 
 
 def test_product_profile_cannot_silently_omit_an_enabled_subprocess_entrypoint(sources):
@@ -62,7 +59,8 @@ def test_runtime_dependency_lock_only_retains_development_versions(sources):
     requirements = projection.with_dependencies(sources, payload, origins, profile, imports)
     product = tomllib.loads(payload["pyproject.toml"].decode())
     assert product["project"]["name"] == "sim-bim-agent"
-    assert set(product["project"]["scripts"]) == {"sim-bim-agent"}
+    assert product["tool"]["uv"]["package"] is False
+    assert "scripts" not in product["project"]  # Launcher invokes the source module directly.
     assert "pyjwt[crypto]==2.12.1" in requirements
     old = tomllib.loads(sources["uv.lock"].decode())["package"]
     new = tomllib.loads(payload["uv.lock"].decode())["package"]
@@ -79,8 +77,8 @@ def test_projection_identity_membership_and_old_version_rejection(tmp_path, sour
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# fixture\n", encoding="utf-8")
-    monkeypatch.setattr(agent_registry, "_fingerprints", lambda *args: {
-        "tool_catalog_sha256": {k: "a" * 64 for k in agent_registry._CATALOG_MODES},
+    monkeypatch.setattr(agent_versions, "_fingerprints", lambda *args: {
+        "tool_catalog_sha256": {k: "a" * 64 for k in agent_versions._CATALOG_MODES},
         "mode_fingerprints": {"single_model/coordinator": {"tools": "b" * 64}}})
     first, _ = projection.register_projection(tmp_path, sources=sources, commit="a" * 40, profile=profile)
     second, _ = projection.register_projection(tmp_path, sources=sources, commit="a" * 40, profile=profile)
@@ -91,8 +89,8 @@ def test_projection_identity_membership_and_old_version_rejection(tmp_path, sour
     (tmp_path / projection.REGISTRY).write_bytes(projection.json_bytes(first))
     agent_registry.release_records(tmp_path)
     with pytest.raises(ValueError, match="immutable"):
-        agent_registry.register_versions(tmp_path)
-    with pytest.raises(agent_registry.AgentVersionMismatch, match="not registered"):
+        agent_versions.register_versions(tmp_path)
+    with pytest.raises(agent_registry.AgentVersionMismatch, match="not current"):
         agent_registry.agent_version_record(tmp_path, "domain-v153-20261026")
     for damage in ("alias", "extra_record"):
         edited = json.loads(projection.json_bytes(first))
@@ -125,14 +123,3 @@ def test_projection_identity_membership_and_old_version_rejection(tmp_path, sour
     (tmp_path / "release-manifest.json").write_bytes(projection.json_bytes(manifest))
     with pytest.raises(agent_registry.AgentVersionMismatch, match="source identity"):
         agent_registry.release_records(tmp_path)
-
-
-def test_old_validator_and_current_geometry_share_the_same_ring_implementation():
-    from src.agent.geometry import build
-    from src.agent.geometry.ring_order import canonicalize_ring_vertices
-    from src.validator.data_model import canonicalize_ring_vertices as legacy
-    assert legacy is canonicalize_ring_vertices
-    assert build.canonicalize_ring_vertices is canonicalize_ring_vertices
-    ring = np.array([[0., 0., 0.], [2., 0., 0.], [2., 1., 0.], [1., 1., 0.], [1., 2., 0.], [0., 2., 0.]])
-    normal = np.array([0., 0., 1.])
-    assert np.array_equal(legacy(ring, normal), canonicalize_ring_vertices(ring[::-1], normal))

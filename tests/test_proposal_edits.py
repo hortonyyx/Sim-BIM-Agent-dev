@@ -7,7 +7,7 @@ import pytest
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from src.agent.correction.parse import ensure_corrected_geometry
+from src.agent.geometry_model.parse import parse_geometry
 from src.agent.geometry.proposal_edits import apply_proposal_edits
 from src.agent.geometry.source_bim import build_source_bim
 
@@ -56,8 +56,8 @@ def test_room_function_edit_and_withdrawal_preserve_geometry_and_other_evidence(
     assert changed["role_evidence"]["basis"] == "inferred"
     assert changed["source_refs"] == cell["source_refs"]
     assert changed["assumptions"] == cell["assumptions"]
-    source = build_source_bim(ensure_corrected_geometry(revised["geometry"]), capability_profile="orthogonal_polygon")
-    original = build_source_bim(ensure_corrected_geometry(proposal["geometry"]), capability_profile="orthogonal_polygon")
+    source = build_source_bim(parse_geometry(revised["geometry"]), capability_profile="orthogonal_polygon")
+    original = build_source_bim(parse_geometry(proposal["geometry"]), capability_profile="orthogonal_polygon")
     for key in ("boundaries", "openings", "connections", "floors", "opening_hosts", "boundary_relations"):
         assert source[key] == original[key]
     for space, old in zip(source["spaces"], original["spaces"]):
@@ -176,7 +176,7 @@ def test_reflection_preserves_nonrectangular_rooms_openings_and_source_buildabil
     assert x_reflected["geometry"]["floors"][0]["cells"][0]["id"] == "left"
     assert "direction language" in x_reflected["geometry"]["corrections"][-1]["notice"]
     assert any("direction language" in item for item in x_reflected["unresolved"])
-    assert build_source_bim(ensure_corrected_geometry(x_reflected["geometry"]),
+    assert build_source_bim(parse_geometry(x_reflected["geometry"]),
                             capability_profile="orthogonal_polygon")["validation"]["status"] == "pass"
 
     y_reflected = apply_proposal_edits(proposal, [{"op": "reflect", "axis": "y", "reason": "north arrow corrected"}])
@@ -270,7 +270,7 @@ def test_remove_opening_removes_a_built_window_by_its_unique_aperture_id():
     audit = revised["geometry"]["corrections"][-1]
     assert audit["target_collection"] == "windows"
     assert audit["before"]["id"] == "west" and audit["after"] is None
-    source = build_source_bim(ensure_corrected_geometry(revised["geometry"]),
+    source = build_source_bim(parse_geometry(revised["geometry"]),
                               capability_profile="orthogonal_polygon")
     assert source["validation"]["status"] == "pass"
     assert "west" not in {row["id"] for row in source["openings"]}
@@ -280,7 +280,7 @@ def test_remove_opening_retracts_unbuilt_window_from_parent_proposal():
     proposal = _proposal()
     bad = next(row for row in proposal["geometry"]["windows"] if row["id"] == "west")
     bad["span"] = [7, 8]
-    before = build_source_bim(ensure_corrected_geometry(proposal["geometry"]),
+    before = build_source_bim(parse_geometry(proposal["geometry"]),
                               capability_profile="orthogonal_polygon")
     assert before["validation"]["status"] == "severe"
     assert [row["id"] for row in before["unbuilt_openings"]] == ["west"]
@@ -289,7 +289,7 @@ def test_remove_opening_retracts_unbuilt_window_from_parent_proposal():
         "op": "remove_opening", "id": "west", "reason": "invalid host disproves this window",
         "source_refs": ["source.opening_unbuilt diagnostic"],
     }])
-    after = build_source_bim(ensure_corrected_geometry(revised["geometry"]),
+    after = build_source_bim(parse_geometry(revised["geometry"]),
                              capability_profile="orthogonal_polygon")
     assert after["validation"]["status"] == "pass"
     assert after["unbuilt_openings"] == []
@@ -329,7 +329,7 @@ def test_move_shared_wall_preserves_unrelated_geometry_and_hosts_its_door():
     assert audit["axis"] == "x" and audit["from_coordinate_m"] == 4
     assert audit["moved_openings"][0]["id"] == "between"
     assert proposal == _rectangular_wall_proposal()
-    assert build_source_bim(ensure_corrected_geometry(revised["geometry"]),
+    assert build_source_bim(parse_geometry(revised["geometry"]),
                             capability_profile="orthogonal_polygon")["validation"]["status"] == "pass"
 
 
@@ -361,7 +361,7 @@ def test_reshape_spaces_replaces_nonrectangular_rings_without_touching_openings_
     assert audit["before"]["cells"]["left"] == original["geometry"]["floors"][0]["cells"][0]
     assert audit["after"]["cells"]["left"] == cells["left"]
     assert proposal == original
-    assert build_source_bim(ensure_corrected_geometry(revised["geometry"]),
+    assert build_source_bim(parse_geometry(revised["geometry"]),
                             capability_profile="orthogonal_polygon")["validation"]["status"] == "pass"
 
 
@@ -378,7 +378,7 @@ def test_reshape_spaces_requires_explicit_opening_changes_and_source_builder_kee
     # The old door is deliberately untouched and is now unhosted.  The normal
     # source builder reports that fact instead of silently moving or resizing it.
     assert reshaped["geometry"]["openings"][0] == proposal["geometry"]["openings"][0]
-    source = build_source_bim(ensure_corrected_geometry(reshaped["geometry"]),
+    source = build_source_bim(parse_geometry(reshaped["geometry"]),
                               capability_profile="orthogonal_polygon")
     assert source["validation"]["status"] == "severe"
     assert any(row["code"] == "source.opening_unbuilt" for row in source["validation"]["findings"])
@@ -391,7 +391,7 @@ def test_reshape_spaces_requires_explicit_opening_changes_and_source_builder_kee
         ],
         "reason": "synthetic invalid overlap", "source_refs": ["plan: synthetic"],
     }])
-    source = build_source_bim(ensure_corrected_geometry(overlapping["geometry"]),
+    source = build_source_bim(parse_geometry(overlapping["geometry"]),
                               capability_profile="orthogonal_polygon")
     assert source["validation"]["status"] == "severe"
     assert any(row["code"] == "source.space_overlap" for row in source["validation"]["findings"])
@@ -440,7 +440,7 @@ def test_replace_space_region_turns_interlocking_rooms_into_rectangles_and_prese
     assert audit[0]["before"]["cells"]["left"] == original["geometry"]["floors"][0]["cells"][0]
     assert audit[0]["after"]["cells"]["right"] == cells["right"]
     assert proposal == original
-    assert build_source_bim(ensure_corrected_geometry(revised["geometry"]),
+    assert build_source_bim(parse_geometry(revised["geometry"]),
                             capability_profile="orthogonal_polygon")["validation"]["status"] == "pass"
 
 

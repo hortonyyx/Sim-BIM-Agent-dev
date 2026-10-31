@@ -29,7 +29,7 @@ def test_readonly_overlay_uses_actual_source_and_preserves_snapshot_via_stdio(tm
     run = tmp_path / 'child'
     run.mkdir()
     mesh_input = freeze_mesh(_asset(tmp_path / 'original.glb'), run)
-    (run / 'inputs.json').write_text(json.dumps({
+    (run / 'inputs.json').write_text(json.dumps({"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24,
         'images': {}, 'mesh_input': mesh_input, 'input_mode': 'runtime_local_mesh_observation',
         'scope': 'synthetic local source comparison; no fidelity claim',
     }), encoding='utf-8')

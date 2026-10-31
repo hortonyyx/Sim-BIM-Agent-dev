@@ -14,7 +14,6 @@ from PIL import Image
 
 from src.agent.runtime_tools import (
     COORDINATOR_TOOL_NAMES,
-    FROZEN_BASELINE_COMMIT,
     LOCAL_OBSERVER_TOOL_NAMES,
     MESH_COORDINATOR_TOOL_NAMES,
     MESH_LOCAL_OBSERVER_TOOL_NAMES,
@@ -42,7 +41,7 @@ def _prepared_run(tmp_path: Path, *, mesh: bool = False) -> Path:
     image_directory.mkdir(parents=True)
     image_path = image_directory / "plan.png"
     Image.new("RGB", (12, 8), "white").save(image_path)
-    manifest = {
+    manifest = {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24,
         "images": {"plan.png": {"size": [12, 8], "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest()}},
         "scope": "stage-1 frozen tool test",
         "only_input": "synthetic admitted image",
@@ -181,7 +180,7 @@ def test_real_readonly_call_preserves_sent_and_original_image_metadata(tmp_path)
     asyncio.run(scenario())
 
 
-def test_disabled_capability_returns_known_block_before_execution(tmp_path):
+def test_retired_tool_is_rejected_before_transport_execution(tmp_path):
     run = _prepared_run(tmp_path)
 
     async def scenario():
@@ -189,10 +188,8 @@ def test_disabled_capability_returns_known_block_before_execution(tmp_path):
         tools = FrozenBimTools(
             client, coordinator_role(BudgetAmounts(calls=3)), run_directory=run
         )
-        blocked = await tools.call_tool("review_detail", {})
-        assert blocked["isError"] is True
-        assert blocked["structuredContent"]["status"] == "blocked"
-        assert blocked["structuredContent"]["failure_stage"] == "before_execution"
+        with pytest.raises(ToolCatalogMismatch, match="not in the registered Agent catalog"):
+            await tools.call_tool("review_detail", {})
         assert client.calls == []
         with pytest.raises(ConnectionError):
             await tools.call_tool("build_bim", {"proposal_json": "{}"})

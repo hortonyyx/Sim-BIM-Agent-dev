@@ -37,7 +37,8 @@ class PassedTrial:
     def __init__(self):
         self.plan = plan()
         self.receipt = {"status": "passed", "candidate": "candidate_01", "plan_sha256": canonical_plan_sha256(self.plan),
-                        "candidate_source_sha256": "a" * 64, "validation_passed": True,
+                        "reading_geometry_ready": True, "reading_product_file": "reading_001/reading.json",
+                        "reading_product_sha256": "a" * 64, "validation_passed": True,
                         "returned_images": [{"sha256": "b" * 64, "file": "mock-overlay.png"}]}
         self.receipts = [self.receipt]
 
@@ -51,7 +52,7 @@ class PassedTrial:
 
 
 def arguments(trial):
-    return {"local_review": REVIEW, "plan_sha256": trial.receipt["plan_sha256"], "evidence": artifact()["evidence"],
+    return {"local_review": REVIEW, "plan_sha256": trial.receipt["plan_sha256"],
             "unresolved": ["additional review note"], "wall_reference": WALL_REFERENCE,
             "topology_decisions": []}
 
@@ -72,7 +73,7 @@ def test_plan_submission_preserves_exact_trial_with_additional_outer_unresolved(
     assert b"\r" not in (tmp_path / "reader_submission.json").read_bytes()
     with pytest.raises(ValueError, match="accepted submission"):
         resumed.submit({**params, "unresolved": []})
-    trial.receipt["candidate_source_sha256"] = "b" * 64
+    trial.receipt["reading_product_sha256"] = "b" * 64
     with pytest.raises(ValueError, match="immutable successful trial"):
         resumed.read()
 
@@ -80,10 +81,10 @@ def test_plan_submission_preserves_exact_trial_with_additional_outer_unresolved(
 def test_failed_or_rewritten_trial_cannot_submit():
     trial = PassedTrial()
     submission = ReaderSubmission(role_id="plan_reader", image_name="plan.png", trial=trial)
-    with pytest.raises(ValueError, match="successful.*Minimum correct example"):
+    with pytest.raises(ValueError, match="successful.*trial"):
         submission.submit({**arguments(trial), "plan_sha256": "0" * 64})
     trial.receipt["status"] = "failed"
-    with pytest.raises(ValueError, match="successful.*Minimum correct example"):
+    with pytest.raises(ValueError, match="successful.*trial"):
         submission.submit(arguments(trial))
     trial.receipt["status"] = "passed"
     with pytest.raises(ValueError, match="Additional properties.*Minimum correct example"):
@@ -93,28 +94,32 @@ def test_failed_or_rewritten_trial_cannot_submit():
 
 def test_elevation_rejects_bad_count_with_example_then_accepts_and_reloads(tmp_path):
     async def scenario():
-        tools = ReaderTools(Frozen(tmp_path), role_id="elevation_reader", image_name="North.png")
+        from tests.test_role_reader_delivery import tools_at
+        from src.agent.runtime_roles.elevation import ElevationReaderSubmission
+        tools = tools_at(tmp_path)
         params = copy.deepcopy(ELEVATION_EXAMPLE)
         params["counts"][0]["window_count"] += 1
-        failed = await tools.call_tool("submit_elevation_reading", params)
-        assert failed["isError"] and "Minimum correct example" in failed["content"][0]["text"]
+        failed = await tools.call_tool("trial_elevation_reading", compact_elevation(params))
+        assert failed["isError"] and "window_count=2" in failed["content"][0]["text"]
         assert tools.submission.read() is None
-        accepted = await tools.call_tool("submit_elevation_reading", ELEVATION_EXAMPLE)
+        prepared = await tools.call_tool("trial_elevation_reading", compact_elevation(ELEVATION_EXAMPLE))
+        accepted = await tools.call_tool("submit_elevation_reading", {"trial_id": prepared["structuredContent"]["trial_id"], "local_review": REVIEW})
         assert not accepted["isError"] and accepted["structuredContent"]["status"] == "accepted"
-        persisted = ReaderSubmission(role_id="elevation_reader", image_name="North.png", directory=tmp_path)
+        persisted = ElevationReaderSubmission(role_id="elevation_reader", image_name="North.png", target="North/F1", directory=tmp_path, admitted_image_sha256=tools._image_sha256)
         assert persisted.read()["artifact"]["openings"][0]["head_m"] == ELEVATION_EXAMPLE["openings"][0]["head_m"]
         raw = json.loads((tmp_path / "reader_submission.json").read_bytes())
         raw["artifact"]["openings"][0]["head_m"] += 1
         (tmp_path / "reader_submission.json").write_text(json.dumps(raw), encoding="utf-8", newline="\n")
         with pytest.raises(ValueError, match="hash mismatch"):
-            ReaderSubmission(role_id="elevation_reader", image_name="North.png", directory=tmp_path)
+            ElevationReaderSubmission(role_id="elevation_reader", image_name="North.png", target="North/F1", directory=tmp_path, admitted_image_sha256=tools._image_sha256)
     asyncio.run(scenario())
 
 
 def topology_warning(kind="unsupported_open_separator"):
     row = {"type": kind, "divider": "P1", "opening": "D1", "x_px": 60, "y_px": [10, 110],
            "look_box": [55, 8, 65, 112], "check": CONTINUOUS_HINT}
-    return topology_issues([{"plan_sha256": "a" * 64, "drawing_differences": {"items": [row]}}])[0]
+    return topology_issues([{"plan_sha256": "a" * 64, "reading_geometry_ready": True,
+        "topology_dividers": {"P1": [[60, 10], [60, 110]]}, "drawing_differences": {"items": [row]}}])[0]
 
 
 @pytest.mark.parametrize("kind", ["unsupported_open_separator", "opening_offset_from_gap"])

@@ -18,12 +18,8 @@ from src.harness_contracts import (
     EstimatedCostUpperBound,
     EventEnvelope,
     EventLog,
-    ExcerptDisclosure,
-    ExternalCoordinatorMcpPayload,
+    ContextImportPayload,
     HashedBlobRef,
-    HistoricalBlobHashMissing,
-    HistoricalParentMissing,
-    HistoricalTimestampMissing,
     ImageTransmission,
     InjectedContent,
     InlineCapture,
@@ -375,106 +371,32 @@ def test_thinking_states_are_distinct_and_usage_missing_is_not_zero() -> None:
         )
 
 
-def test_historical_excerpt_can_map_tool_without_inventing_parent_time_or_shown_result() -> None:
-    source = SourceRef(
-        source_id="legacy-trace",
-        source_kind="history",
-        locator="legacy/trace.json",
-        blob=HistoricalBlobHashMissing(
-            uri="legacy/trace.json",
-            media_type="application/json",
-            reason="record predates content hashing",
-        ),
-    )
-    tool = EventEnvelope(
-        event_id="legacy-tool",
-        run_id="legacy-run",
-        task_id="legacy-task",
-        parent_task=HistoricalParentMissing(reason="parent task was not recorded"),
-        sequence=0,
-        occurred_at=HistoricalTimestampMissing(reason="only file date survives"),
-        payload=ToolExecutionPayload(
-            call_id="legacy-call",
-            tool_name="legacy_read",
-            full_arguments={"path": "input"},
-            raw_result=InlineCapture(value={"ok": True}),
-            shown_result=MissingCapture(reason="model-visible transform was not recorded"),
-            repeatability="read_only",
-            outcome="succeeded",
-            capture_scope="historical_excerpt",
-        ),
-    )
-    log = EventLog(
-        mode="excerpt",
-        events=(tool,),
-        excerpt=ExcerptDisclosure(
-            reason="mapped only the surviving tool record",
-            omitted_event_types=("adapter_request", "model_response"),
-            source_records=(source,),
-        ),
-    )
-    assert log.events[0].payload.shown_result.kind == "missing"
-
-    with pytest.raises(ValidationError, match="complete logs require known timestamps"):
-        EventLog(mode="complete", events=(tool,))
+def test_incomplete_legacy_records_are_rejected_by_current_contracts() -> None:
+    with pytest.raises(ValidationError):
+        SourceRef(source_id="old", source_kind="history", locator="old.json", blob={
+            "kind": "historical_hash_missing", "uri": "old.json", "media_type": "application/json", "reason": "missing"})
+    event = _event(0, RunLifecyclePayload(action="start", reason="test"))
+    for field in ("occurred_at", "parent_task"):
+        row = event.model_dump(mode="python")
+        row[field] = {"kind": "historical_missing", "reason": "missing"}
+        with pytest.raises(ValidationError):
+            EventEnvelope.model_validate(row)
+    with pytest.raises(ValidationError):
+        EventLog(mode="excerpt", events=(event,))
 
 
-def test_historical_excerpt_can_mark_final_adapter_request_missing() -> None:
-    request = _event(
-        0,
-        AdapterRequestPayload(
-            adapter="historical-cli",
-            final_request_body=MissingCapture(
-                reason="startup arguments survive, final serialized request does not"
-            ),
-            parameters=ParameterAudit(
-                requested={"model": "known-alias", "reasoning_effort": "high"},
-                provider_report=ParametersNotReported(reason="not present in stream"),
-                effect=ParametersUnverified(reason="effective values were not attested"),
-            ),
-            versions=make_valid_request_payload().versions,
-        ),
-        event_id="historical-request",
-    )
-    log = EventLog(
-        mode="excerpt",
-        events=(request,),
-        excerpt=ExcerptDisclosure(
-            reason="only the launch record survives",
-            omitted_event_types=("model_response",),
-            source_records=(_source("launch-record"),),
-        ),
-    )
-    assert log.events[0].payload.final_request_body.kind == "missing"
+def test_complete_log_requires_final_request_and_prior_request_event() -> None:
+    payload = make_valid_request_payload().model_dump(mode="python")
+    payload["final_request_body"] = MissingCapture(reason="not captured")
+    payload["injected_content"] = ()
+    payload["images"] = ()
     with pytest.raises(ValidationError, match="exact final adapter request"):
-        EventLog(mode="complete", events=(request,))
-
-
-def test_response_request_reference_is_checked_but_excerpt_can_disclose_missing_event() -> None:
-    response = _event(
-        0,
-        ModelResponsePayload(
-            request_event_id="not-captured",
-            visible_text=("historical text",),
-            thinking=(ThinkingUnavailable(reason="not captured"),),
-            usage=UsageMissing(reason="not captured"),
-            raw_response=InlineCapture(value={"text": "historical text"}),
-        ),
-    )
+        EventLog(events=(_event(0, AdapterRequestPayload.model_validate(payload)),))
+    response = _event(0, ModelResponsePayload(request_event_id="missing", visible_text=("text",),
+        thinking=(ThinkingUnavailable(reason="not exposed"),), usage=UsageMissing(reason="not exposed"),
+        raw_response=InlineCapture(value={"text": "text"})))
     with pytest.raises(ValidationError, match="model request event does not exist"):
-        EventLog(mode="complete", events=(response,))
-
-    excerpt = EventLog(
-        mode="excerpt",
-        events=(response,),
-        excerpt=ExcerptDisclosure(
-            reason="request record is absent",
-            omitted_event_types=("adapter_request",),
-            missing_event_ids=("not-captured",),
-            source_records=(_source("legacy-response"),),
-        ),
-    )
-    assert excerpt.mode == "excerpt"
+        EventLog(events=(response,))
 
 
 def test_role_whitelist_and_model_binding_do_not_turn_recommendations_into_fallbacks() -> None:
@@ -781,18 +703,13 @@ def test_context_records_compaction_image_removal_and_reasoned_retrieval() -> No
         EventLog(mode="complete", events=(request, bad_compact))
 
 
-def test_external_coordinator_mcp_can_explicitly_mark_unavailable_request() -> None:
-    payload = ExternalCoordinatorMcpPayload(
-        phase="operation",
-        coordinator_task_id="outer-task",
-        method="tools/call",
-        request_content=MissingCapture(
-            reason="outer command-line coordinator did not expose the request body"
-        ),
-        result_content=InlineCapture(value={"status": "ok"}),
+def test_context_import_records_source_and_result() -> None:
+    payload = ContextImportPayload(
+        request_content=InlineCapture(value={"source_events_sha256": "a" * 64}),
+        result_content=InlineCapture(value={"status": "imported"}),
     )
     event = _event(0, payload)
-    assert EventLog(mode="complete", events=(event,)).events[0].payload.request_content.kind == "missing"
+    assert EventLog(events=(event,)).events[0].payload.event_type == "context_import"
 
 
 def test_remote_alias_claim_and_parameter_report_cannot_be_overstated() -> None:

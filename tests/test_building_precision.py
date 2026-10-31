@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from src.agent.correction.schema import CorrectedGeometry
+from src.agent.geometry_model.schema import GeometryInput
 from src.agent.geometry.source_bim import build_source_bim
 from src.agent.geometry.building_precision import precision_report
 
@@ -13,7 +13,7 @@ def source(offset=.06, gap=0):
     for index, x in enumerate((3., 3.+offset)):
         floors.append(dict(name=f'F{index+1}', z_floor=3*index+gap*index, ceiling_height=3, cells=[
             dict(id=f'L{index}', x=[0,x], y=[0,6]), dict(id=f'R{index}', x=[x,6], y=[0,6])]))
-    geom = CorrectedGeometry.model_validate(dict(schema_version='2', footprint_x=[0,6], footprint_y=[0,6],
+    geom = GeometryInput.model_validate(dict(schema_version='2', footprint_x=[0,6], footprint_y=[0,6],
         floors=floors, windows=[], openings=[]))
     return build_source_bim(geom, capability_profile='orthogonal_polygon')
 

@@ -74,6 +74,10 @@ def test_expanded_batch_recovers_latest_attempt_after_second_crash(environment, 
     assert first.registry.records["north"]["status"] == "completed"
     assert first.registry.records[auto_id]["status"] == "running"
     assert sent == ["north", "north"]
+    child_workspace = first.registry.child(auto_id).task_directory / "bim"
+    reference_paths = [child_workspace / "reader_issued_references.json",
+                       *sorted((child_workspace / "image_views").glob("*.json"))]
+    original_references = {path: path.read_bytes() for path in reference_paths}
     store.append(ToolExecutionPayload(call_id="delegate-1", tool_name="delegate_readers",
         full_arguments=arguments, repeatability="read_only", operation_key=None,
         invocation_event_id=original.event_id, outcome="unknown",
@@ -81,6 +85,8 @@ def test_expanded_batch_recovers_latest_attempt_after_second_crash(environment, 
         shown_result=MissingCapture(reason="not presented"), presentation_status="prepared"))
     with pytest.raises(InjectedCrash):
         asyncio.run(new(crash=True).recover_pending())
+    assert {path: path.read_bytes() for path in reference_paths} == original_references
+    assert set((child_workspace / "image_views").glob("*.json")) == set(reference_paths[1:])
     pending = [event for event in store.events if event.payload.event_type == "tool_invocation"]
     assert len(pending) == 2
     assert all(event.payload.full_arguments == arguments for event in pending)

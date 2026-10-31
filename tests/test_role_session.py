@@ -160,7 +160,7 @@ def test_completed_delivery_is_hashed_reusable_and_cannot_be_replaced(environmen
 def test_reader_runtime_receives_effective_context_limits_and_policy(environment):
     _, make = environment
     global_context = {"context_tokens": 220_000, "compact_at_tokens": 120_000,
-                      "active_window_messages": 18, "max_images": 4,
+                      "max_images": 4,
                       "max_image_bytes": 9_000_000}
     contexts = {name: effective_role_context(name, global_defaults=global_context)
                 for name in ROUTES}
@@ -179,7 +179,6 @@ def test_reader_runtime_receives_effective_context_limits_and_policy(environment
     assert result["results"][0]["status"] == "completed"
     assert seen[0]["limits"]["context_tokens"] == 180_000
     assert seen[0]["context_policy"]["compact_at_tokens"] == 90_000
-    assert seen[0]["context_policy"]["active_window_messages"] == 18
     assert seen[0]["context_policy"]["max_images"] == 2
     assert seen[0]["context_policy"]["max_image_bytes"] == 9_000_000
 
@@ -398,19 +397,7 @@ def test_failed_rework_automatically_carries_located_tool_evidence_without_issue
 
 def test_unknown_latest_trial_does_not_import_orphan_receipt_or_older_failure(environment):
     from src.agent.runtime_roles.trial import PlanTrial
-    from tests.test_bim_agent_plan_partition import example
-
-    class FailedBuild:
-        async def call_tool(self, name, arguments):
-            digest = hashlib.sha256(arguments["plan_json"].encode("utf-8")).hexdigest()
-            return envelope({
-                "source_geometry_ready": False,
-                "plan_input": {"plan_file": "legacy/plan.json", "plan_sha256": digest},
-                "error": "opening W1 has no full host",
-            }, error=True)
-
-        def image_origins(self, raw):
-            return {}
+    from tests.test_role_trial import Tools, example
 
     store, make = environment
     session = make()
@@ -429,11 +416,14 @@ def test_unknown_latest_trial_does_not_import_orphan_receipt_or_older_failure(en
         }},
     }), encoding="utf-8", newline="\n")
     trial = PlanTrial(
-        FailedBuild(), image_name="north.png", workspace=workspace,
+        Tools(), image_name="north.png", workspace=workspace,
         receipt_directory=workspace / "trial_receipts",
     )
-    first = asyncio.run(trial.call(example()))
-    compact_first = envelope({key: first["structuredContent"][key] for key in (
+    invalid = example()
+    invalid["openings"][0].update(p1=[4, 3], p2=[4, 4])
+    first = asyncio.run(trial.call(invalid))
+    assert first["structuredContent"]["status"] == "failed"
+    compact_first = envelope({key: trial.receipts[-1][key] for key in (
         "status", "receipt_file", "plan_sha256", "compiled_numeric_plan_sha256",
     )}, error=True)
     inline = child.capture(compact_first)
@@ -451,7 +441,7 @@ def test_unknown_latest_trial_does_not_import_orphan_receipt_or_older_failure(en
         call_id="trial-unknown", tool_name="trial_plan_bim", full_arguments={"plan": {}},
         repeatability="non_idempotent_write", operation_key="trial-unknown",
     ))
-    second_plan = example()
+    second_plan = json.loads(json.dumps(invalid))
     second_plan["openings"][0]["z"] = [0, 2.2]
     second = asyncio.run(trial.call(second_plan))
     assert second["structuredContent"]["receipt_file"] == "trial_receipts/trial_002.json"
@@ -529,22 +519,57 @@ def test_readers_are_bounded_by_configured_concurrency(environment):
     assert maximum == 1 and all(row["status"] == "completed" for row in rows)
 
 
-def test_build_reference_expands_original_plan_once_and_retains_audit(environment):
+def saved_plan_reading(session, task, *, selected_profile=False):
+    """Save a real, image-bound 2D reading for assembly protocol tests."""
+    from src.agent.runtime_roles.trial import PlanTrial
+    from tests.test_role_trial import Tools, example
+
+    workspace = session.registry.child(task["task_id"]).task_directory / "bim/trial_workspace"
+    image = workspace / "images" / task["image"]
+    image.parent.mkdir(parents=True)
+    image.write_bytes((session.run_directory / "images" / task["image"]).read_bytes())
+    with Image.open(image) as decoded:
+        size = list(decoded.size)
+    digest = hashlib.sha256(image.read_bytes()).hexdigest()
+    (workspace / "inputs.json").write_text(json.dumps({"images": {task["image"]: {
+        "sha256": digest, "size": size}}}), encoding="utf-8")
+    original = example()
+    profiles = workspace / "profiles"
+    if selected_profile:
+        profiles.mkdir()
+        pixel = original["x_anchors"][0][0]
+        (profiles / "profile_001.json").write_text(json.dumps({
+            "name": task["image"], "image_sha256": digest, "axis": "x",
+            "candidates": [{"id": "C01", "pixels": [pixel, pixel], "peak": pixel}],
+        }), encoding="utf-8")
+        original["x_anchors"][0][0] = {"profile": "profile_001", "candidate": "C01"}
+    trial = PlanTrial(Tools(), image_name=task["image"], workspace=workspace,
+                      receipt_directory=workspace / "trial_receipts", profile_directory=profiles)
+    receipt = asyncio.run(trial.run(original))
+    assert receipt["status"] == "passed", receipt
+    numeric = trial.numeric_plan(receipt)
+    row = session.registry.save(task, status="completed", artifact={"plan": numeric, "unresolved": []},
+                                validation=trial.delivery_receipt(original))
+    return row, original, numeric, workspace, receipt
+
+
+def test_build_reference_expands_verified_plan_once_and_retains_original_audit(environment):
     store, make = environment
     session = make()
     task = session._task({**dispatch("plan"), "role_id": "plan_reader", "target": "F1"})
-    artifact = {"plan": {"floor_id": "F1", "partitions": [], "openings": []}, "evidence": [], "unresolved": []}
-    row = session.registry.save(task, status="completed", artifact=artifact,
-                               validation={"validation_passed": True, "reason": "test receipt"})
+    row, original, numeric, workspace, receipt = saved_plan_reading(session, task)
     args = {"task_id": "plan", "sha256": row["artifact"]["sha256"]}
     first = asyncio.run(session.build_from_artifact(**args))
     second = asyncio.run(session.build_from_artifact(**args))
     assert first == second and len(session.frozen.calls) == 1
-    assert json.loads(session.frozen.calls[0][1]["plan_json"]) == artifact["plan"]
+    expanded = json.loads(session.frozen.calls[0][1]["plan_json"])
+    assert expanded == {key: value for key, value in numeric.items() if key != "reading_type"}
+    assert json.loads((workspace / receipt["input_plan_file"]).read_bytes()) == original
     from src.harness_contracts import HashedBlobRef
     ref = first["structuredContent"]["role_application"]["expanded_parameters"]
-    original = json.loads(store.get_bytes(HashedBlobRef.model_validate(ref)))
-    assert original["reference"] == args and original["tool"] == "build_plan_bim"
+    audit = json.loads(store.get_bytes(HashedBlobRef.model_validate(ref)))
+    assert audit["reference"] == args and audit["tool"] == "build_plan_bim"
+    assert json.loads(audit["arguments"]["plan_json"]) == expanded
 
 
 def test_failed_trial_is_readable_but_cannot_build(environment):
@@ -602,34 +627,34 @@ def test_missing_candidate_and_match_are_correctable_tool_errors(environment):
     asyncio.run(session.delegate_many([dispatch()]))
     candidate = asyncio.run(session.call_tool("match_elevation", {"task_id": "north", "candidate": "candidate_999"}))
     match = asyncio.run(session.call_tool("apply_elevation_heights", {"match_id": "0" * 64, "confirm": True}))
-    # GLM's Anthropic-compatible route sent the old confirm flag as "true" (sm24 debug run2).
+    # Unrecognized arguments remain explicit rejections, regardless of their type.
     string_confirm = asyncio.run(session.call_tool("apply_elevation_heights", {"match_id": "0" * 64, "confirm": "true"}))
     for result in (candidate, match, string_confirm):
         assert result["isError"] and result["structuredContent"]["status"] == "rejected"
-    assert "confirm" not in string_confirm["structuredContent"]["reason"]
+    assert "confirm" in match["structuredContent"]["reason"]
+    assert "confirm" in string_confirm["structuredContent"]["reason"]
+    missing = asyncio.run(session.call_tool("apply_elevation_heights", {"match_id": "0" * 64}))
+    assert missing["isError"] and "confirm" not in missing["structuredContent"]["reason"]
     assert not session.frozen.calls
 
 
 def test_profile_plan_expands_verified_numeric_trial_without_retranscription(environment):
-    from src.agent.runtime_roles.trial import canonical_plan_sha256
-    store, make = environment
+    _, make = environment
     session = make()
     task = session._task({**dispatch("plan"), "role_id": "plan_reader", "target": "F1"})
-    original = {"floor_id": "F1", "x_anchors": [[{"profile": "profile_001", "candidate": "C01"}, 0], [90, 9]]}
-    numeric = {"floor_id": "F1", "x_anchors": [[10, 0], [90, 9]]}
-    workspace = session.registry.child("plan").task_directory / "bim/trial_workspace"
-    workspace.mkdir(parents=True)
-    path = workspace / "numeric.json"
-    path.write_text(json.dumps(numeric))
-    validation = {"validation_passed": True, "plan_sha256": canonical_plan_sha256(original),
-        "compiled_numeric_plan_file": "numeric.json", "compiled_numeric_plan_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    row = session.registry.save(task, status="completed", artifact={"plan": original, "unresolved": []}, validation=validation)
+    row, original, numeric, workspace, receipt = saved_plan_reading(session, task, selected_profile=True)
+    assert isinstance(original["x_anchors"][0][0], dict)
+    assert isinstance(numeric["x_anchors"][0][0], (int, float))
     asyncio.run(session.build_from_artifact("plan", row["artifact"]["sha256"]))
-    assert json.loads(session.frozen.calls[0][1]["plan_json"]) == numeric
-    assert session.registry.read("plan")["plan"] == original
-    path.write_text("{}")
+    expanded = json.loads(session.frozen.calls[0][1]["plan_json"])
+    assert expanded == {key: value for key, value in numeric.items() if key != "reading_type"}
+    assert session.registry.read("plan")["plan"] == numeric
+    assert json.loads((workspace / receipt["input_plan_file"]).read_bytes()) == original
+    path = workspace / receipt["compiled_numeric_plan_file"]
+    path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="compiled reader plan hash"):
         asyncio.run(session.build_from_artifact("plan", row["artifact"]["sha256"]))
+    assert len(session.frozen.calls) == 1
 
 
 def test_bare_facade_target_takes_the_plan_floors(environment):

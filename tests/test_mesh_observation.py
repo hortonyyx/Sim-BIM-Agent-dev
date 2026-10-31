@@ -493,13 +493,13 @@ def test_blend_budget_failure_is_explicit_and_saves_no_partial_observation(tmp_p
     assert not any(prefix.with_suffix(suffix).exists() for suffix in ('.png', '.json', '.npz'))
 
 
-@pytest.mark.parametrize('removed', ['measurement_contract', 'transparent_composite_indices'])
+@pytest.mark.parametrize('removed', ['measurement_contract', 'transparent_composite_indices', 'operation_yaw_degrees'])
 def test_blend_buffer_without_invalidity_contract_is_rejected(tmp_path, removed):
     mesh, prefix, _, _ = _blend_view(tmp_path, [_blend_quad(1)])
     with np.load(prefix.with_suffix('.npz'), allow_pickle=False) as data:
         arrays = {key: data[key] for key in data.files if key != removed}
     np.savez_compressed(prefix.with_suffix('.npz'), **arrays)
-    with pytest.raises(ValueError, match='measurement contract and invalid indices'):
+    with pytest.raises(ValueError, match='measurement contract; render a new view'):
         mesh.pixel_query(prefix, [[20, 20]])
 
 

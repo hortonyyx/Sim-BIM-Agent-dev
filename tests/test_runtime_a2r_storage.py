@@ -92,6 +92,11 @@ def test_runtime_behaviour_reference_reopens_full_record_and_detects_changes(tmp
         if input_form == "old_expanded_record":
             with gzip.open(report / "record.json.gz", "wt") as stream:
                 json.dump(expected, stream)
+            with pytest.raises(ValueError, match="verified native event-log reference"):
+                load_behaviour(report)
+            with pytest.raises(ValueError, match="verified native event-log reference"):
+                write_behaviour_report(report, store.directory / "rejected-export")
+            return
         source = report if input_form == "directory" else report / "record.json.gz"
         exported = store.directory / "reexported"
         write_behaviour_report(source, exported)

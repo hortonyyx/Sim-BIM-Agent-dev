@@ -832,7 +832,7 @@ def test_domain_text_continuation_resumes_once_and_can_complete(tmp_path, contex
     engine = runtime(tmp_path, [response(text="I still need to do the work.")])
     engine.domain_completion, engine.fault_hook = completed, interrupt
     if context:
-        engine.context_policy = ContextPolicy(active_window_messages=8)
+        engine.context_policy = ContextPolicy()
     with engine.store, pytest.raises(Crash):
         asyncio.run(engine.run(MESSAGES))
     resumed = runtime(tmp_path, [response(text="Still working."),
@@ -916,8 +916,8 @@ def test_resume_rejects_changed_model_profile(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("model", "configured_limit", "output_tokens", "expected"),
     [
-        ("test", 200, 256, "configured_context_limit_exhausted"),
-        ("Qwen3.8-27B", None, 262_144, "model_profile_context_limit_exhausted"),
+        ("test", 200, 256, "context_recovery_required"),
+        ("Qwen3.8-27B", None, 262_144, "context_recovery_required"),
     ],
 )
 def test_context_limits_stop_before_adapter_send(
@@ -1131,7 +1131,7 @@ def test_runtime_core_imports_stay_independent_of_building_layer():
 
     root = Path(__file__).resolve().parents[1]
     for file in (root / "src/agent_runtime").glob("*.py"):
-        for node in ast.walk(ast.parse(file.read_text(), filename=str(file))):
+        for node in ast.walk(ast.parse(file.read_text(encoding="utf-8"), filename=str(file))):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
@@ -1165,3 +1165,16 @@ def test_write_json_rides_out_a_brief_windows_sharing_violation(tmp_path, monkey
     store.write_json("checkpoint.json", {"saved": True})
     assert json.loads((tmp_path / "run" / "checkpoint.json").read_bytes()) == {"saved": True}
     assert len(calls) == 3
+
+
+def record_reserved_request(engine, reservation):
+    """Journal the actual request contract before testing its settlement."""
+    from src.agent_runtime.adapter import prepare_request
+    messages = [{"role": "user", "content": "offline settlement fixture"}]
+    prepared = prepare_request(store=engine.store, model=engine.model, messages=messages,
+        message_sources=[engine.store.source("settlement-input", messages[0])],
+        tools=[], tool_source=engine.store.source("settlement-tools", []),
+        parameters=engine.parameters, versions=engine.versions)
+    return engine.store.append(prepared.event_payload.model_copy(update={
+        "reservation_id": reservation.reservation_id,
+        "logical_purpose": "primary_task"}))

@@ -21,7 +21,7 @@ from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.store import EventStore
 from test_agent_runtime import versions
 from tests.test_role_readers import Frozen as ReaderFrozen
-from tests.test_role_readers import plan
+from tests.test_role_readers import plan as _plan
 from tests.test_role_session import Frozen as SessionFrozen
 from tests.test_role_session import ROUTES, delivered_adapter, dispatch
 from tests.test_role_submission import PassedTrial, arguments, operation
@@ -29,6 +29,24 @@ from tests.test_role_trial import Tools
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def plan():
+    value = _plan()
+    value["wall_metadata"] = [
+        {"target": target, "thickness_m": thickness, "reference_side": "centerline",
+         "evidence_status": "inferred", "basis": "Synthetic fixture", "source_refs": ["plan.png:fixture"]}
+        for target, thickness in (("footprint:*", .2), ("partition:*", .1))]
+    return value
+
+
+def workspace(path):
+    (path / "images").mkdir(parents=True, exist_ok=True)
+    image = path / "images/plan.png"
+    Image.new("RGB", (120, 120), "white").save(image)
+    (path / "inputs.json").write_text(json.dumps({"images": {"plan.png": {
+        "size": [120, 120], "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}}}), encoding="utf-8")
+    return path
 
 
 class ScopeTrial:
@@ -52,6 +70,8 @@ class ScopeTrial:
 def _warning():
     return topology_issues([{
         "plan_sha256": "a" * 64,
+        "reading_geometry_ready": True,
+        "topology_dividers": {"P1": [[60, 10], [60, 110]]},
         "drawing_differences": {"items": [{
             "type": "unsupported_open_separator",
             "divider": "P1",
@@ -73,16 +93,15 @@ def _decision(warning, choice):
     }
 
 
-def test_failed_compiled_malformed_plan_can_repair_missing_id():
+def test_failed_compiled_malformed_plan_can_repair_missing_id(tmp_path):
     async def scenario():
-        tools = Tools(ready=False)
-        trial = PlanTrial(tools, image_name="plan.png")
+        tools = Tools()
+        trial = PlanTrial(tools, image_name="plan.png", workspace=workspace(tmp_path), receipt_directory=tmp_path / "receipts")
         malformed = plan()
         del malformed["openings"][0]["id"]
         first = await trial.run(malformed)
         assert first["status"] == "failed" and first["compiled_numeric_plan_sha256"] is None
         assert first["format_errors"] and tools.calls == []
-        tools.ready = True
         repaired = await trial.run(plan())
         assert repaired["status"] == "passed"
         assert repaired["changes"] == [] and repaired["base_plan_sha256"] is None
@@ -160,9 +179,9 @@ def test_opening_can_span_collinear_segments_of_one_declared_wall():
     assert opening_hosts(value)[0]["wall"] == "P1"
 
 
-def test_precompile_failure_does_not_become_a_rework_base():
+def test_unresolved_profile_remains_editable_without_becoming_accepted_geometry(tmp_path):
     async def scenario():
-        trial = PlanTrial(Tools(), image_name="plan.png")
+        trial = PlanTrial(Tools(), image_name="plan.png", workspace=workspace(tmp_path), receipt_directory=tmp_path / "receipts")
         unresolved = plan()
         unresolved["x_anchors"][0][0] = {"profile": "profile_999", "candidate": "C01"}
         first = await trial.run(unresolved)
@@ -170,7 +189,8 @@ def test_precompile_failure_does_not_become_a_rework_base():
 
         repaired = await trial.run(plan())
         assert repaired["status"] == "passed"
-        assert repaired["base_plan_sha256"] is None and repaired["changes"] == []
+        assert repaired["base_plan_sha256"] == first["plan_sha256"]
+        assert trial.require_success(plan())["plan_sha256"] == repaired["plan_sha256"]
 
     asyncio.run(scenario())
 
@@ -271,7 +291,7 @@ def test_trial_bad_schema_and_nested_business_name_return_repairable_envelopes()
         assert rejected["isError"] is True
         assert rejected["structuredContent"]["status"] == "rejected"
         assert "invalid plan schema" in rejected["structuredContent"]["reason"]
-        assert trial.calls == [(wrong_plan, {})]
+        assert trial.calls == [({**wrong_plan, "reading_type": "plan"}, {})]
 
     asyncio.run(scenario())
 

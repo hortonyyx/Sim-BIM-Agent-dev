@@ -20,10 +20,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from PIL import Image
 
-from scripts.tool_scripts.run_bim_agent import (Toolkit, cost_receipt_summary, digest,
-                                                prepare_detail_observation,
-                                                review_detail_observation,
-                                                terminate_subscription)
+from scripts.tool_scripts.run_bim_agent import Toolkit, digest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +33,7 @@ def _run_with_one_image(tmp_path: Path) -> Path:
     images.mkdir(parents=True)
     path = images / "plan.png"
     Image.new("RGB", (12, 8), "white").save(path)
-    run.joinpath("inputs.json").write_text(json.dumps({
+    run.joinpath("inputs.json").write_text(json.dumps({"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24,
         "images": {"plan.png": {"size": [12, 8], "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}},
         "scope": "synthetic two-room test input",
         "only_input": "original image bytes and user scope; no GT/history",
@@ -47,7 +44,7 @@ def _run_with_one_image(tmp_path: Path) -> Path:
 def _add_image(run: Path, name: str, color: str = "white") -> None:
     path = run / "images" / name
     Image.new("RGB", (12, 8), color).save(path)
-    manifest = json.loads((run / "inputs.json").read_text())
+    manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
     manifest["images"][name] = {"size": [12, 8], "sha256": digest(path)}
     (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -105,7 +102,7 @@ def _full_delivery_result(run, result):
     if not reply.get("response_compacted"):
         return reply
     assert reply["full_delivery_report"] == "delivery.json"
-    full = json.loads((run / reply["full_delivery_report"]).read_text())
+    full = json.loads((run / reply["full_delivery_report"]).read_text(encoding="utf-8"))
     assert (full["candidate"], full["source_model_sha256"]) == (reply["candidate"], reply["source_model_sha256"])
     return full
 
@@ -126,8 +123,9 @@ def test_assemble_plans_stdio_keeps_both_floors_and_binds_originals(tmp_path):
                 result = _json_result(await session.call_tool('build_plan_bim',
                     dict(image=image, plan_json=json.dumps(plan))))
                 assert result['source_geometry_ready']
+                draft = _json_result(await session.call_tool("inspect_plan_draft", {"draft_id": f"draft_{i:03d}"}))
                 rows.append(dict(draft_id=f'draft_{i:03d}',
-                    expected_plan_sha256=result['plan_input']['plan_sha256'],
+                    expected_plan_sha256=draft['plan_sha256'],
                     floor_id=f'F{i}', z_floor=3*(i-1), evidence='synthetic storey annotation'))
             stale = [dict(r) for r in rows]
             stale[1]['expected_plan_sha256'] = '0'*64
@@ -135,13 +133,16 @@ def test_assemble_plans_stdio_keeps_both_floors_and_binds_originals(tmp_path):
             result = _json_result(await session.call_tool('assemble_plan_bim', {'floors_json':json.dumps(rows)}))
             assert result['source_geometry_ready']
             candidate = result['candidate']
-            source = json.loads((run/candidate/'source_model.json').read_text())
+            source = json.loads((run/candidate/'source_model.json').read_text(encoding="utf-8"))
             assert {f['id'] for f in source['floors']} == {'F1', 'F2'}
             assert len(source['spaces']) == 4 and len(source['connections']) == 2
             doors = {o['id']:o for o in source['openings']}
             assert {v[2] for v in doors['F2:door']['vertices']} == {3,5}
             binding = source['generation']['provenance']['plan_assembly']
             assert digest(run/binding['file']) == binding['sha256']
+            raw_report = (run / result['details_file']).read_bytes()
+            assert hashlib.sha256(raw_report).hexdigest() == result['details_sha256']
+            result = json.loads(raw_report)
             mapped = {r['floor_id'] for r in result['source_image_projections']}
             assert {'F1','F2'} <= mapped
             assert {r['floor_id'] for r in result['source_plan_views']} == {'F1','F2'}
@@ -179,7 +180,7 @@ def test_space_relation_stdio_uses_current_source_and_registered_calibration(tmp
             assert checked['conflict_count'] == 1
             assert checked['observations'][0]['direct_connections'][0]['opening_id'] == 'door'
             assert checked['calibration_sha256'] == digest(run/checked['calibration_file'])
-            assert json.loads((run/checked['review_file']).read_text()) == checked
+            assert json.loads((run/checked['review_file']).read_text(encoding="utf-8")) == checked
             assert path.read_bytes() == unchanged
             first_delivery = _full_delivery_result(run, await session.call_tool('finish_bim', {'candidate':candidate}))
             assert first_delivery['space_relation_review']['conflict_count'] == 1
@@ -215,7 +216,7 @@ def test_plan_wall_support_stdio_reads_saved_paths_and_preserves_source(tmp_path
         for a, b in ((5, 19), (30, 44), (60, 70)):
             draw.line((20, a, 20, b), fill=(128, 128, 128))
         picture.save(run/'images/plan.png')
-        manifest = json.loads((run/'inputs.json').read_text())
+        manifest = json.loads((run/'inputs.json').read_text(encoding="utf-8"))
         manifest['images']['plan.png'] = dict(size=[80, 80], sha256=digest(run/'images/plan.png'))
         (run/'inputs.json').write_text(json.dumps(manifest))
         plan = dict(floor_id='F1', z_floor=0, ceiling_height=3,
@@ -244,7 +245,7 @@ def test_plan_wall_support_stdio_reads_saved_paths_and_preserves_source(tmp_path
             data = json.loads(second.content[1].text)
             assert len(data['review_intervals'][0]['proposed_adjacent_space_ids']) == 2
             assert data['segments'][0]['declared_opening_sample_count'] == 10
-            assert json.loads((run/data['support_record']).read_text()) == data
+            assert json.loads((run/data['support_record']).read_text(encoding="utf-8")) == data
             assert digest(run/data['support_image']) == data['support_image_sha256']
             with Image.open(io.BytesIO(base64.b64decode(second.content[0].data))) as returned:
                 assert returned.crop((0,0,80,80)).tobytes() == picture.tobytes()
@@ -274,7 +275,7 @@ def test_facade_comparison_stdio_binds_originals_without_building(tmp_path, read
             assert first["direction_separation"]["lower_residual_direction"] == "elevation_reverse"
             assert first["original_images"]["plan"]["sha256"] == digest(run / "images/plan.png")
             assert first["observations"]["plan"]["openings"][0]["kind"] == "door"
-            assert json.loads((run / first["record"]).read_text()) == first
+            assert json.loads((run / first["record"]).read_text(encoding="utf-8")) == first
             assert first["schema_version"] == "facade_span_direction_probe_v2"
             assert first["direction_separation"]["absolute_fit_status"] == "not_evaluated"
             second = _json_result(await session.call_tool("compare_facade_spans", args))
@@ -303,7 +304,7 @@ def test_facade_comparison_adopts_actual_profile_candidates(tmp_path, readonly):
     async def scenario():
         run = _run_with_one_image(tmp_path)
         _add_image(run, "east.png")
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         for name in ("plan.png", "east.png"):
             path = run / "images" / name
             pic = Image.open(path).convert("RGB")
@@ -343,7 +344,7 @@ def test_facade_comparison_adopts_actual_profile_candidates(tmp_path, readonly):
             assert result["observations"]["plan"]["openings"][0]["pixels"] == [1, 2]
             assert result["observations"]["elevation"]["openings"][0]["pixels"] == [9, 10]
             assert len(result["measurement_bindings"]) == 6
-            assert json.loads((run / result["record"]).read_text()) == result
+            assert json.loads((run / result["record"]).read_text(encoding="utf-8")) == result
             raw["plan"]["openings"][0]["pixels"][0] = ref(2)
             rejected = await session.call_tool("compare_facade_spans", {**args, "observations_json": json.dumps(raw)})
             assert rejected.isError
@@ -408,7 +409,7 @@ def test_readonly_stdio_inventory_hash_and_tool_boundary(tmp_path):
         run = _run_with_one_image(tmp_path)
         async with _server_session(run, readonly=True) as session:
             tools = {tool.name for tool in (await session.list_tools()).tools}
-            assert {"inputs", "view_image", "pixel_profile", "view_pixel_profile",
+            assert {"inputs", "view_image", "view_pixel_profile",
                     "view_pixel_region_overview", "map_pixels", "map_dimension_chain"} <= tools
             assert "build_bim" not in tools and "review_detail" not in tools
             assert "revise_bim" not in tools and "inspect_candidate" not in tools
@@ -451,7 +452,7 @@ def test_view_image_opt_in_display_scale_preserves_original_pixels_and_caps_outp
         ])
         pattern_path = run / "images" / "pattern.png"
         pattern.save(pattern_path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["pattern.png"] = {
             "size": list(pattern.size), "sha256": digest(pattern_path)}
         (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -481,7 +482,7 @@ def test_view_image_opt_in_display_scale_preserves_original_pixels_and_caps_outp
         large = Image.new("RGB", (400, 100), "white")
         large_path = run / "images" / "large.png"
         large.save(large_path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["large.png"] = {"size": list(large.size), "sha256": digest(large_path)}
         (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
         async with _server_session(run, readonly=True) as session:
@@ -498,7 +499,7 @@ def test_view_image_opt_in_display_scale_preserves_original_pixels_and_caps_outp
 
 @pytest.mark.parametrize("axis", ["x", "y"])
 @pytest.mark.parametrize("readonly", [True, False])
-def test_pixel_profile_preserves_equal_and_weaker_peaks_inside_connected_ink(tmp_path, axis, readonly):
+def test_view_profile_preserves_equal_and_weaker_peaks_inside_connected_ink(tmp_path, axis, readonly):
     async def scenario():
         run = _run_with_one_image(tmp_path)
         path = run / "images/plan.png"
@@ -515,25 +516,25 @@ def test_pixel_profile_preserves_equal_and_weaker_peaks_inside_connected_ink(tmp
             pic.putpixel((9, across) if axis == "x" else (across, 9), (0, 0, 0))
         pic.save(path)
         before = digest(path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["plan.png"].update(size=list(pic.size), sha256=before)
         (run / "inputs.json").write_text(json.dumps(manifest))
         box = [3, 4, 15, 11] if axis == "x" else [4, 3, 11, 15]
         async with _server_session(run, readonly=readonly) as session:
-            reply = await session.call_tool("pixel_profile", dict(
-                name="plan.png", box=box, axis=axis, rgb=[0, 0, 0], tolerance=0))
+            reply = await session.call_tool("view_pixel_profile", dict(
+                name="plan.png", box=box, axis=axis, rgb=[0, 0, 0], tolerance=0, include_image=False))
             result = _json_result(reply)
-            assert result["runs"] == [{"pixels": [4, 13], "peak": 6, "max_count": 5,
+            result = await _profile_full_report(session, result)
+            assert result["positive_support_runs"] == [{"pixels": [4, 13], "peak": 6, "max_count": 5,
                                        "support_peaks": [{"pixels": [6, 7], "count": 5},
                                                          {"pixels": [9, 9], "count": 3},
                                                          {"pixels": [11, 11], "count": 5}]}]
             assert result["matching_pixels"] == 24
             assert result["support_length"] == 7
             assert result["name"] == "plan.png" and result["box_original_pixels"] == box
-            assert "not measured dimension" in result["evidence_note"]
-            assert "including weaker peaks" in result["evidence_note"]
+            assert "do not prove" in result["evidence_note"]
         assert digest(path) == before
-        record = json.loads((run / "tools.jsonl").read_text().splitlines()[-1])
+        record = json.loads((run / "tools.jsonl").read_text(encoding="utf-8").splitlines()[-1])
         assert record["data"]["result"] == result and record["readonly"] is readonly
 
     asyncio.run(scenario())
@@ -556,7 +557,7 @@ def test_view_pixel_profile_filters_sparse_strokes_and_reports_unbridged_peak_su
         for x in (*range(2, 8), 10):
             pic.putpixel((x, 7), (0, 0, 0))
         pic.save(path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["plan.png"]["sha256"] = digest(path)
         (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -584,7 +585,7 @@ def test_view_pixel_profile_filters_sparse_strokes_and_reports_unbridged_peak_su
             assert (run / result["profile_image"]).is_file()
             assert (run / result["profile_record"]).is_file()
             assert digest(run / result["profile_image"]) == result["profile_image_sha256"]
-            assert json.loads((run / result["profile_record"]).read_text()) == result
+            assert json.loads((run / result["profile_record"]).read_text(encoding="utf-8")) == result
             assert "do not prove" in result["evidence_note"]
 
             horizontal = await session.call_tool("view_pixel_profile", {
@@ -599,7 +600,7 @@ def test_view_pixel_profile_filters_sparse_strokes_and_reports_unbridged_peak_su
             }]
             assert horizontal_result["box_original_pixels"] == [2, 1, 11, 8]
             assert horizontal_result["panel_layout"]["mask_panel_combined_pixels"][0] == 12
-        records = [json.loads(line) for line in (run / "tools.jsonl").read_text().splitlines()]
+        records = [json.loads(line) for line in (run / "tools.jsonl").read_text(encoding="utf-8").splitlines()]
         assert records[-1]["action"] == "view_pixel_profile"
         assert records[-1]["readonly"] is True
 
@@ -621,7 +622,7 @@ def test_profile_cross_axis_separates_long_traces_from_junction_peak(tmp_path, r
             pic.putpixel((19, y), (128, 128, 128))
         pic.save(path)
         before = digest(path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["plan.png"].update(size=list(pic.size), sha256=before)
         (run / "inputs.json").write_text(json.dumps(manifest))
         common = dict(name="plan.png", box=[4, 5, 20, 15], rgb=[128, 128, 128],
@@ -656,7 +657,7 @@ def test_profile_cross_axis_separates_long_traces_from_junction_peak(tmp_path, r
             assert other["cross_axis_profile"]["threshold_excluded_support"] == data["threshold_excluded_support"]
             assert other["cross_axis_profile"]["runs"] == [
                 {k: v for k, v in row.items() if k != "id"} for row in data["candidates"]]
-            assert json.loads((run / data["profile_record"]).read_text()) == data
+            assert json.loads((run / data["profile_record"]).read_text(encoding="utf-8")) == data
         assert digest(path) == before
     asyncio.run(scenario())
 
@@ -671,7 +672,7 @@ def test_empty_profile_explains_color_mismatch_and_filtered_support(tmp_path, re
             pic.putpixel((x, 3), (128, 128, 128))
         pic.save(path)
         before = digest(path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["plan.png"]["sha256"] = before
         (run / "inputs.json").write_text(json.dumps(manifest))
         common = dict(name="plan.png", box=[0, 0, 12, 8], axis="y", tolerance=0)
@@ -688,7 +689,7 @@ def test_empty_profile_explains_color_mismatch_and_filtered_support(tmp_path, re
             assert diagnostic["frequent_observed_colors"] == [
                 {"rgb": [0, 0, 0], "pixel_count": 88},
                 {"rgb": [128, 128, 128], "pixel_count": 8}]
-            assert json.loads((run / data["profile_record"]).read_text()) == data
+            assert json.loads((run / data["profile_record"]).read_text(encoding="utf-8")) == data
             strict = await session.call_tool("view_pixel_profile", {
                 **common, "rgb": diagnostic["nearest_observed_color"]["rgb"], "min_fraction": 1})
             data = json.loads(strict.content[1].text)
@@ -713,9 +714,9 @@ def test_empty_profile_explains_color_mismatch_and_filtered_support(tmp_path, re
             assert unfiltered_data["minimum_count"] == 1
             assert unfiltered_data["threshold_excluded_support"]["intervals"] == []
             assert unfiltered_data["cross_axis_profile"]["threshold_excluded_support"]["intervals"] == []
-            plain = _json_result(await session.call_tool("pixel_profile", {
-                **common, "rgb": [255, 255, 255]}))
-            assert plain["runs"] == []
+            plain = _json_result(await session.call_tool("view_pixel_profile", {
+                **common, "rgb": [255, 255, 255], "include_image": False}))
+            assert plain["candidates"] == []
             assert plain["empty_filter_diagnostics"]["reason"] == "no_pixels_match_requested_color"
         assert digest(path) == before
 
@@ -741,7 +742,7 @@ def test_source_elevation_stdio_returns_actual_source_and_changed_height(tmp_pat
             actual = Image.open(io.BytesIO(base64.b64decode(first.content[0].data))).convert("RGB")
             saved = Image.open(run / metadata["elevation_image"]).convert("RGB")
             assert actual.size == saved.size and ImageChops.difference(actual, saved).getbbox() is None
-            source = json.loads((run / built["candidate"] / "source_model.json").read_text())
+            source = json.loads((run / built["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             assert metadata["source_model_sha256"] == source["source_model_sha256"]
             assert "South" == metadata["facade"]
             protected = digest(run / built["candidate"] / "source_model.json")
@@ -759,7 +760,7 @@ def test_source_elevation_stdio_returns_actual_source_and_changed_height(tmp_pat
             assert not pair_meta["original_view"]["coordinate_grid"]["shown"]
             reference = Toolkit(run).read_image_view(pair_meta["original_view"]["view_id"])
             assert reference["record"]["returned_png_sha256"] == hashlib.sha256(base64.b64decode(paired.content[0].data)).hexdigest()
-            assert json.loads((run / pair_meta["review_file"]).read_text()) == pair_meta
+            assert json.loads((run / pair_meta["review_file"]).read_text(encoding="utf-8")) == pair_meta
             assert digest(run / built["candidate"] / "source_model.json") == protected
             assert pair_meta["opening_heights"][0]["above_floor_m"] == [0.4, 2.2]
             missing = await session.call_tool("view_elevation_candidate", {
@@ -775,7 +776,7 @@ def test_source_elevation_stdio_returns_actual_source_and_changed_height(tmp_pat
             assert updated["source_model_sha256"] != metadata["source_model_sha256"]
             assert first.content[0].data != second.content[0].data
             assert updated["opening_heights"][0]["absolute_z_m"] == [1, 2.6]
-            assert json.loads((run / pair_meta["review_file"]).read_text()) == pair_meta
+            assert json.loads((run / pair_meta["review_file"]).read_text(encoding="utf-8")) == pair_meta
             assert "facade" in _error_text(await session.call_tool("view_elevation_candidate", {
                 "candidate":revised["candidate"], "facade":"../South"}))
 
@@ -789,7 +790,7 @@ def test_calibrated_elevation_stdio_preserves_inputs_and_reuses_original_frame(t
         run = _run_with_one_image(tmp_path)
         image_path = run / "images/plan.png"
         Image.new("RGB", (1800, 1800), "black").save(image_path)
-        manifest = json.loads((run / "inputs.json").read_text())
+        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
         manifest["images"]["plan.png"] = {"size": [1800, 1800], "sha256": digest(image_path)}
         (run / "inputs.json").write_text(json.dumps(manifest))
         proposal = json.loads(_two_floor_proposal())
@@ -831,7 +832,7 @@ def test_calibrated_elevation_stdio_preserves_inputs_and_reuses_original_frame(t
             assert second["source_model_sha256"] != metadata["source_model_sha256"]
             assert second["elevation_image"] != metadata["elevation_image"]
             assert digest(saved_path) == saved_hash
-            assert json.loads((run / metadata["review_file"]).read_text()) == metadata
+            assert json.loads((run / metadata["review_file"]).read_text(encoding="utf-8")) == metadata
             assert all(digest(p) == h for p, h in protected.items())
 
     asyncio.run(scenario())
@@ -842,7 +843,7 @@ def test_room_use_stdio_updates_function_and_retains_physical_source(tmp_path):
         run = _run_with_one_image(tmp_path)
         async with _server_session(run, readonly=False) as session:
             built = _json_result(await session.call_tool("build_bim", {"proposal_json": _two_floor_proposal()}))
-            original = json.loads((run / built["candidate"] / "source_model.json").read_text())
+            original = json.loads((run / built["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             assert built["room_use_review"]["summary"]["recorded_count"] == 0
             assert built["room_use_review"]["summary"]["unrecorded_count"] == len(original["spaces"])
             assert "next_action" not in built["room_use_review"]
@@ -852,7 +853,7 @@ def test_room_use_stdio_updates_function_and_retains_physical_source(tmp_path):
                     "basis": "inferred", "assumptions": ["No room label; furniture-based interpretation"],
                     "source_refs": ["synthetic.png: table at [10,20,30,40]"], "reason": "Review function",
                 }])}))
-            updated = json.loads((run / revised["candidate"] / "source_model.json").read_text())
+            updated = json.loads((run / revised["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             room = next(s for s in updated["spaces"] if s["id"] == "left")
             assert room["role_evidence"]["basis"] == "inferred"
             assert revised["room_use_review"]["summary"]["recorded_count"] == 1
@@ -862,7 +863,7 @@ def test_room_use_stdio_updates_function_and_retains_physical_source(tmp_path):
             assert "Conference-Meeting-Multipurpose" in updated["public_names"]["spaces"]["left"]
             for key in ("floors", "boundaries", "openings", "connections", "opening_hosts"):
                 assert updated[key] == original[key]
-            assert original == json.loads((run / built["candidate"] / "source_model.json").read_text())
+            assert original == json.loads((run / built["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             finished = _json_result(await session.call_tool("finish_bim", {"candidate": revised["candidate"]}))
             inspected = _json_result(await session.call_tool("inspect_candidate", {"candidate": revised["candidate"]}))
             assert inspected["room_use_review"] == finished["room_use_review"]
@@ -898,7 +899,7 @@ def test_wall_reference_stdio_calculation_persistence_and_feedback(tmp_path):
             assert not result.isError
             assert any(c.type == "image" for c in result.content)
             revised = _json_result(result)
-            source = json.loads((run / revised["candidate"] / "source_model.json").read_text())
+            source = json.loads((run / revised["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             assert len(source["wall_references"]) == 2
             assert source["wall_dimension_report"]["dimensions"][0]["raw_length_m"] == 2.76
             projection = revised["source_image_projections"][0]
@@ -908,7 +909,7 @@ def test_wall_reference_stdio_calculation_persistence_and_feedback(tmp_path):
             assert {p["wall_id"] for p in evidence["endpoints"]} == {"west", "shared"}
             delivered = _full_delivery_result(run, await session.call_tool("finish_bim", {"candidate": revised["candidate"]}))
             assert delivered["source_image_feedback"]["current_source_projections"][0]["wall_evidence_projection"] == evidence
-            assert "尺寸证据与所引用墙段的位置对照" in (run / "delivery.html").read_text()
+            assert "尺寸证据与所引用墙段的位置对照" in (run / "delivery.html").read_text(encoding="utf-8")
             d["end"]["pixel"] = [12, 2]
             assert "outside original image" in _error_text(await session.call_tool("check_wall_dimensions", {
                 "candidate": candidate, "references_json": json.dumps(refs), "dimensions_json": json.dumps([d])}))
@@ -954,7 +955,7 @@ def test_upper_floor_opening_diagnostic_reaches_agent_and_preserves_declared_doo
             assert revised["source_geometry_ready"]
             assert revised["counts"]["unbuilt_openings"] == 0
             assert revised["counts"]["connections"] == 2
-            source = json.loads((run / revised["candidate"] / "source_model.json").read_text())
+            source = json.loads((run / revised["candidate"] / "source_model.json").read_text(encoding="utf-8"))
             assert {o["id"] for o in source["openings"]} == {"door", "upper_door"}
 
     asyncio.run(scenario())
@@ -980,7 +981,7 @@ def test_delivery_keeps_numeric_contradiction_and_calibration_warning_with_empty
     assert result["generation"]["unresolved"] == []
     assert result["wall_dimension_report"]["findings"][0]["code"] == "same_wall_endpoint_order"
     assert result["source_image_feedback"]["current_source_projections"][0]["calibration_warnings"]
-    page = (run / "delivery.html").read_text()
+    page = (run / "delivery.html").read_text(encoding="utf-8")
     assert "-0.48" in page and ("cross-axis" in page.lower() or "disagree" in page)
     # A new candidate replaces only the evidence, not the source objects.
     d["start"]["side"], d["end"]["side"] = "negative", "positive"
@@ -993,194 +994,14 @@ def test_delivery_keeps_numeric_contradiction_and_calibration_warning_with_empty
     assert len(current["source_image_feedback"]["old_source_projections"]) == 1
 
 
-def test_detail_review_uses_isolated_image_only_workspace_and_parent_receipt(tmp_path):
-    run = _run_with_one_image(tmp_path)
-    _add_image(run, "unselected.png", "black")
-    manifest = json.loads((run / "inputs.json").read_text())
-    manifest.update(scope="PARENT_SCOPE_MUST_NOT_LEAK", seed={"secret":"PARENT_SEED_MUST_NOT_LEAK"},
-                    historical_candidate="PARENT_HISTORY_MUST_NOT_LEAK")
-    (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (run / "candidate_01").mkdir()
-    (run / "candidate_01" / "proposal.json").write_text("PARENT_CANDIDATE_MUST_NOT_LEAK")
-    calls = []
-
-    def fake_subscription(mcp_run, prompt, **kwargs):
-        calls.append((mcp_run, prompt, kwargs))
-        assert kwargs["model"] == "haiku" and kwargs["readonly"]
-        assert kwargs["name"] == "detail_01"
-        assert kwargs["log_run"] == run
-        assert kwargs["receipt_context"]["observation_source"]["run"] == "detail_01"
-        return {"actual_model":"offline-haiku", "returncode":0,
-                "result":{"is_error":False, "result":"observed mark", "total_cost_usd":0.75}}
-
-    response = review_detail_observation(Toolkit(run), "What mark is visible at [1,2,3,4]?", ["plan.png"],
-                                         invoke=fake_subscription)
-    child, prompt, _ = calls[0]
-    assert child == run / "detail_01"
-    assert prompt == "Images: ['plan.png']\nQuestion: What mark is visible at [1,2,3,4]?"
-    assert response["completed"] and response["observation_source"]["input_sha256"] == digest(child / "inputs.json")
-    assert response["observation_source"]["images"]["plan.png"] == digest(child / "images/plan.png")
-    assert set(json.loads((child / "inputs.json").read_text())["images"]) == {"plan.png"}
-    assert (child / "question.txt").read_text() == "What mark is visible at [1,2,3,4]?"
-    assert not (child / "images/unselected.png").exists()
-    child_text = "\n".join(path.read_text(errors="ignore") for path in child.rglob("*") if path.is_file())
-    for secret in ("PARENT_SCOPE_MUST_NOT_LEAK", "PARENT_SEED_MUST_NOT_LEAK",
-                   "PARENT_HISTORY_MUST_NOT_LEAK", "PARENT_CANDIDATE_MUST_NOT_LEAK"):
-        assert secret not in child_text
-
-    async def readonly_boundary():
-        async with _server_session(child, readonly=True) as session:
-            tools = {tool.name for tool in (await session.list_tools()).tools}
-            assert "review_detail" not in tools and "build_bim" not in tools
-            inventory = _json_result(await session.call_tool("inputs", {}))
-            assert set(inventory["images"]) == {"plan.png"}
-            assert inventory["images"]["plan.png"]["sha256"] == digest(child / "images/plan.png")
-
-    asyncio.run(readonly_boundary())
-    # subscription writes detail receipts in the parent, so the root summary sees
-    # this invocation once and does not recurse into the isolated child workspace.
-    (run / "agent_receipt.json").write_text(json.dumps({"result":{"total_cost_usd":0.5}}))
-    (run / "detail_01_receipt.json").write_text(json.dumps({"result":{"total_cost_usd":0.75}}))
-    receipts, costs = cost_receipt_summary(run)
-    assert len(receipts) == 2 and costs == {"estimated_cost_usd":1.25,
-                                             "cost_receipts_complete":True,
-                                             "reported_partial_cost_usd":1.25}
 
 
-def test_detail_review_refuses_budget_exhaustion_or_too_little_time_without_calling(tmp_path):
-    run = _run_with_one_image(tmp_path)
-    manifest = json.loads((run / "inputs.json").read_text())
-    manifest["deadline_epoch"] = time.time() + 50
-    (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
-    invoked = False
-
-    def fake_subscription(*args, **kwargs):
-        nonlocal invoked
-        invoked = True
-        return {}
-
-    response = review_detail_observation(Toolkit(run), "Check the visible mark.", ["plan.png"],
-                                         invoke=fake_subscription)
-    assert response["completed"] is False and "insufficient remaining budget" in response["error"]
-    assert not invoked and not (run / "detail_01").exists()
-
-    manifest.pop("deadline_epoch")
-    (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for number in (1, 2):
-        (run / f"detail_{number:02d}_request.json").write_text("{}")
-    response = review_detail_observation(Toolkit(run), "Check the visible mark.", ["plan.png"],
-                                         invoke=fake_subscription)
-    assert response == {"error":"local review budget exhausted", "completed":False}
-    assert not invoked
 
 
-def test_detail_review_passes_bounded_budget_into_hashed_readonly_manifest(tmp_path):
-    run = _run_with_one_image(tmp_path)
-    parent_deadline = time.time() + 180
-    manifest = json.loads((run / "inputs.json").read_text())
-    manifest["deadline_epoch"] = parent_deadline
-    (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
-    calls = []
-
-    def fake_subscription(child, prompt, **kwargs):
-        calls.append((child, prompt, kwargs))
-        child_manifest = json.loads((child / "inputs.json").read_text())
-        assert abs(child_manifest["deadline_epoch"] - (
-            parent_deadline - 45)) < 0.001
-        assert kwargs["timeout"] <= 135
-        return {"actual_model": "offline-haiku", "returncode": 0,
-                "result": {"is_error": False, "result": "one observed mark"}}
-
-    response = review_detail_observation(Toolkit(run), "Check this one mark.", ["plan.png"],
-                                         invoke=fake_subscription)
-    child, _, kwargs = calls[0]
-    assert response["observation_source"]["input_sha256"] == digest(child / "inputs.json")
-    assert kwargs["receipt_context"]["observation_source"] == response["observation_source"]
-
-    async def readonly_time_is_visible():
-        async with _server_session(child, readonly=True) as session:
-            inventory = _json_result(await session.call_tool("inputs", {}))
-            assert inventory["deadline_epoch"] == json.loads(
-                (child / "inputs.json").read_text())["deadline_epoch"]
-            assert isinstance(inventory["remaining_seconds"], int)
-            viewed = await session.call_tool("view_image", {"name": "plan.png"})
-            assert isinstance(json.loads(viewed.content[1].text)["remaining_seconds"], int)
-
-    asyncio.run(readonly_time_is_visible())
-
-    legacy_child, legacy_hash = prepare_detail_observation(
-        Toolkit(run), "Legacy direct setup remains untimed.", ["plan.png"], "detail_02")
-    assert "deadline_epoch" not in json.loads((legacy_child / "inputs.json").read_text())
-    assert legacy_hash == digest(legacy_child / "inputs.json")
-
-    long_run = _run_with_one_image(tmp_path / "long")
-    long_manifest = json.loads((long_run / "inputs.json").read_text())
-    long_manifest["deadline_epoch"] = time.time() + 900
-    (long_run / "inputs.json").write_text(json.dumps(long_manifest), encoding="utf-8")
-    long_calls = []
-
-    def long_subscription(child, prompt, **kwargs):
-        long_calls.append((child, kwargs))
-        return {"returncode": 0, "result": {"is_error": False, "result": "mark"}}
-
-    review_detail_observation(Toolkit(long_run), "Check this one mark.", ["plan.png"],
-                              invoke=long_subscription)
-    long_child, long_kwargs = long_calls[0]
-    visible_deadline = json.loads((long_child / "inputs.json").read_text())["deadline_epoch"]
-    assert 0 < visible_deadline - time.time() <= 240
-    assert 0 < long_kwargs["timeout"] <= 240
 
 
-def test_detail_review_keeps_partial_text_but_marks_timeout_or_error_unfinished(tmp_path):
-    run = _run_with_one_image(tmp_path)
-
-    def interrupted_subscription(*args, **kwargs):
-        return {"timed_out":True, "returncode":1,
-                "result":{"is_error":False, "result":"partial observation"}}
-
-    response = review_detail_observation(Toolkit(run), "Check the visible mark.", ["plan.png"],
-                                         invoke=interrupted_subscription)
-    assert response["result"] == "partial observation"
-    assert response["timed_out"] and response["completed"] is False
-    assert response["is_error"] is False
-
-    empty_run = _run_with_one_image(tmp_path / "empty")
-    response = review_detail_observation(Toolkit(empty_run), "Check the visible mark.", ["plan.png"],
-                                         invoke=lambda *args, **kwargs: {"returncode":1})
-    assert response["result"] == "No completed answer"
-    assert response["is_error"] and response["completed"] is False
 
 
-def test_detail_review_requested_time_limits_worker_without_spending_parent_reserve(tmp_path):
-    import pytest
-
-    run = _run_with_one_image(tmp_path)
-    manifest = json.loads((run / "inputs.json").read_text())
-    manifest["deadline_epoch"] = time.time() + 600
-    (run / "inputs.json").write_text(json.dumps(manifest))
-    calls = []
-
-    def local_worker(child, prompt, **kwargs):
-        calls.append(kwargs)
-        deadline = json.loads((child / "inputs.json").read_text())["deadline_epoch"]
-        assert 0 < deadline - time.time() <= 60
-        assert 0 < kwargs["timeout"] <= 60
-        return {"returncode": 0, "result": {"is_error": False, "result": "local observation"}}
-
-    response = review_detail_observation(Toolkit(run), "Inspect one local mark.", ["plan.png"],
-                                        timeout_seconds=60, invoke=local_worker)
-    assert response["completed"] and len(calls) == 1
-    for invalid in [True, 0, 14, 241, float("nan"), float("inf")]:
-        with pytest.raises(ValueError, match="timeout_seconds"):
-            review_detail_observation(Toolkit(run), "No invocation.", ["plan.png"],
-                                      timeout_seconds=invalid, invoke=local_worker)
-    assert len(calls) == 1
-
-    async def tool_schema_exposes_budget():
-        async with _server_session(run, readonly=False) as session:
-            tool = next(t for t in (await session.list_tools()).tools if t.name == "review_detail")
-            assert tool.inputSchema["properties"]["timeout_seconds"]["default"] == 120
-    asyncio.run(tool_schema_exposes_budget())
 
 
 def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
@@ -1191,7 +1012,7 @@ def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
         assert result["source_plan_errors"] == []
         assert len(result["source_plan_views"]) == 1
         metadata = result["source_plan_views"][0]
-        source = json.loads((run / result["candidate"] / "source_model.json").read_text())
+        source = json.loads((run / result["candidate"] / "source_model.json").read_text(encoding="utf-8"))
         replay, evidence = render_source_plan(source, "F1")
         assert all(metadata[key] == value for key, value in evidence.items())
         images = [block for block in call.content if block.type == "image"]
@@ -1205,13 +1026,13 @@ def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
         run = _run_with_one_image(tmp_path)
         async with _server_session(run, readonly=False) as session:
             tools = {tool.name for tool in (await session.list_tools()).tools}
-            assert "build_bim" in tools and "view_candidate" in tools
+            assert "build_bim" in tools and "inspect_candidate" in tools
             built, initial_pixels = check_automatic_plan(run, await session.call_tool(
                 "build_bim", {"proposal_json": _two_room_proposal()}))
             assert built["candidate"] == "candidate_01"
             assert built["source_geometry_ready"]
             assert built["source_image_projections"] == [] and built["projection_errors"] == []
-            viewed = await session.call_tool("view_candidate", {"candidate": built["candidate"], "floor_id": "F1"})
+            viewed = await session.call_tool("inspect_candidate", {"candidate": built["candidate"], "floor_id": "F1", "include_plan": True})
             assert not viewed.isError
             assert viewed.content[0].type == "image"
             assert viewed.content[0].mimeType == "image/png"
@@ -1235,7 +1056,7 @@ def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
             checked = _json_result(await session.call_tool("check_openings", {
                 "candidate":"candidate_02", "review_json":json.dumps(review)}))
             assert checked["drawing_fidelity"] == "not_evaluated"
-            saved = json.loads((run / checked["review_file"]).read_text())
+            saved = json.loads((run / checked["review_file"]).read_text(encoding="utf-8"))
             assert saved["observations"] == review
             assert (run / "candidate_02/source_model.json").read_bytes() == before
             assert not checked["findings"]
@@ -1266,15 +1087,15 @@ def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
             assert finished["selection_origin"] == "agent_selected"
             assert finished["drawing_fidelity"] == "not_evaluated"
             assert (run / "delivery.html").is_file()
-            assert "逐立面回查范围" in (run / "delivery.html").read_text()
+            assert "逐立面回查范围" in (run / "delivery.html").read_text(encoding="utf-8")
             north_windows = next(s for s in finished["facade_review_scopes"]
                                  if s["floor_id"] == "F1" and s["facade"] == "North" and s["kind"] == "window")
             assert north_windows["review_status"] == "consistent_with_supplied_observations"
             all_windows = next(s for s in finished["opening_review_scopes"]
                                if s["floor_id"] == "F1" and s["kind"] == "window")
             assert all_windows["review_status"] == "partial"
-            assert json.loads((run / "delivery.json").read_text())["source_model_sha256"] == checked["source_model_sha256"]
-            assert json.loads((run / "delivery_selection.json").read_text())["candidate"] == "candidate_02"
+            assert json.loads((run / "delivery.json").read_text(encoding="utf-8"))["source_model_sha256"] == checked["source_model_sha256"]
+            assert json.loads((run / "delivery_selection.json").read_text(encoding="utf-8"))["candidate"] == "candidate_02"
 
             # Move the shared wall through the public MCP path. Both room sides
             # and the door on that wall move, while prior candidates/reviews stay.
@@ -1285,7 +1106,7 @@ def test_normal_stdio_builds_candidate_and_returns_plan_image(tmp_path):
                     "source_refs": ["plan.png: synthetic wall observation"]}])}))
             assert moved["candidate"] == "candidate_03" and moved["source_geometry_ready"]
             assert (run / "candidate_02/source_model.json").read_bytes() == before
-            moved_proposal = json.loads((run / "candidate_03/proposal.json").read_text())
+            moved_proposal = json.loads((run / "candidate_03/proposal.json").read_text(encoding="utf-8"))
             rooms = {cell["id"]: cell for cell in moved_proposal["geometry"]["floors"][0]["cells"]}
             assert rooms["left"]["x"] == [3.5, 6] and rooms["right"]["x"] == [0, 3.5]
             assert moved_proposal["geometry"]["openings"][0]["p1"][0] == 3.5
@@ -1338,7 +1159,7 @@ def test_registered_source_overlay_feedback_reuses_only_explicit_image_floor_cal
                                                         "y": [[7.0, 0.0], [0.0, 4.0]]}
             assert first_projection[0]["reused_calibration"]["registered_by_candidate"] == "seed"
             assert first_projection[0]["source_model_sha256"] == json.loads(
-                (run / "candidate_01/source_model.json").read_text())["source_model_sha256"]
+                (run / "candidate_01/source_model.json").read_text(encoding="utf-8"))["source_model_sha256"]
             first_projection_bytes = (run / first_projection[0]["overlay_image"]).read_bytes()
 
             upper_overlay = await session.call_tool("overlay_candidate", {
@@ -1410,44 +1231,6 @@ def test_registered_source_overlay_feedback_reuses_only_explicit_image_floor_cal
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("effort", [None, "low", "medium"])
-def test_recovery_imports_only_proposal_and_rebuilds_production_checks(tmp_path, monkeypatch, effort):
-    from scripts.tool_scripts import run_bim_agent as runner
-    from src.agent.execution.source_proposal import export_source_proposal
-    source = tmp_path / "old_candidate"
-    proposal = json.loads(_two_room_proposal())
-    export_source_proposal(proposal, source)
-    old_report = source / "report.json"
-    # An old directory may later acquire evaluator output. It must not enter
-    # a generating model's new recovery workspace.
-    old_report.write_text(json.dumps({"independent_evaluation":"DO_NOT_EXPOSE"}))
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.new("RGB", (12, 8), "white").save(images / "plan.png")
-
-    def offline_subscription(run, prompt, **kwargs):
-        assert kwargs["effort"] == effort
-        manifest = json.loads((run / "inputs.json").read_text())
-        assert manifest["input_mode"] == "saved_candidate_recovery"
-        assert json.loads((run / "seed/proposal.json").read_text()) == proposal
-        assert "DO_NOT_EXPOSE" not in (run / "seed/report.json").read_text()
-        assert json.loads((run / "seed/report.json").read_text())["source_geometry_ready"]
-        receipt = {"elapsed_seconds": 0, "result":{"is_error":False,"total_cost_usd":0}}
-        runner.dump(run / "agent_receipt.json", receipt)
-        return receipt
-
-    monkeypatch.setattr(runner, "subscription", offline_subscription)
-    args = SimpleNamespace(images=images, out=tmp_path / "recovery", scope="synthetic recovery",
-                           timeout=30, resume_candidate=source)
-    if effort is not None:
-        args.effort = effort
-    runner.run_experiment(args)
-    assert json.loads(old_report.read_text())["independent_evaluation"] == "DO_NOT_EXPOSE"
-    delivery = json.loads((args.out / "delivery.json").read_text())
-    assert delivery["candidate"] == "seed"
-    assert delivery["selection_origin"] == "latest_saved_fallback_not_agent_selected"
-    assert delivery["drawing_fidelity"] == "not_evaluated"
-    assert "DO_NOT_EXPOSE" not in json.dumps(delivery)
 
 
 def _ended_or_zombie(pid: int) -> bool:
@@ -1478,75 +1261,8 @@ def _ended_or_zombie(pid: int) -> bool:
     return state.startswith("Z")
 
 
-def test_interrupted_run_keeps_candidate_and_labels_delivery_incomplete(tmp_path, monkeypatch):
-    from scripts.tool_scripts import run_bim_agent as runner
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.new("RGB", (12, 8), "white").save(images / "plan.png")
-
-    def interrupted_subscription(run, prompt, **kwargs):
-        runner.Toolkit(run).build(json.loads(_two_room_proposal()))
-        receipt = {"elapsed_seconds": 2, "returncode": 1,
-                   "result":{"is_error":True,"total_cost_usd":0,
-                             "result":"You've hit your session limit"}}
-        runner.dump(run / "agent_receipt.json", receipt)
-        return receipt
-
-    monkeypatch.setattr(runner, "subscription", interrupted_subscription)
-    args = SimpleNamespace(images=images, out=tmp_path / "interrupted", scope="synthetic run",
-                           timeout=30, resume_candidate=None)
-    runner.run_experiment(args)
-    delivery = json.loads((args.out / "delivery.json").read_text())
-    summary = json.loads((args.out / "summary.json").read_text())
-    assert summary["has_viewable_candidate"] and not summary["agent_response_completed"]
-    assert delivery["candidate"] == "candidate_01"
-    assert delivery["generation_status"]["state"] == "interrupted"
-    assert delivery["generation_status"]["error"] == "You've hit your session limit"
-    assert "未正常完成" in (args.out / "delivery.html").read_text()
-    assert (args.out / "candidate_01/viewer.html").exists()
-    assert delivery["drawing_fidelity"] == "not_evaluated"
 
 
-def test_terminate_subscription_stops_parent_and_nested_session_child(tmp_path):
-    child_pid_path = tmp_path / "nested-child.pid"
-    parent_code = """
-from pathlib import Path
-import subprocess
-import sys
-import time
-
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
-Path(sys.argv[1]).write_text(str(child.pid), encoding="utf-8")
-time.sleep(60)
-"""
-    parent = subprocess.Popen([sys.executable, "-c", parent_code, str(child_pid_path)],
-                              start_new_session=True)
-    child_pid = None
-    try:
-        deadline = time.monotonic() + 5
-        while not child_pid_path.exists() and time.monotonic() < deadline:
-            time.sleep(.02)
-        assert child_pid_path.exists(), "nested session did not start"
-        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
-
-        terminate_subscription(parent)
-        assert parent.poll() is not None
-        deadline = time.monotonic() + 3
-        while not _ended_or_zombie(child_pid) and time.monotonic() < deadline:
-            time.sleep(.02)
-        assert _ended_or_zombie(child_pid), "nested sleep process survived termination"
-    finally:
-        for pid in (parent.pid, child_pid):
-            if pid is None or _ended_or_zombie(pid):
-                continue
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                               capture_output=True, timeout=15)
-                continue
-            try:
-                os.killpg(os.getpgid(pid), 9)
-            except ProcessLookupError:
-                pass
 
 
 def test_parametric_tool_stdio_builds_repeated_spaces_and_preserves_compact_plan(tmp_path):
@@ -1614,7 +1330,7 @@ def test_source_build_feedback_and_finish_preserve_same_level_annex_connection(t
             summary_openings = [dict(zip(f['columns'], row))
                 for f in result['opening_inventory']['floors'] for row in f['rows']]
             assert any(len(o.get('floor_ids') or []) == 2 for o in summary_openings)
-            complete = json.loads((run / result['details_file']).read_text())
+            complete = json.loads((run / result['details_file']).read_text(encoding="utf-8"))
             assert any(len(o.get('floor_ids', [])) == 2
                 for f in complete['opening_inventory']['floors'] for o in f['openings'])
             finished=_json_result(await session.call_tool('finish_bim',{'candidate':result['candidate']}))
@@ -1788,7 +1504,9 @@ def test_parametric_function_generic_revision_reports_stale_without_overwriting(
     result = patch_parametric(toolkit, json.dumps([_parametric_function_op('replace', '/instances/0/height', 4)]),
         candidate=generic['candidate'], expected_sha=first['parametric']['plan_sha256'])
     assert 'no exact bound' in result['error']
-    assert _parametric_file_hashes(toolkit.run) == before
+    after = _parametric_file_hashes(toolkit.run)
+    assert all(after[path] == value for path, value in before.items())
+    assert all(path.startswith('tool_reports/parametric_lineage_') for path in after.keys() - before.keys())
 
 
 @pytest.mark.parametrize('artifact', ['source_model.json', 'proposal.json', 'parametric_plan.json',

@@ -1,4 +1,4 @@
-"""D1c draft/edit boundaries, whole-plan feedback and preservation contracts."""
+"""Plan draft edits preserve accepted readings and expose local repair evidence."""
 
 import asyncio
 import copy
@@ -18,21 +18,42 @@ from src.agent.runtime_roles.plan_review import (
 from src.agent.runtime_roles.readers import ReaderTools
 from src.agent.runtime_roles.submission import WALL_REFERENCE_EXAMPLE
 from src.agent.runtime_roles.trial import PlanTrial
-from tests.test_role_readers import Frozen, plan
+from tests.test_role_readers import Frozen, plan as reader_plan
 from tests.test_role_submission import operation
 from tests.test_role_trial import Tools
 
 
+
+def plan():
+    value = reader_plan()
+    value["wall_metadata"] = copy.deepcopy(READER_PLAN_EXAMPLE["wall_metadata"])
+    return value
+
+
+def make_trial(path):
+    image = path / "images/plan.png"
+    image.parent.mkdir(parents=True)
+    Image.new("RGB", (120, 120), "white").save(image)
+    (path / "inputs.json").write_text(json.dumps({"images": {"plan.png": {
+        "size": [120, 120], "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}}}), encoding="utf-8")
+    return PlanTrial(Tools(), image_name="plan.png", workspace=path,
+                     receipt_directory=path / "trial_receipts", grid_step_m=None)
+
+
+def fail_compiler(*args, **kwargs):
+    raise ValueError("synthetic local reading compiler failure")
+
+
 def test_reference_example_is_complete_compilable_and_present_in_reader_guidance():
-    assert plan_format_errors(PLAN_EXAMPLE) == []
+    assert plan_format_errors(READER_PLAN_EXAMPLE) == []
     proposal, _ = compile_plan_partition(PLAN_EXAMPLE, image_size=(12, 8), image_name="plan.png")
     assert proposal
     for stale in ("Even a failed trial is the next rework base", "base_plan_sha256", "finishing budget below"):
         assert stale not in PLAN_READER_GUIDANCE
     normalized_guidance = " ".join(PLAN_READER_GUIDANCE.split())
-    assert "send one complete plan to trial_plan_bim so code can place it" in normalized_guidance
-    assert "Use observed original pixels for ALL actual walls, openings and room seeds" in normalized_guidance
-    assert "Original annotations remain evidence" in normalized_guidance
+    assert "Submit a complete first trial as soon as the structure is represented" in normalized_guidance
+    assert "Points and first anchor values are ORIGINAL pixels" in normalized_guidance
+    assert "Replace synthetic values with observations" in normalized_guidance
 
 
 def test_reader_example_is_the_reference_plan_at_image_scale():
@@ -60,7 +81,7 @@ def test_reader_example_is_the_reference_plan_at_image_scale():
 
 
 def test_world_metre_points_and_invented_room_uses_are_named_before_compiling():
-    # 10-06 probe run2: anchors and footprint in pixels, dividers and openings in metres.
+    # Pixel declarations cannot silently reinterpret divider and opening coordinates as metres.
     value = plan()
     value["x_anchors"] = [[247, 0], [613, 10]]
     value["y_anchors"] = [[878, 0], [150, 20]]
@@ -130,35 +151,37 @@ def test_all_alias_conflicts_and_bad_quantities_are_listed_together():
     assert {row["path"] for row in errors} >= {"plan.z_floor", "plan.openings[0].z[0]", "plan.openings[0].z[1]"}
 
 
-def test_failed_revision_remains_latest_editable_base_without_invalidating_last_success():
+def test_failed_revision_remains_latest_editable_base_without_invalidating_last_success(tmp_path, monkeypatch):
     async def scenario():
-        tools = Tools(ready=False)
-        trial = PlanTrial(tools, image_name="plan.png")
-        first = await trial.run(plan())
-        assert first["source_geometry_ready"] is False
-        assert trial.baseline() == (plan(), first["plan_sha256"])
-        with pytest.raises(ValueError):
-            trial.verified_plan(first["plan_sha256"])
-        second_plan = plan()
-        second_plan["basis"] += " revised calibration"
-        second = await trial.run(second_plan)
-        assert second["base_plan_sha256"] == first["plan_sha256"]
-        fixed_draft = await trial.run(operations=[operation(p2=[10, 41])])
-        assert fixed_draft["base_plan_sha256"] == second["plan_sha256"]
-        assert fixed_draft["status"] == "failed"
-        assert trial.baseline()[1] == fixed_draft["plan_sha256"]
-        tools.ready = True
+        trial = make_trial(tmp_path)
+        with monkeypatch.context() as patch:
+            patch.setattr("src.agent.runtime_roles.plan_reading.build_reading", fail_compiler)
+            first = await trial.run(plan())
+            assert first["reading_geometry_ready"] is False
+            assert trial.baseline() == (plan(), first["plan_sha256"])
+            with pytest.raises(ValueError):
+                trial.verified_plan(first["plan_sha256"])
+            second_plan = plan()
+            second_plan["basis"] += " revised calibration"
+            second = await trial.run(second_plan)
+            assert second["base_plan_sha256"] == first["plan_sha256"]
+            fixed_draft = await trial.run(operations=[operation(p2=[10, 41])])
+            assert fixed_draft["base_plan_sha256"] == second["plan_sha256"]
+            assert fixed_draft["status"] == "failed"
+            assert trial.baseline()[1] == fixed_draft["plan_sha256"]
         third_plan = plan()
         third_plan["basis"] += " final calibration"
         good = await trial.run(third_plan)
-        tools.ready = False
-        bad = await trial.run(operations=[operation(p2=[10, 42])])
+        assert good["status"] == "passed", good
+        with monkeypatch.context() as patch:
+            patch.setattr("src.agent.runtime_roles.plan_reading.build_reading", fail_compiler)
+            bad = await trial.run(operations=[operation(p2=[10, 42])])
         assert bad["status"] == "failed" and bad["phase"] == "operations"
         assert trial.baseline()[1] == bad["plan_sha256"]
         assert trial.verified_plan(good["plan_sha256"])[0] == third_plan
         assert trial.read_draft()["last_passed_plan_sha256"] == good["plan_sha256"]
-        tools.ready = True
         repaired = await trial.run(operations=[operation(p2=[10, 41])])
+        assert repaired["status"] == "passed", repaired
         assert repaired["base_plan_sha256"] == bad["plan_sha256"]
         assert repaired["changes"][0]["before"]["p2"] == [10, 42]
         assert repaired["plan_revision"]["unchanged_ids"]["partitions"] == ["P1"]
@@ -198,11 +221,11 @@ def test_role_tool_catalog_removes_manual_bookkeeping_and_accepts_only_one_mode(
     asyncio.run(scenario())
 
 
-def test_cross_task_operations_only_touch_named_targets_and_continue_from_new_baseline():
+def test_cross_task_operations_only_touch_named_targets_and_continue_from_new_baseline(tmp_path):
     async def scenario():
-        prior = PlanTrial(Tools(), image_name="plan.png")
+        prior = make_trial(tmp_path / "prior")
         good = await prior.run(plan())
-        current = PlanTrial(Tools(), image_name="plan.png")
+        current = make_trial(tmp_path / "current")
         current.inherit_reference(prior, good["plan_sha256"], ["plan.openings:W1"])
         with pytest.raises(ValueError, match="outside the coordinator"):
             await current.run(operations=[{**operation(), "collection": "partitions", "id": "P1",
@@ -215,49 +238,54 @@ def test_cross_task_operations_only_touch_named_targets_and_continue_from_new_ba
         assert current.load_plan(two)["space_seeds"] == plan()["space_seeds"]
         current.inherit_reference(prior, good["plan_sha256"], ["plan.openings"])
         assert current.allowed_rework_targets == ["plan.openings"]
-        failed = PlanTrial(Tools(False), image_name="plan.png")
-        failed_receipt = await failed.run(plan())
+        failed = make_trial(tmp_path / "failed")
+        invalid = plan()
+        invalid["openings"][0].update(p1=[30, 30], p2=[30, 40])
+        failed_receipt = await failed.run(invalid)
+        assert failed_receipt["status"] == "failed"
         with pytest.raises(ValueError, match="successful isolated trial"):
             current.inherit_reference(failed, failed_receipt["plan_sha256"], ["plan.openings:W1"])
     asyncio.run(scenario())
 
 
-def test_failed_noop_revision_does_not_invalidate_prior_success_with_same_hash():
+def test_failed_noop_revision_does_not_invalidate_prior_success_with_same_hash(tmp_path, monkeypatch):
     async def scenario():
-        tools = Tools()
-        trial = PlanTrial(tools, image_name="plan.png")
+        trial = make_trial(tmp_path)
         good = await trial.run(plan())
-        tools.ready = False
-        failed = await trial.run(operations=[operation(p2=[10, 40])])
+        assert good["status"] == "passed", good
+        with monkeypatch.context() as patch:
+            patch.setattr("src.agent.runtime_roles.plan_reading.build_reading", fail_compiler)
+            failed = await trial.run(operations=[operation(p2=[10, 40])])
+        assert failed["status"] == "failed"
         assert failed["plan_sha256"] == good["plan_sha256"] and failed["changes"] == []
         assert trial.verified_plan(good["plan_sha256"])[1]["validation_passed"]
         assert trial.require_success(plan()) == good
     asyncio.run(scenario())
 
 
-def test_invalid_operation_type_is_a_correctable_prewrite_rejection():
+def test_invalid_operation_type_is_a_correctable_prewrite_rejection(tmp_path):
     async def scenario():
-        tools = Tools()
-        trial = PlanTrial(tools, image_name="plan.png")
+        trial = make_trial(tmp_path)
         good = await trial.run(plan())
+        assert good["status"] == "passed", good
         reader = ReaderTools(Frozen(), role_id="plan_reader", image_name="plan.png", trial=trial)
         bad = await reader.call_tool("trial_plan_bim", {"operations": [{**operation(p2=[10, 41]), "op": []}]})
         assert bad["isError"] and bad["structuredContent"]["status"] == "rejected"
-        assert len(tools.calls) == 1 and trial.baseline()[1] == good["plan_sha256"]
+        assert trial.tools.calls == [] and trial.baseline()[1] == good["plan_sha256"]
     asyncio.run(scenario())
 
 
 def test_topology_warnings_from_a_trial_without_geometry_do_not_bind():
-    # 10-06 probe run2: 14 warnings from a draft with dividers in metres blocked submission.
+    # Only saved reading geometry can carry binding topology review issues.
     row = {"type": "unsupported_open_separator", "divider": "P1", "opening": "D1", "x_px": 60,
            "y_px": [10, 110], "look_box": [55, 8, 65, 112]}
-    failed = {"plan_sha256": "a" * 64, "source_geometry_ready": False, "drawing_differences": {"items": [row]}}
-    built = {"plan_sha256": "b" * 64, "source_geometry_ready": True, "drawing_differences": {"items": [row]}}
+    failed = {"plan_sha256": "a" * 64, "reading_geometry_ready": False, "drawing_differences": {"items": [row]}}
+    built = {"plan_sha256": "b" * 64, "reading_geometry_ready": True, "drawing_differences": {"items": [row]}}
     assert topology_issues([failed]) == []
     assert [issue["plan_sha256"] for issue in topology_issues([failed, built])] == ["b" * 64]
 
 
-def test_host_failure_lists_every_unhosted_opening_with_its_nearest_line():
+def test_host_failure_lists_every_unhosted_opening_with_its_nearest_line(tmp_path):
     value = plan()
     value["openings"] += [
         {"id": "D_in", "kind": "door", "p1": [60, 60], "p2": [60, 70], "z": [0, 2.1], "source_refs": ["plan.png: door"]},
@@ -271,56 +299,34 @@ def test_host_failure_lists_every_unhosted_opening_with_its_nearest_line():
     }
 
     async def scenario():
-        trial = PlanTrial(Tools(ready=False), image_name="plan.png")
+        trial = make_trial(tmp_path)
         receipt = await trial.run(value)
         assert receipt["status"] == "failed"
         assert [row["opening"] for row in receipt["unhosted_openings"]] == ["D_top", "W2"]
     asyncio.run(scenario())
 
 
-class _FailingTools(Tools):
-    """A compiler that fails with a chosen error, or compiles but fails its source self-check."""
-
-    def __init__(self, workspace, *, error=None, findings=None):
-        super().__init__(ready=False, workspace=workspace)
-        self.error, self.findings = error, findings
-
-    async def call_tool(self, name, arguments):
-        result = await super().call_tool(name, arguments)
-        body = result["structuredContent"]
-        if self.error is not None:
-            body["error"] = self.error
-        if self.findings is not None:
-            candidate = self.workspace / "candidate_01"
-            candidate.mkdir(exist_ok=True)
-            (candidate / "report.json").write_text(json.dumps({"source_geometry_self_consistency": {
-                "status": "severe", "findings": self.findings}}), encoding="utf-8", newline="\n")
-            body.pop("error", None)
-            body.update(candidate="candidate_01", status="severe")
-        return result
-
-
-def test_failed_trial_names_loose_divider_ends_and_source_self_check_findings(tmp_path):
+def test_failed_trial_names_loose_divider_ends_and_overlapping_openings(tmp_path):
     value = plan()
     value["partitions"].append({"id": "P2", "points": [[60, 40], [100, 40]], "source_refs": ["plan.png: wall"]})
     loose = [{"partition": "P2", "end": [100, 40], "nearest_line": "footprint", "gap_px": 10.0}]
     assert loose_partition_ends(value) == loose
     assert loose_partition_ends(plan()) == []
-    workspace = tmp_path / "trial"
-    (workspace / "images").mkdir(parents=True)
-    (workspace / "images" / "plan.png").write_bytes(b"one-original")
-    overlap = {"code": "source.opening_overlap", "opening_ids": ["W1", "D1"],
-               "boundary_id": "space/left/wall/2", "severity": "severe", "area_m2": 1.9}
 
     async def scenario():
-        dangling = PlanTrial(_FailingTools(workspace, error="polygonize produced dangles: [...]"),
-                             image_name="plan.png", workspace=workspace)
+        dangling = make_trial(tmp_path / "dangling")
         receipt = await dangling.run(value)
         assert receipt["status"] == "failed" and receipt["loose_partition_ends"] == loose
-        checked = PlanTrial(_FailingTools(workspace, findings=[overlap]), image_name="plan.png", workspace=workspace)
-        receipt = await checked.run(plan())
-        assert receipt["reason"] == "source self-check failed: source.opening_overlap W1/D1 on space/left/wall/2"
-        assert receipt["source_findings"] == [overlap]
+        overlapping = plan()
+        duplicate = copy.deepcopy(overlapping["openings"][0])
+        duplicate["id"] = "W2"
+        overlapping["openings"].append(duplicate)
+        checked = make_trial(tmp_path / "overlap")
+        receipt = await checked.run(overlapping)
+        assert receipt["status"] == "failed"
+        assert "overlapping plan openings W1 and W2" in receipt["reason"]
+        with pytest.raises(ValueError, match="successful isolated trial"):
+            checked.verified_plan(receipt["plan_sha256"])
     asyncio.run(scenario())
 
 

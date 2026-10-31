@@ -128,7 +128,7 @@ def test_wall_time_mode_preserves_the_formal_limits_through_cli(tmp_path):
     args = parser().parse_args(argv_for(selected)[3:])
     assert args.time_budget_mode == "wall_and_requests"
     assert validate_budget(selected).ledger_limit().seconds == 5400
-    assert "time_budget_mode" not in validate_budget(selected).model_dump(mode="json")
+    assert validate_budget(selected).model_dump(mode="json")["time_budget_mode"] == "wall_and_requests"
 
 
 @pytest.mark.parametrize("value", ["elapsed", None, True, 5400])

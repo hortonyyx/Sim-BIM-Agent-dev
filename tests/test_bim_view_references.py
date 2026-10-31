@@ -119,7 +119,10 @@ def test_stdio_view_and_source_replacement_return_real_images_and_coordinator_on
             meta = next(json.loads(p.text) for p in original.content if p.type == 'text')
             raw = base64.b64decode(next(p.data for p in original.content if p.type == 'image'))
             assert hashlib.sha256(raw).hexdigest() == meta['returned_png_sha256']
-            old = _json_result(await session.call_tool('record_claim', {'claim_json': json.dumps(claim())}))
+            recorded = _json_result(await session.call_tool('claim_transaction', {'candidate': 'seed',
+                'entries_json': json.dumps([{'claim': claim(), 'action': 'record'}])}))
+            assert recorded['status'] == 'completed'
+            old = {'id': recorded['entries'][0]['claim_id']}
             result = await session.call_tool('replace_claim_sources', {'claim_id': old['id'],
                 'view_ids': [meta['view_id']], 'reason': 'Use the actual viewed original extent'})
             new = _json_result(result)

@@ -234,8 +234,8 @@ def test_source_refs_aggregate_at_original_declarations_not_expanded_indices():
                                  ['observation'], ('observation',), [b'observation']])
 def test_direct_source_ref_values_follow_formal_opening_schema(version, refs):
     from pydantic import ValidationError
-    from src.agent.correction.schema import WallOpening
-    from src.agent.geometry.source_schema import SourceWallOpening
+    from src.agent.geometry_model.schema import WallOpening
+    from src.agent.geometry_model.source_polygon import SourceWallOpening
     value = plan()
     value['schema_version'] = version
     value['templates']['main']['opening_rows'] = []
@@ -317,12 +317,12 @@ def test_empty_legacy_window_row_keeps_existing_unevaluated_ref_value_semantics(
 
 def test_source_ref_feedback_survives_formal_build_failure_and_preserves_draft(tmp_path):
     from scripts.tool_scripts.bim_agent_parametric import build_parametric
-    from src.agent.correction.parse import ensure_corrected_geometry
+    from src.agent.geometry_model.parse import parse_geometry
     from tests.test_bim_agent_tools import _ParametricFunctionToolkit
 
     class FormalSourceToolkit(_ParametricFunctionToolkit):
         def build(self, proposal, **kwargs):
-            ensure_corrected_geometry(proposal['geometry'])
+            parse_geometry(proposal['geometry'])
             return super().build(proposal, **kwargs)
 
     toolkit = FormalSourceToolkit(tmp_path / 'run')

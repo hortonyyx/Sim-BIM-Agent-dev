@@ -40,8 +40,8 @@ def test_frame_survives_source_export_and_local_notes_without_changing_geometry(
                                             'unresolved':['shape unverified']}])
     report = export_source_proposal(edited, tmp_path/'updated')
     assert report['source_geometry_ready'], report
-    original = json.loads((tmp_path/'original/source_model.json').read_text())
-    updated = json.loads((tmp_path/'updated/source_model.json').read_text())
+    original = json.loads((tmp_path/'original/source_model.json').read_text(encoding="utf-8"))
+    updated = json.loads((tmp_path/'updated/source_model.json').read_text(encoding="utf-8"))
     assert updated['mesh_frame'] == proposal['mesh_frame']
     assert updated['source_model_sha256'] != original['source_model_sha256']
     for key in ('spaces', 'boundaries', 'openings', 'connections'):
@@ -53,7 +53,7 @@ def test_overlay_uses_saved_camera_rotation_and_explicit_frame(tmp_path):
     from PIL import Image
     proposal = _proposal(); proposal['mesh_frame'] = _frame()
     export_source_proposal(proposal, tmp_path/'source')
-    source = json.loads((tmp_path/'source/source_model.json').read_text())
+    source = json.loads((tmp_path/'source/source_model.json').read_text(encoding="utf-8"))
     observation = {'mesh_sha256':'a'*64, 'resolution_px':{'width':200,'height':200},
         'source_coordinate_transform': {'yaw_degrees_counterclockwise_about_positive_z':0},
         'camera':{'target':[0,0,0], 'screen_right':[1,0,0], 'screen_up':[0,1,0]},

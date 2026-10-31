@@ -20,7 +20,8 @@ def test_reasoning_model_defaults_have_observed_basis():
     for name, minimum in (("glm-5.3-flash", 32000), ("Qwen3.8-27B", 16384), ("Qwen3.8-Flash", 16384)):
         profile = get_model_profile(name)
         assert default_output_tokens(name) == minimum
-        assert profile.output_limit_source.startswith("AI_agent/")
+        assert "observed" in profile.output_limit_source.lower()
+        assert "tokens" in profile.output_limit_source
         validate_output_limit(name, minimum)
         with pytest.raises(ValueError, match="below the recommended minimum"):
             validate_output_limit(name, minimum - 1)

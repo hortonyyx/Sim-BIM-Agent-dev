@@ -84,5 +84,6 @@
         }
       }
     }
-  }
+  },
+  "plan_contract": "Current 2D reader input. Original coordinates and dimensions are preserved; reading_type=plan and explicit inferred 1 cm wall metadata are test assumptions, not new observations."
 }

@@ -25,7 +25,8 @@ def _write_json(path, value):
 def _release(tmp_path):
     root = tmp_path / "product"
     for relative in ("src/agent_runtime/loop.py", "src/agent_runtime/model_profiles.json",
-                     "src/harness_contracts/__init__.py", "src/agent/tool.py", "uv.lock", "README.txt"):
+                     "src/harness_contracts/__init__.py", "src/agent/runtime_entry.py",
+                     "src/agent/runtime_roles/entry.py", "src/agent/tool.py", "uv.lock", "README.txt"):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}\n", encoding="utf-8")
@@ -178,7 +179,7 @@ def _configuration(input_root, run_root):
         "input": "one", "floor_plan_images": ["1f.png"], "scope": "offline path validation",
         "credentials_file": "private.json", "max_candidates": 2, "context_tokens": 200000,
         "limits": {"model_calls": 2, "tool_calls": 2, "seconds": 60, "tokens": None}}
-    return {"schema_version": 1, "approval_required_before_launch": True,
+    return {"schema_version": 1, "batch_id": "fixture", "approval_required_before_launch": True,
         "maximum_seconds_per_case": 60, "input_root": str(input_root), "run_root": str(run_root),
         "cases": [{**copy.deepcopy(common), "case_id": "single", "mode": "single_model", "output": "single"},
                   {**copy.deepcopy(common), "case_id": "roles", "mode": "role_division", "output": "roles",
@@ -245,7 +246,7 @@ def test_explicit_null_time_configuration_and_cli_are_single_model_only(tmp_path
     data["maximum_seconds_per_case"] = None
     del data["cases"][0]["limits"]["seconds"]
     _write_json(path, data)
-    with pytest.raises(ValueError, match="set seconds explicitly"):
+    with pytest.raises(ValueError, match="limits is missing: seconds"):
         configuration.load_configuration(path)
 
 
@@ -307,11 +308,13 @@ def test_input_root_escape_and_linked_images_are_refused(tmp_path):
         resolve_case_input(base)
 
 
-def test_legacy_configuration_keeps_repository_relative_paths(tmp_path, monkeypatch):
+def test_checkout_configuration_keeps_repository_relative_paths(tmp_path, monkeypatch):
     from src.agent import runtime_configuration as configuration
 
     root = tmp_path / "checkout"
     (root / "one").mkdir(parents=True)
+    (root / "src/agent").mkdir(parents=True)
+    (root / "src/agent/runtime_entry.py").write_text("# fixture\n", encoding="utf-8")
     (root / ".git").write_text("fixture", encoding="utf-8")
     Image.new("RGB", (2, 2), "white").save(root / "one/1f.png")
     monkeypatch.setattr(configuration, "ROOT", root)

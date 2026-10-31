@@ -27,7 +27,7 @@ def test_payload_keeps_runtime_resources_and_excludes_development_evidence():
                                    "src/mcp/", "src/converters/", "tests/", "AI_agent/")) for name in selected)
     assert "src/agent/sdk.py" not in selected
     assert "src/validator/data_model.py" not in selected
-    assert origins["src/agent/execution/__init__.py"]["transform"] == "package_facade"
+    assert origins["src/agent/execution/__init__.py"]["transform"] == "identity"
     assert "scripts/tool_scripts/evaluate_bim_agent.py" not in selected
 
 

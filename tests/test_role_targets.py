@@ -49,4 +49,4 @@ def test_plan_trial_uses_the_task_floor_id():
     trial = _Trial()
     tools = ReaderTools(_Frozen(), role_id="plan_reader", image_name="1f_view.png", trial=trial, target="plan F1")
     asyncio.run(tools.call_tool("trial_plan_bim", {"plan": {"floor_id": "1F", "partitions": []}}))
-    assert trial.plans == [{"floor_id": "F1", "partitions": []}]
+    assert trial.plans == [{"floor_id": "F1", "partitions": [], "reading_type": "plan"}]

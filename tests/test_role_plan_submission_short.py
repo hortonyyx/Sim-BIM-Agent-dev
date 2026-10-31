@@ -13,9 +13,15 @@ from PIL import Image
 from src.agent.runtime_roles.readers import _evidence_targets
 from src.agent.runtime_roles.submission import ReaderSubmission, _normalize_note_items
 from src.agent.runtime_roles.trial import PlanTrial, canonical_plan_sha256
-from tests.test_role_readers import plan
+from tests.test_role_readers import plan as plan_declaration
 from tests.test_role_submission import PassedTrial, operation
-from tests.test_role_trial import Tools
+from tests.test_role_trial import Tools, example, prepare_workspace
+
+
+def plan():
+    value = plan_declaration()
+    value["wall_metadata"] = copy.deepcopy(example()["wall_metadata"])
+    return value
 
 
 def test_automatic_boxes_use_resolved_pixels_keep_inferences_and_allow_wall_override():
@@ -153,14 +159,17 @@ def test_orientation_note_does_not_replace_required_north_arrow():
     assert submission.read() is None
 
 
-def test_omitted_contract_field_notes_remain_rejected_for_legacy_source_bim():
+def test_missing_optional_chain_note_does_not_create_dimension_evidence():
     trial = PassedTrial()
-    assert "reading_type" not in trial.plan and "dimension_chains" not in trial.plan
+    original = copy.deepcopy(trial.plan)
+    assert original["reading_type"] == "plan" and "dimension_chains" not in original
     submission = ReaderSubmission(role_id="plan_reader", image_name="plan.png", trial=trial)
-    with pytest.raises(ValueError, match="not a declared plan object"):
-        submission.submit({"local_review": REVIEW, "trial_id": "latest", "notes": [
-            {"item": "dimension_chains", "kind": "unresolved", "basis": "No chain supplied."}]})
-    assert submission.read() is None
+    assert submission.submit({"local_review": REVIEW, "trial_id": "latest", "notes": [
+        {"item": "dimension_chains", "kind": "unresolved", "basis": "No chain supplied."}]})["status"] == "accepted"
+    saved = submission.read()
+    assert saved["artifact"]["plan"] == original
+    assert saved["validation"]["notes"][0]["item"] == "plan.dimension_chains"
+    assert not any(row["item"] == "plan.dimension_chains" for row in saved["artifact"]["evidence"])
 
 
 def test_latest_reference_survives_resume_and_rejects_stale_or_tampered_plan(tmp_path):
@@ -216,11 +225,18 @@ def test_notes_can_reference_dimension_evidence_consumed_by_numeric_resolution()
     assert not any(row["item"] == "plan.dimension_chains" for row in saved["artifact"]["evidence"])
 
 
-def test_full_and_operation_rework_allow_notes_but_preserve_unpointed_geometry():
+def test_full_and_operation_rework_allow_notes_but_preserve_unpointed_geometry(tmp_path):
     async def scenario():
-        prior = PlanTrial(Tools(), image_name="plan.png")
+        image = tmp_path / "plan.png"
+        Image.new("RGB", (120, 120), "white").save(image)
+        prior_workspace = prepare_workspace(tmp_path / "prior", image_bytes=image.read_bytes())
+        current_workspace = prepare_workspace(tmp_path / "current", image_bytes=image.read_bytes())
+        prior = PlanTrial(Tools(prior_workspace), image_name="plan.png", workspace=prior_workspace,
+                          receipt_directory=prior_workspace / "trial_receipts")
         first = await prior.run(plan())
-        current = PlanTrial(Tools(), image_name="plan.png")
+        assert first["status"] == "passed", first
+        current = PlanTrial(Tools(current_workspace), image_name="plan.png", workspace=current_workspace,
+                            receipt_directory=current_workspace / "trial_receipts")
         current.inherit_reference(prior, first["plan_sha256"], ["plan.openings:W1"])
         changed = plan()
         changed["openings"][0]["p2"] = [10, 41]

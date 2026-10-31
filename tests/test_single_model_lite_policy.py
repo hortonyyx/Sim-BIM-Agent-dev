@@ -125,8 +125,17 @@ def test_two_floor_assembly_keeps_grid_and_bound_declarations_unchanged(tmp_path
     assert _hashes(before) == before and _hashes(immutable) == immutable
 
 
-def test_generic_build_and_revise_reject_off_grid_without_rounding_or_replacing_source(tmp_path):
+def test_grid_only_admission_rejects_off_grid_edits_without_changing_source(tmp_path):
     toolkit, images, immutable = _prepared(tmp_path)
+    # This run declares the world-coordinate grid only. Reference-line adoption
+    # has its own parameter proof and is exercised in drawing_source_precision.
+    manifest_path = toolkit.run / "inputs.json"
+    manifest = _read(manifest_path)
+    manifest.pop("source_precision_policy")
+    manifest.pop("architectural_modelling_policy")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    immutable = _hashes(immutable)
+    toolkit = Toolkit(toolkit.run)
     built, _ = _build(toolkit, images[0], plan())
     candidate = toolkit.run / built["candidate"]
     before = _hashes(candidate.iterdir())

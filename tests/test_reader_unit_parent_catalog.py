@@ -41,8 +41,6 @@ def sealed_checkout(monkeypatch):
         identity = f"{line}-test-reader-catalog"
         registry[f"{line}_versions"][identity] = record
         registry[f"current_{line}_version"] = identity
-    registry["current_version"] = registry["current_domain_version"]
-    registry["versions"] = dict(registry["domain_versions"])
     load = agent_registry.load_agent_registry
     monkeypatch.setattr(agent_registry, "load_agent_registry", lambda root, registry_path=None:
         copy.deepcopy(registry) if Path(root).resolve() == ROOT else load(root, registry_path))
@@ -61,7 +59,7 @@ def prepared_run(path, *, mesh=False):
     (path / "images").mkdir(parents=True)
     image = path / "images/plan.png"
     Image.new("RGB", (800, 600), "white").save(image)
-    manifest = {"images": {"plan.png": {"size": [800, 600],
+    manifest = {"plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24, "images": {"plan.png": {"size": [800, 600],
         "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}}, "scope": "offline catalog test"}
     if mesh:
         manifest["mesh_input"] = {"sha256": "0" * 64, "frozen_path": "assets/input.glb"}
@@ -157,17 +155,18 @@ def test_stdio_keeps_windows_scipy_import_before_shared_builder_and_transport(mo
             steps.append("scipy")
         return original_import(name, *args, **kwargs)
 
-    def build(run, *, readonly, enabled_only):
-        assert steps == ["scipy"]
-        assert readonly and enabled_only
+    def build(run, *, readonly):
+        assert steps and set(steps) == {"scipy"}
+        assert readonly
         steps.append("build")
         return SimpleNamespace(run=lambda: steps.append("stdio"))
 
     monkeypatch.setattr(builtins, "__import__", observed_import)
     monkeypatch.setattr(runner, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(runner, "build_tool_server", build)
-    runner.serve(Path("unused"), readonly=True, enabled_only=True)
-    assert steps == ["scipy", "build", "stdio"]
+    runner.serve(Path("unused"), readonly=True)
+    assert steps[-2:] == ["build", "stdio"]
+    assert steps[:-2] and set(steps[:-2]) == {"scipy"}
 
 
 def arguments(tmp_path, *, unit):

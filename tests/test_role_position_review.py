@@ -170,14 +170,22 @@ def bind_original_plan(session, *, omitted_openings=()):
     task = session._task({"task_id": "plan", "role_id": "plan_reader", "image": "plan.png", "target": "F1"})
     source = session._source("candidate_01")
     source["openings"] = [row for row in source["openings"] if row["id"] not in omitted_openings]
-    raw = json.dumps(source).encode()
-    path = session.registry.child("plan").task_directory / "bim/trial_workspace/candidate_01/source_model.json"
+    # This consumer fixture freezes XY reading facts, without a 3D trial.
+    product = {"mapping": {"floor_id": "F1", "space_mapping": [
+        {"space_id": row["id"], "world_polygon_m": row["polygon"]} for row in source["spaces"]],
+        "opening_hosts": [
+            {"opening_id": row["id"], "kind": row["kind"], "space_ids": row["space_ids"],
+             "p1_world_m": list(dict.fromkeys(tuple(v[:2]) for v in row["vertices"]))[0],
+             "p2_world_m": list(dict.fromkeys(tuple(v[:2]) for v in row["vertices"]))[-1],
+             "exterior": row["exterior"]} for row in source["openings"]]}}
+    raw = json.dumps(product).encode()
+    path = session.registry.child("plan").task_directory / "bim/trial_workspace/reading_product.json"
     path.parent.mkdir(parents=True)
     path.write_bytes(raw)
     session.registry.save(task, status="completed", artifact={"plan": {"floor_id": "F1"},
         "evidence": [{"item": "plan.openings:" + opening["id"], "bbox": [0, 0, 2, 2], "source": "plan.png"}
                      for opening in source["openings"]]},
-        validation={"validation_passed": True, "candidate": "candidate_01", "candidate_source_sha256": hashlib.sha256(raw).hexdigest()})
+        validation={"validation_passed": True, "candidate": "reading_001", "reading_product_file": "reading_product.json", "reading_product_sha256": hashlib.sha256(raw).hexdigest()})
     session.assembly.bind("plan")
 
 

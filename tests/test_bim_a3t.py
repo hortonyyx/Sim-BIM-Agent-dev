@@ -301,10 +301,9 @@ def test_fixed_parameter_values_are_in_catalog(tmp_path):
         run = _run_with_one_image(tmp_path)
         async with _server_session(run, readonly=False) as session:
             tools = {t.name:t.inputSchema for t in (await session.list_tools()).tools}
-            expected = {('pixel_profile','axis'):['x','y'], ('view_pixel_profile','axis'):['x','y'],
+            expected = {('view_pixel_profile','axis'):['x','y'],
                         ('map_dimension_chain','unit'):['mm','m'], ('map_dimension_chain','direction'):[-1,1],
-                        ('view_elevation_candidate','facade'):['North','South','East','West'],
-                        ('record_work_review','decision'):['continue','stop']}
+                        ('view_elevation_candidate','facade'):['North','South','East','West']}
             for (tool,key), values in expected.items():
                 assert tools[tool]['properties'][key]['enum'] == values
             assert 'report' in tools['read_candidate_items']['properties']['collection']['enum']
@@ -314,7 +313,8 @@ def test_fixed_parameter_values_are_in_catalog(tmp_path):
 
 def test_empty_profile_explains_color_and_support_adjustments(tmp_path):
     run = _run_with_one_image(tmp_path)
-    result = Toolkit(run).profile('plan.png', [0,0,12,8], 'x', [255,0,0], 0)
+    _, metadata = Toolkit(run).view_profile('plan.png', [0,0,12,8], 'x', [255,0,0], 0, .1)
+    result = json.loads(metadata)
     diagnostic = result['empty_filter_diagnostics']
     assert 'tolerance' in diagnostic['next_action'] and 'RGB' in diagnostic['next_action']
     import numpy as np

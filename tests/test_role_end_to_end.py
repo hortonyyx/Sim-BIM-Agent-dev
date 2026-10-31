@@ -134,13 +134,13 @@ def _assert_complete_pipeline(fixture, result, *, two_floors):
     assert tools["trial_plan_bim"] == len(plan_records)
     assert tools["submit_plan_reading"] == len(plan_records)
     assert tools["submit_elevation_reading"] == 4
-    # Deterministic alignment needs no review. sm24's three real >30 cm
+    # Deterministic alignment needs no review. sm24's two current >30 cm
     # differences each need paired evidence, an explicit decision and one
     # reassembly; the two conflict-free fixtures still assemble only once.
     has_position_conflicts = fixture.case_name == "sm24"
     assert tools["assemble_from_readers"] == (2 if has_position_conflicts else 1)
     assert tools["review_role_assembly"] == 0
-    assert tools["role_state"] == (3 if has_position_conflicts else 0)
+    assert tools["role_state"] == (2 if has_position_conflicts else 0)
     assert tools["edit_bim"] == (1 if has_position_conflicts else 0)
     assert not any(tools[name] for name in (
         "read_role_artifact", "build_from_artifact", "match_elevation",
@@ -173,7 +173,7 @@ def _assert_complete_pipeline(fixture, result, *, two_floors):
         if row["bucket"] == "gt_30cm"
     }
     assert all(row["status"] != "pending" for row in all_positions.values())
-    assert len(positions) == (3 if has_position_conflicts else 0)
+    assert len(positions) == (2 if has_position_conflicts else 0)
     assert all(row["status"] == "decided" for row in positions.values())
     assert all(row["decision"]["choice"] == "keep_plan"
                and not row["decision"].get("automatic")
@@ -182,7 +182,7 @@ def _assert_complete_pipeline(fixture, result, *, two_floors):
     saved_views = {
         path.stem for path in (fixture.output / "bim/image_views").glob("view_*.json")
     }
-    assert len(saved_views) == (6 if has_position_conflicts else 0)
+    assert len(saved_views) == (4 if has_position_conflicts else 0)
     assert all({view["view_id"] for view in row["decision"]["views"]} <= saved_views
                for row in positions.values())
     for match in matches:
@@ -216,13 +216,37 @@ def _assert_complete_pipeline(fixture, result, *, two_floors):
         }
 
 
-@pytest.mark.parametrize(("case_name", "two_floors"), [("sm21", True), ("sm24", False), ("sm25", True)])
+@pytest.mark.parametrize(("case_name", "two_floors"), [("sm21", True), ("sm24", False)])
 def test_scripted_role_pipeline_runs_real_frozen_mcp(tmp_path, case_name, two_floors):
     fixture = make_fixture(case_name, tmp_path)
     result = asyncio.run(
         execute(fixture.args, adapter_factory=fixture.adapter_factory)
     )
     _assert_complete_pipeline(fixture, result, two_floors=two_floors)
+
+
+def test_cross_storey_conflict_stops_without_claiming_a_complete_building(tmp_path):
+    fixture = make_fixture("sm25", tmp_path)
+    # Twelve reader requests plus inputs/delegate/assemble and one explicit
+    # unresolved answer: stop deterministically after the rejection is observed.
+    fixture.args.model_calls = 16
+    result = asyncio.run(execute(fixture.args, adapter_factory=fixture.adapter_factory))
+    assert result["status"] == "model_budget_exhausted"
+    assert result.get("completion") is None
+    assert not (fixture.output / "bim/delivery_selection.json").exists()
+    report = json.loads(next((fixture.output / "role_assemblies").glob("*.json")).read_bytes())["response"]
+    assert report["status"] == "build_failed" and report["candidate"] is None
+    detail = next(row["detail"] for row in report["decisions"] if row["kind"] == "assembly_failed")
+    rejections = detail["regularization"]["rejections"]
+    assert {row["type"] for row in rejections} == {"storey_wall_offset", "thin_horizontal_contact"}
+    assert next(row for row in rejections if row["type"] == "storey_wall_offset")["deviation_m"] == pytest.approx(.1)
+    assert next(row for row in rejections if row["type"] == "thin_horizontal_contact")["width_m"] == pytest.approx(.1)
+    assert all(row["tolerance_m"] == .3 for row in rejections)
+    assert not detail["source_geometry_ready"] and detail["saved_candidate"] is None
+    assert _tool_count(fixture.output, "finish_bim") == 0
+    assert not (fixture.output / "bim/delivery.json").exists()
+    assert result["finalization"]["delivery"] is None
+    assert result["finalization"]["status"] == "assembly_review_required"
 
 
 @pytest.mark.parametrize("case_name", ["sm21", "sm24", "sm25"])
@@ -326,12 +350,13 @@ def test_resume_after_inner_receipt_does_not_repeat_write(tmp_path, monkeypatch,
         asyncio.run(execute(fixture.args, adapter_factory=fixture.adapter_factory))
     assert crashed
     count_at_crash = len(list((fixture.output / "bim").glob("candidate_*")))
-    assert count_at_crash == (1 if boundary_tool == "build_plan_bim" else 2)
+    assert count_at_crash == 1
     result = _resume(fixture)
     _assert_complete_pipeline(fixture, result, two_floors=False)
     operations = [json.loads(p.read_bytes()) for p in (fixture.output / "role_operations").glob("*.json")]
     assert sum(row["tool"] == "build_plan_bim" for row in operations) == 1
-    # One initial safe-height batch plus the post-decision reassembly batch;
-    # recovery repeats neither write.
-    assert sum(row["tool"] == "claim_transaction" for row in operations) == 2
+    # Current recovery reuses both durable operation receipts; neither the
+    # original build nor the claim batch is issued again.
+    assert sum(row["tool"] == "claim_transaction" for row in operations) == 1
+    assert len(list((fixture.output / "bim").glob("candidate_*"))) == count_at_crash
     assert len(list((fixture.output / "bim/plan_drafts").glob("draft_*"))) == 1

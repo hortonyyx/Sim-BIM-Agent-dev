@@ -6,10 +6,9 @@ import math
 import pytest
 from shapely.geometry import Polygon
 
-from src.agent.correction.parse import ensure_corrected_geometry
-from src.agent.correction.schema import WallOpening
+from src.agent.geometry_model.parse import parse_geometry
+from src.agent.geometry_model.schema import WallOpening
 from src.agent.execution.source_proposal import export_source_proposal
-from src.agent.geometry.build import build_geometry
 from src.agent.geometry.proposal_edits import apply_proposal_edits
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_enclosure import apply_source_enclosure
@@ -41,7 +40,7 @@ def proposal():
 
 
 def build(value=None):
-    return build_source_bim(ensure_corrected_geometry((value or proposal())["geometry"]),
+    return build_source_bim(parse_geometry((value or proposal())["geometry"]),
                             capability_profile="simple_polygon")
 
 
@@ -98,19 +97,17 @@ def test_diagonal_opening_rejection_preserves_unbuilt_evidence(change):
                for row in source["unbuilt_openings"])
 
 
-def test_new_profile_does_not_relax_drawing_or_ep_contracts():
-    geom = ensure_corrected_geometry(proposal()["geometry"])
+def test_simple_polygon_profile_keeps_drawing_contract():
+    geom = parse_geometry(proposal()["geometry"])
     with pytest.raises(ValueError, match="capability_profile"):
         build_source_bim(geom, capability_profile="orthogonal_polygon")
-    with pytest.raises(ValueError, match="source BIM builder"):
-        build_geometry(geom, capability_profile="simple_polygon")
     with pytest.raises(ValueError, match="orthogonal"):
         WallOpening.model_validate(proposal()["geometry"]["openings"][0])
     legacy = proposal()
     legacy["geometry"]["schema_version"] = "2"
     legacy["geometry"]["openings"] = []
     with pytest.raises(ValueError, match="non-orthogonal"):
-        build_source_bim(ensure_corrected_geometry(legacy["geometry"]), capability_profile="simple_polygon")
+        build_source_bim(parse_geometry(legacy["geometry"]), capability_profile="simple_polygon")
 
 
 def test_setback_contacts_only_actual_overlap_and_keeps_exposed_roof():
@@ -253,4 +250,4 @@ def test_unimplemented_shape_fields_fail_instead_of_disappearing(field):
     value = proposal()["geometry"]
     value["floors"][0]["cells"][0][field] = []
     with pytest.raises(ValueError, match="Extra inputs"):
-        ensure_corrected_geometry(value)
+        parse_geometry(value)

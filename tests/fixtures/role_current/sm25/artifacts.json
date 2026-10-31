@@ -1179,6 +1179,29 @@
               "task common southwest-origin contract: first north tick is world y=20 m and original-image pixel y increases southward"
             ]
           }
+        ],
+        "reading_type": "plan",
+        "wall_metadata": [
+          {
+            "target": "footprint:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
+            ]
+          },
+          {
+            "target": "partition:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
+            ]
+          }
         ]
       },
       "evidence": [
@@ -3057,6 +3080,29 @@
             "source_refs": [
               "2f_view.png SHA256 bde78c1276b79d96ebbf6cea7f31cbbbf6d84bae70b5caa85b27331ce609b322: right chain 6000/2000/2000/2000/2000/6000 and overall 20000",
               "task common southwest-origin contract: first north tick is world y=20 m and original-image pixel y increases southward"
+            ]
+          }
+        ],
+        "reading_type": "plan",
+        "wall_metadata": [
+          {
+            "target": "footprint:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
+            ]
+          },
+          {
+            "target": "partition:*",
+            "thickness_m": 0.01,
+            "reference_side": "centerline",
+            "evidence_status": "inferred",
+            "basis": "Offline orchestration fixture assumes 1 cm wall thickness; this is not an observed drawing measurement.",
+            "source_refs": [
+              "fixture:declared-wall-thickness"
             ]
           }
         ]

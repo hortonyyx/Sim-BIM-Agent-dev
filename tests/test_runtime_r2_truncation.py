@@ -39,7 +39,7 @@ def test_truncated_response_is_settled_and_recovers_without_echo(tmp_path, conte
     engine = runtime(tmp_path, [raw, response(("fresh", "save", {"value": 8})), response(text="Done")])
     engine.parameters["max_tokens"] = 16_384
     if context:
-        engine.context_policy = ContextPolicy(active_window_messages=4)
+        engine.context_policy = ContextPolicy()
     with engine.store:
         receipt = asyncio.run(engine.run(MESSAGES))
         assert receipt["status"] == "completed"
@@ -208,7 +208,7 @@ def test_domain_truncation_continues_tools_and_preserves_settlement_on_resume(tm
 @pytest.mark.parametrize("domain", [False, True])
 def test_summary_truncation_recovers_with_its_own_prompt_and_budget(tmp_path, crash_boundary, domain):
     limits = RunLimits(model_calls=5, tool_calls=2, seconds=30, tokens=100_000, summary_every=1)
-    policy = ContextPolicy(active_window_messages=16, preserve_initial_messages=2)
+    policy = ContextPolicy(preserve_initial_messages=2)
 
     def repaired_summary(body):
         assert body.get("tools", []) == []

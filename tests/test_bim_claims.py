@@ -259,56 +259,45 @@ def test_component_thickness_persists_without_changing_geometry(tmp_path, kind):
         assert new[field] == source[field]
 
 
-def test_stdio_claim_tools_are_coordinator_only_and_feed_revise(tmp_path):
+def test_stdio_claim_transaction_is_coordinator_only_and_applies_bound_edit(tmp_path):
     async def scenario():
         run, _ = setup_run(tmp_path)
         async with _server_session(run, readonly=True) as session:
             names = {tool.name for tool in (await session.list_tools()).tools}
-            assert not names.intersection({"record_claim", "view_claim_evidence", "decide_claim", "claim_status", "revise_bim"})
+            assert not names.intersection({"claim_transaction", "claim_status", "revise_bim"})
         async with _server_session(run, readonly=False) as session:
-            row = _json_result(await session.call_tool("record_claim", {"claim_json": json.dumps(claim())}))
-            _json_result(await session.call_tool("decide_claim", {"claim_id": row["id"], "disposition": "adopted", "reason": "source chain"}))
-            built = _json_result(await session.call_tool("revise_bim", {"candidate": "seed", "operations_json": json.dumps([edit(row["id"])])}))
-            assert built["claim_application"]["status"] == "applied"
+            built = _json_result(await session.call_tool("claim_transaction", {"candidate": "seed",
+                "entries_json": json.dumps([dict(claim=claim(), action="apply", reason="Source chain", operations=[edit("$claim")])])}))
+            assert built["status"] == "completed"
+            assert built["save_effects"]["geometry_applied"]
             status = _json_result(await session.call_tool("claim_status", {}))
             assert status["claims"][0]["applied_anywhere"]
     asyncio.run(scenario())
 
 
-def test_stdio_claim_returns_exact_bounded_crops_and_can_view_remaining_source(tmp_path):
+def test_stdio_saved_claim_regions_reopen_exact_pixels_without_changing_evidence(tmp_path):
     async def scenario():
-        run, _ = setup_run(tmp_path)
+        run, toolkit = setup_run(tmp_path)
         original = Image.new("RGB", (12, 8))
         original.putdata([(x * 20, y * 30, 100) for y in range(8) for x in range(12)])
         original.save(run / "images/plan.png")
-        manifest = json.loads((run / "inputs.json").read_text(encoding="utf-8"))
-        manifest["images"]["plan.png"]["sha256"] = digest(run / "images/plan.png")
-        (run / "inputs.json").write_text(json.dumps(manifest))
+        toolkit.manifest["images"]["plan.png"]["sha256"] = digest(run / "images/plan.png")
+        (run / "inputs.json").write_text(json.dumps(toolkit.manifest), encoding="utf-8")
         refs = [{"image": "plan.png", "box": box} for box in
                 ([0, 0, 6, 8], [6, 0, 12, 8], [1.2, 2.3, 1.3, 2.4], [3, 4, 9, 8])]
+        row = toolkit.record_claim(json.dumps(claim(sources=refs)))
+        path = run / "claims" / (row["id"] + ".json")
+        before = path.read_bytes()
         async with _server_session(run, readonly=False) as session:
-            reply = await session.call_tool("record_claim", {"claim_json": json.dumps(claim(sources=refs))})
-            row = _json_result(reply)
-            assert row["unpreviewed_source_indices"] == [3]
-            assert [p["source_index"] for p in row["evidence_previews"]] == [0, 1, 2]
-            images = [part for part in reply.content if part.type == "image"]
-            assert len(images) == 3
-            for part, box, metadata in zip(images, ([0, 0, 6, 8], [6, 0, 12, 8], [1, 2, 2, 3]), row["evidence_previews"]):
-                actual = Image.open(io.BytesIO(base64.b64decode(part.data))).convert("RGB")
+            for index, box in enumerate(([0, 0, 6, 8], [6, 0, 12, 8], [1, 2, 2, 3], [3, 4, 9, 8])):
+                reply = await session.call_tool("view_image", {"claim_id": row["id"], "source_index": index})
+                metadata = _json_result(reply)
+                image = next(part for part in reply.content if part.type == "image")
+                actual = Image.open(io.BytesIO(base64.b64decode(image.data))).convert("RGB")
                 expected = original.crop(box)
                 assert actual.size == expected.size and actual.tobytes() == expected.tobytes()
                 assert metadata["box_original_pixels"] == box
-                assert metadata["coordinate_grid"] == {"shown": False}
-            assert row["evidence_previews"][2]["claimed_box_original_pixels"] == refs[2]["box"]
-            more = await session.call_tool("view_claim_evidence", {"claim_id": row["id"], "source_index": 3, "display_scale": 2})
-            metadata = _json_result(more)
-            assert metadata["returned_size"] == [12, 8]
-            actual = Image.open(io.BytesIO(base64.b64decode(more.content[0].data))).convert("RGB")
-            expected = original.crop(refs[3]["box"]).resize((12, 8), Image.Resampling.NEAREST)
-            assert actual.tobytes() == expected.tobytes()
-            saved = json.loads((run / "claims" / (row["id"] + ".json")).read_text(encoding="utf-8"))
-            assert "evidence_previews" not in saved and saved["claim"]["sources"] == refs
-            assert saved["verification"] == "not_independently_verified"
+            assert path.read_bytes() == before
     asyncio.run(scenario())
 
 
@@ -338,31 +327,28 @@ def test_claim_preview_preserves_record_and_geometry_and_rejects_changed_origina
         toolkit.view_claim_evidence(row["id"])
 
 
-def test_stdio_inferred_claim_without_images_has_no_preview(tmp_path):
+def test_stdio_inferred_claim_transaction_does_not_invent_image_evidence(tmp_path):
     async def scenario():
         run, _ = setup_run(tmp_path)
         async with _server_session(run, readonly=False) as session:
-            reply = await session.call_tool("record_claim", {"claim_json": json.dumps(claim(basis="inference", sources=[]))})
-            row = _json_result(reply)
-            assert row["evidence_previews"] == [] and row["unpreviewed_source_indices"] == []
+            reply = await session.call_tool("claim_transaction", {"candidate": "seed", "entries_json": json.dumps([
+                dict(claim=claim(basis="inference", sources=[]), action="record")])})
+            result = _json_result(reply)
+            assert result["status"] == "completed"
             assert not any(part.type == "image" for part in reply.content)
+            row = json.loads((run / "claims" / (result["entries"][0]["claim_id"] + ".json")).read_bytes())
+            assert row["sources"] == []
     asyncio.run(scenario())
 
 
-def test_stdio_whole_image_reference_binds_original_extent_without_guessing_box(tmp_path):
-    async def scenario():
-        run, _ = setup_run(tmp_path)
-        async with _server_session(run, readonly=False) as session:
-            reply = await session.call_tool("record_claim", {"claim_json": json.dumps(
-                claim(sources=[{"image": "plan.png"}]))})
-            row = _json_result(reply)
-            assert row["claim"]["sources"][0]["box"] is None
-            assert row["sources"][0] == {"image": "plan.png", "box": [0, 0, 12, 8],
-                "size": [12, 8], "sha256": digest(run / "images/plan.png")}
-            assert row["resolved_values"]["height"] == [.3, 2.1]
-            assert row["evidence_previews"][0]["box_original_pixels"] == [0, 0, 12, 8]
-            actual = Image.open(io.BytesIO(base64.b64decode(reply.content[0].data))).convert("RGB")
-            with Image.open(run / "images/plan.png") as original:
-                assert actual.tobytes() == original.convert("RGB").tobytes()
-            assert row["verification"] == "not_independently_verified"
-    asyncio.run(scenario())
+def test_whole_image_claim_reference_binds_original_extent_without_guessing_box(tmp_path):
+    run, toolkit = setup_run(tmp_path)
+    row = toolkit.record_claim(json.dumps(claim(sources=[{"image": "plan.png"}])))
+    assert row["claim"]["sources"][0]["box"] is None
+    assert row["sources"][0] == {"image": "plan.png", "box": [0, 0, 12, 8],
+        "size": [12, 8], "sha256": digest(run / "images/plan.png")}
+    reply = toolkit.view_claim_evidence(row["id"])
+    actual = Image.open(io.BytesIO(base64.b64decode(reply.content[0].data))).convert("RGB")
+    with Image.open(run / "images/plan.png") as original:
+        assert actual.tobytes() == original.convert("RGB").tobytes()
+    assert row["verification"] == "not_independently_verified"

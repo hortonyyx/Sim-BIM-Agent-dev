@@ -8,7 +8,7 @@ import hashlib
 import json
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from src.agent.runtime_roles.elevation import ElevationReaderTools, match_elevation, validate_elevation_artifact
 from src.agent.runtime_roles.guidance import COMPACT_ELEVATION_EXAMPLE
@@ -28,7 +28,10 @@ def test_reader_task_supplies_direction_and_partial_chain_origin(tmp_path, facad
         image_dir = tmp_path / "images"
         image_dir.mkdir()
         image_path = image_dir / "North.png"
-        Image.new("L", (900, 800), 255).save(image_path)
+        image = Image.new("L", (900, 800), 255)
+        # Synthetic aperture ink supports this coordinate/direction fixture.
+        ImageDraw.Draw(image).rectangle((200, 380, 300, 567), outline=0, width=2)
+        image.save(image_path)
         digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
         (tmp_path / "inputs.json").write_text(
             json.dumps({"images": {"North.png": {"sha256": digest}}}),

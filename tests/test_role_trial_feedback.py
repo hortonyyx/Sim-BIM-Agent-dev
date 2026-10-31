@@ -34,8 +34,9 @@ def _receipt(tmp_path, *, passed):
     complete = {
         "status": "passed" if passed else "failed",
         "plan_sha256": "plan-hash",
-        "source_geometry_ready": passed,
-        "candidate": "candidate_01" if passed else None,
+        "source_geometry_ready": False,
+        "reading_geometry_ready": passed,
+        "candidate": "reading_001" if passed else None,
         "receipt_file": "trial_receipts/trial_001.json",
         "returned_images": [{
             "file": "trial_receipts/trial_001_images/01_overlay.png",
@@ -326,33 +327,29 @@ def test_megabyte_passed_receipt_remains_browsable_and_all_topology_decisions_di
         trial.read_draft(field="report:/building_precision")
 
 
-def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submission(tmp_path):
+def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submission(tmp_path, monkeypatch):
     from src.agent.runtime_roles.submission import ReaderSubmission, SUBMISSION_TOOLS
     from src.agent_runtime.adapter import ScriptedAdapter
     from src.agent_runtime.loop import Runtime
     from src.harness_contracts import ToolGrant
     from tests.test_agent_runtime import MESSAGES, response, role, versions
-    from tests.test_role_readers import plan
-    from tests.test_role_trial import Tools
+    from tests.test_role_trial import Tools, example as plan, prepare_workspace
 
-    workspace = tmp_path / "workspace"
-    (workspace / "images").mkdir(parents=True)
-    original_image = b"hash-stable offline image fixture; no drawing"
-    (workspace / "images/plan.png").write_bytes(original_image)
-    image_sha = hashlib.sha256(original_image).hexdigest()
-    (workspace / "inputs.json").write_text(json.dumps({"images": {"plan.png": {"sha256": image_sha}}}))
-    stream = io.BytesIO()
-    Image.new("RGB", (4, 4), "white").save(stream, "PNG")
-
-    class LargeTools(Tools):
-        async def call_tool(self, name, arguments):
-            result = await super().call_tool(name, arguments)
-            (workspace / "candidate_01/precision_report.json").write_text(json.dumps(_large_precision()))
-            result["structuredContent"]["drawing_differences"] = {"status": "reported", "total": 0, "items": []}
-            result["content"][0]["data"] = base64.b64encode(stream.getvalue()).decode()
-            return result
-
-    compiler = LargeTools(workspace=workspace)
+    workspace = prepare_workspace(tmp_path / "workspace")
+    image_sha = hashlib.sha256((workspace / "images/plan.png").read_bytes()).hexdigest()
+    from src.agent.runtime_roles import plan_reading
+    build_reading = plan_reading.build_reading
+    compiler_calls = []
+    def large_report_reading(value, **kwargs):
+        # Keep the real compiler, images and product hashes. Inject only a
+        # large audit report to exercise the production feedback boundary.
+        result = build_reading(value, **kwargs)
+        compiler_calls.append(kwargs["number"])
+        result["structuredContent"]["building_precision"] = _large_precision()
+        result["structuredContent"]["drawing_differences"] = {"status": "reported", "total": 0, "items": []}
+        return result
+    monkeypatch.setattr(plan_reading, "build_reading", large_report_reading)
+    compiler = Tools(workspace=workspace)
     trial = PlanTrial(compiler, image_name="plan.png", workspace=workspace,
                       receipt_directory=workspace / "trial_receipts")
     submission = ReaderSubmission(role_id="plan_reader", image_name="plan.png", trial=trial,
@@ -382,7 +379,8 @@ def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submissi
         assert submission.read() is None  # passed was not silently promoted to delivery
         tool = next(m for m in reversed(body["messages"]) if m["role"] == "tool")
         visible = json.loads(tool["content"])
-        assert visible["status"] == "passed" and visible["source_geometry_ready"]
+        assert visible["status"] == "passed" and visible["reading_geometry_ready"]
+        assert visible["source_geometry_ready"] is False
         assert visible["submission"]["status"] == "not_submitted"
         assert any(m["role"] == "user" and isinstance(m["content"], list) for m in body["messages"])
         assert len(json.dumps(body).encode()) < 40_000
@@ -400,7 +398,7 @@ def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submissi
         result = asyncio.run(engine.run(MESSAGES))
         assert result["status"] == "completed", result
         assert result["model_calls"] == 3 and result["tool_calls"] == 2
-        assert len(compiler.calls) == 1
+        assert compiler_calls == [1] and compiler.calls == []
         assert not [e for e in store.events if e.payload.event_type == "model_failure"]
         store.validate()
     receipt = trial.receipts[0]
@@ -412,7 +410,7 @@ def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submissi
     assert full["building_precision"] == _large_precision()
     assert len(json.dumps(full).encode()) > 1_000_000
     identities = {key: receipt[key] for key in ("receipt_file", "plan_sha256", "compiled_numeric_plan_sha256",
-                                               "candidate", "candidate_source_sha256")}
+                                               "candidate", "reading_product_file", "reading_product_sha256")}
     receipt_sha = hashlib.sha256(json.dumps(receipt, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     assert trial.verified_unsubmitted_draft(image_sha, **identities,
@@ -438,10 +436,10 @@ def test_megabyte_success_continues_through_runtime_adapter_to_explicit_submissi
         reloaded.verified_unsubmitted_draft(image_sha, **identities, expected_receipt_sha256=receipt_sha)
     receipt_path.write_bytes(original_receipt)
     with pytest.raises(ValueError, match="event result"):
-        trial.verified_unsubmitted_draft(image_sha, **{**identities, "candidate_source_sha256": "0" * 64})
-    source_path = workspace / receipt["candidate"] / "source_model.json"
+        trial.verified_unsubmitted_draft(image_sha, **{**identities, "reading_product_sha256": "0" * 64})
+    source_path = workspace / receipt["reading_product_file"]
     source_path.write_bytes(source_path.read_bytes() + b" ")
-    with pytest.raises(ValueError, match="source hash"):
+    with pytest.raises(ValueError, match="product changed|hash"):
         trial.verified_unsubmitted_draft(image_sha, **identities, expected_receipt_sha256=receipt_sha)
 
 

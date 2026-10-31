@@ -22,7 +22,7 @@ from src.harness_contracts import (
     UsageReported,
 )
 
-from test_agent_runtime import Tools, role, versions
+from test_agent_runtime import record_reserved_request, Tools, role, versions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,6 +138,7 @@ def test_child_overrun_stops_child_while_root_charges_actual_and_sibling_continu
         versions=versions(),
         limits=child_limits,
     )
+    record_reserved_request(engine, reservation)
     engine.started = time.monotonic()
     engine.elapsed_before = 0.0
     engine.answer = None
@@ -171,12 +172,11 @@ def test_child_overrun_stops_child_while_root_charges_actual_and_sibling_continu
         assert overrun.reserved_tokens == 54
         assert overrun.actual_tokens == 55
         assert overrun.overrun_tokens == 1
-        # The unverified fallback profile has a zero reasoning allowance. This
-        # direct-settlement fixture has no durable adapter request, so the
-        # completion/request comparison must remain unknown.
+        # The recorded request makes the actual completion/output-cap comparison
+        # available even when this profile has no additional reasoning allowance.
         assert overrun.reasoning_token_allowance == 0
-        assert overrun.completion_over_max_tokens is None
-        assert overrun.within_profile_allowance is None
+        assert overrun.completion_over_max_tokens == 16
+        assert overrun.within_profile_allowance is False
         assert overrun.root_limit_exceeded is False
         assert overrun.task_limit_exceeded is True
 
@@ -387,6 +387,7 @@ def test_token_and_time_overrun_preserves_full_tokens_and_time_violation_on_resu
         versions=versions(),
         limits=limits,
     )
+    record_reserved_request(engine, reservation)
     engine.started = time.monotonic()
     engine.elapsed_before = 0.0
     engine.answer = None

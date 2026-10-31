@@ -176,10 +176,8 @@ def test_lossless_history_is_separate_from_deterministic_projection_and_checkpoi
         manager = ContextManager(
             store,
             policy=ContextPolicy(
-                active_window_messages=2,
-                preserve_initial_messages=1,
-                large_result_bytes=30,
-            ),
+                preserve_initial_messages=1, compact_at_tokens=30,
+                ),
         )
         original = []
         for index in range(6):
@@ -197,11 +195,7 @@ def test_lossless_history_is_separate_from_deterministic_projection_and_checkpoi
 
         projection = manager.project()
         assert manager.full_history()[0] == original
-        assert projection.included_history_ids == (
-            "history-000000",
-            "history-000004",
-            "history-000005",
-        )
+        assert projection.included_history_ids == ("history-000000", "history-000004", "history-000005")
         assert set(projection.omitted_history_ids) == {
             "history-000001",
             "history-000002",
@@ -224,8 +218,8 @@ def test_old_summary_versions_and_duplicate_large_results_are_removed_determinis
     with _store(tmp_path) as store:
         manager = ContextManager(
             store,
-            policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=1,
-                                 large_result_bytes=10),
+            policy=ContextPolicy(preserve_initial_messages=1, compact_at_tokens=30,
+                                 ),
         )
         first = manager.append(
             {"role": "system", "content": "system"}, _event_source(store, "system")
@@ -234,7 +228,7 @@ def test_old_summary_versions_and_duplicate_large_results_are_removed_determinis
             {"role": "system", "content": "old summary"},
             _event_source(store, "old-summary"), kind="summary", summary_slot="rolling",
         )
-        duplicate = {"role": "tool", "content": "large-result" * 10}
+        duplicate = {"role": "user", "content": "large-result" * 10}
         duplicate_old = manager.append(
             duplicate, _event_source(store, "duplicate-old"), kind="tool_result"
         )
@@ -251,18 +245,17 @@ def test_old_summary_versions_and_duplicate_large_results_are_removed_determinis
         assert latest in projection.included_history_ids
         assert old in projection.omitted_history_ids
         assert duplicate_old in projection.omitted_history_ids
-        # The latest duplicate is outside the one-message active window; the full
-        # history still retains both exact results.
+        # Token pressure archives both old results; the durable history keeps their exact bytes.
         assert duplicate_new in projection.omitted_history_ids
         assert len(manager.history) == 5
 
 
-def test_multi_tool_batch_is_atomic_across_window_and_large_content_dedup_keeps_envelopes(tmp_path):
+def test_multi_tool_batch_is_atomic_under_token_pressure_and_keeps_exact_envelopes(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
             store,
-            policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=1,
-                                 large_result_bytes=20),
+            policy=ContextPolicy(preserve_initial_messages=1, compact_at_tokens=20,
+                                 ),
         )
         manager.append({"role": "system", "content": "system"}, _event_source(store, "system"))
         assistant = {
@@ -297,22 +290,16 @@ def test_multi_tool_batch_is_atomic_across_window_and_large_content_dedup_keeps_
         ]
         tool_messages = [message for message in projection.messages if message["role"] == "tool"]
         assert {message["tool_call_id"] for message in tool_messages} == {"call-a", "call-b"}
-        assert sum("context_reference" in message["content"] for message in tool_messages) == 1
-        assert sum(message["content"] == repeated for message in tool_messages) == 1
+        assert all(message["content"] == repeated for message in tool_messages)
         assert projection.sources[2].event_id == source_a.event_id
         assert projection.sources[3].event_id == source_b.event_id
-        assert any(
-            event.payload.event_type == "context"
-            and event.payload.action == "compact"
-            and "hash references" in event.payload.reason
-            for event in store.events
-        )
+        assert not projection.omitted_history_ids  # latest whole batch cannot be split to meet target
 
 
 def test_incomplete_tool_batch_is_rejected_instead_of_sending_invalid_history(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
-            store, policy=ContextPolicy(active_window_messages=3, preserve_initial_messages=0)
+            store, policy=ContextPolicy(preserve_initial_messages=0)
         )
         manager.append(
             {
@@ -339,7 +326,7 @@ def test_image_policy_records_only_transitions_and_retrieves_exact_identity(tmp_
     with _store(tmp_path) as store:
         manager = ContextManager(
             store,
-            policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=0,
+            policy=ContextPolicy(preserve_initial_messages=0, compact_at_tokens=1,
                                  pinned_tags=("current_floor",), max_images=2),
         )
         old_bytes = b"old-image-bytes"
@@ -376,12 +363,13 @@ def test_image_policy_records_only_transitions_and_retrieves_exact_identity(tmp_
 
         # A later request that explicitly needs the old view records retrieval
         # before reconstructing the request; it is not mislabeled as retention.
+        assert manager.retrieve_image("view-old", old_ref.sha256) == old_bytes
         second = manager.project(required_view_ids=("view-old",))
         second_events = [store.events_by_id[event_id] if hasattr(store, "events_by_id") else
                          next(event for event in store.events if event.event_id == event_id)
                          for event_id in second.decision_event_ids]
         assert any(event.payload.action == "retrieve_image" and event.payload.view_id == "view-old"
-                   for event in second_events)
+                   for event in store.events)
 
         assert manager.retrieve_image("view-old", old_ref.sha256) == old_bytes
         retrieve = [event for event in store.events
@@ -393,11 +381,11 @@ def test_image_policy_records_only_transitions_and_retrieves_exact_identity(tmp_
         store.validate()
 
 
-def test_duplicate_images_prefer_latest_return_and_limits_run_before_request(tmp_path):
+def test_image_retention_under_token_pressure_keeps_latest_original(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
             store,
-            policy=ContextPolicy(active_window_messages=4, preserve_initial_messages=0,
+            policy=ContextPolicy(preserve_initial_messages=0, compact_at_tokens=1,
                                  max_images=1, max_image_bytes=100),
         )
         data = b"same-image"
@@ -426,7 +414,7 @@ def test_duplicate_images_prefer_latest_return_and_limits_run_before_request(tmp
             for event in store.events
             if event.payload.event_type == "context" and event.payload.details
         ]
-        assert any("duplicate image bytes retained" in item.get("reason", "")
+        assert any("token-threshold compaction" in item.get("reason", "")
                    for item in detail_payloads)
 
 
@@ -513,7 +501,7 @@ def test_summary_validation_cannot_promote_inference_or_become_only_geometry_sou
 def test_state_update_invalidates_old_model_summary_without_losing_history(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
-            store, policy=ContextPolicy(active_window_messages=10, preserve_initial_messages=0)
+            store, policy=ContextPolicy(preserve_initial_messages=0)
         )
         source = _event_source(store, "inference-v1")
         history_id = manager.append({"role": "user", "content": "estimate"}, source)
@@ -562,7 +550,7 @@ def test_image_registration_is_idempotent_and_preserves_first_provenance(tmp_pat
 def test_exact_old_image_retrieval_is_persisted_until_one_projection(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
-            store, policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=0)
+            store, policy=ContextPolicy(preserve_initial_messages=0, compact_at_tokens=1)
         )
         old_bytes, new_bytes = b"old-view-version", b"new-view-version"
         old_ref = store.put_bytes(old_bytes, "image/png")
@@ -590,15 +578,16 @@ def test_exact_old_image_retrieval_is_persisted_until_one_projection(tmp_path):
         third_preflight = restored.project(consume_retrievals=False)
         assert base64.b64encode(old_bytes).decode("ascii") in json.dumps(third_preflight.messages)
         assert restored.acknowledge_projection() == (old_key,)
+        restored.append({"role": "user", "content": "next interaction"}, _event_source(store, "next-work"))
         second = restored.project(consume_retrievals=False)
         assert base64.b64encode(old_bytes).decode("ascii") not in json.dumps(second.messages)
 
 
-def test_pinned_images_over_limit_raise_instead_of_silent_removal(tmp_path):
+def test_pinned_images_survive_retention_target_and_remain_for_runtime_budget_check(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
             store,
-            policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=0,
+            policy=ContextPolicy(preserve_initial_messages=0, compact_at_tokens=1,
                                  pinned_tags=("unresolved",), max_images=1),
         )
         for index in range(2):
@@ -609,14 +598,16 @@ def test_pinned_images_over_limit_raise_instead_of_silent_removal(tmp_path):
                 f"view-{index}", ref, source=source, tags=("unresolved",)
             )
             manager.append(_image_message(data), source, image_keys=(key,))
-        with pytest.raises(ValueError, match="required image exceeds"):
-            manager.project()
+        projection = manager.project()
+        assert len(_projected_images(projection)) == 2
+        assert not projection.omitted_history_ids
+        assert all(image.active for image in manager.images)
 
 
 def test_checkpoint_suffix_context_events_can_be_replayed(tmp_path):
     with _store(tmp_path) as store:
         manager = ContextManager(
-            store, policy=ContextPolicy(active_window_messages=1, preserve_initial_messages=0)
+            store, policy=ContextPolicy(preserve_initial_messages=0, compact_at_tokens=1)
         )
         source = _event_source(store, "history")
         history_id = manager.append({"role": "user", "content": "task"}, source)

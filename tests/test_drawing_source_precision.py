@@ -194,17 +194,3 @@ def test_adoption_does_not_hide_real_storey_overlap(tmp_path):
     value["instances"].append({"id": "F2", "template": "typical", "z": 2, "height": 3})
     result = build_parametric(toolkit, json.dumps(value))
     assert not result.get("source_geometry_ready"), result
-
-
-def test_rotated_seed_cannot_import_an_old_local_frame_proof(tmp_path):
-    from src.agent.bim_inputs import prepare_bim_inputs
-    toolkit = Toolkit(drawing_run(tmp_path))
-    result = build_parametric(toolkit, json.dumps(rotated_plan()))
-    assert result["source_geometry_ready"], result
-    seed = toolkit.run / result["candidate"]
-    before = (seed / "proposal.json").read_bytes()
-    with pytest.raises(ValueError, match="architectural|Lite BIM grid"):
-        prepare_bim_inputs(tmp_path / "recovery", images_path=tmp_path / "originals", mesh_path=None,
-            building_input_path=None, scope="Synthetic recovery with no inherited context.",
-            image_kind="drawings", max_candidates=5, seed_path=seed, floor_images=["plan.png"])
-    assert (seed / "proposal.json").read_bytes() == before

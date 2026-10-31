@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from src.agent.judge.source_partition import compare_partitions
+from scripts.dev.evaluation.source_partition import compare_partitions
 
 
 def _room(identity, polygon, *, floor="F1", z=0.0, height=3.0):

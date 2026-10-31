@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GROUPS = {"fast", "targeted", "node", "historical"}
+GROUPS = {"fast", "targeted", "node"}
 
 
 @lru_cache(maxsize=1)
@@ -27,5 +27,5 @@ def unclassified():
 def files_for(scope):
     if scope not in GROUPS:
         raise ValueError(f"unknown check scope: {scope}")
-    included = {"fast"} if scope == "fast" else ({"historical"} if scope == "historical" else {"fast", "node"})
+    included = {"fast"} if scope == "fast" else {"fast", "node"}
     return sorted(path for path, entry in inventory().items() if entry["group"] in included)

@@ -6,21 +6,21 @@ import math
 import pytest
 from shapely.geometry import Polygon
 
-from src.agent.correction.parse import ensure_corrected_geometry
-from src.agent.correction.schema import FootprintRing, SourceBoundary
+from src.agent.geometry_model.parse import parse_geometry
+from src.agent.geometry_model.schema import FootprintRing, SourceBoundary
 from src.agent.geometry import source_bim as source
 
 
-def _legacy_on_wall(vertices, boundary):
+def _reference_on_wall(vertices, boundary):
     origin = boundary.vertices[0][:2]
-    direction, _ = source._frame(origin, boundary.vertices[1][:2])
+    direction, _ = source.wall_frame(origin, boundary.vertices[1][:2])
     if any(abs((v[0]-origin[0])*direction[1] - (v[1]-origin[1])*direction[0]) > source.EPS
            for v in vertices):
         return None
-    return source._project(vertices, origin, direction)
+    return source.project_to_wall(vertices, origin, direction)
 
 
-def _legacy_contacts(boundaries):
+def _reference_pair_contacts(boundaries):
     """Frozen original pair loop; intentionally recomputes its invariants."""
     relations = []
     for a, b in combinations(sorted(boundaries.values(), key=lambda b: b.id), 2):
@@ -28,15 +28,15 @@ def _legacy_contacts(boundaries):
             continue
         regions = []
         if a.geometry_type == b.geometry_type == "wall":
-            if float(source._newell(a.vertices) @ source._newell(b.vertices)) > -1 + source.EPS:
+            if float(source.polygon_normal(a.vertices) @ source.polygon_normal(b.vertices)) > -1 + source.EPS:
                 continue
-            projected = _legacy_on_wall(b.vertices, a)
+            projected = _reference_on_wall(b.vertices, a)
             if projected is None:
                 continue
-            contact = _legacy_on_wall(a.vertices, a).intersection(projected)
+            contact = _reference_on_wall(a.vertices, a).intersection(projected)
             origin = a.vertices[0][:2]
-            direction, _ = source._frame(origin, a.vertices[1][:2])
-            lift = lambda ring: source._lift(list(ring), origin, direction)
+            direction, _ = source.wall_frame(origin, a.vertices[1][:2])
+            lift = lambda ring: source.lift_from_wall(list(ring), origin, direction)
         elif {a.geometry_type, b.geometry_type} == {"floor", "ceiling"}:
             if abs(a.vertices[0][2] - b.vertices[0][2]) > source.EPS:
                 continue
@@ -79,7 +79,7 @@ def _horizontal(identity, kind, points, z):
 def _assert_equivalent(boundaries):
     expected = copy.deepcopy(boundaries)
     actual = copy.deepcopy(boundaries)
-    relations = _legacy_contacts(expected)
+    relations = _reference_pair_contacts(expected)
     assert source._contacts(actual) == relations
     assert {key: row.model_dump() for key, row in actual.items()} == {
         key: row.model_dump() for key, row in expected.items()}
@@ -149,7 +149,7 @@ def _geometry(case):
                                       "polygon": [[0, 0], [4, 0], [2, 2]]},
                                      {"id": f"b{i}", "x": [0, 2], "y": [0, 4],
                                       "polygon": [[0, 0], [2, 2], [0, 4]]}]})
-        return ensure_corrected_geometry({
+        return parse_geometry({
             "schema_version": "source_polygon_v1", "footprint_x": [0, 4], "footprint_y": [0, 4],
             "floors": floors, "openings": [{"id": "shared_door", "kind": "door", "space_id": "a0",
                 "other_space_id": "b0", "p1": [.5, .5], "p2": [1.5, 1.5], "z": [0, 2.1],
@@ -164,7 +164,7 @@ def _geometry(case):
     floors.append({"name": "CORE", "z_floor": 0, "ceiling_height": 9,
                    "footprint": {"vertices": [[3, 0], [4, 0], [4, 4], [3, 4]]},
                    "cells": [{"id": "core", "role": "stairwell", "x": [3, 4], "y": [0, 4]}]})
-    geometry = ensure_corrected_geometry({"schema_version": "2", "footprint_x": [0, 4],
+    geometry = parse_geometry({"schema_version": "2", "footprint_x": [0, 4],
                                           "footprint_y": [0, 4], "floors": floors})
     for floor in geometry.floors:
         floor.footprint = FootprintRing.model_validate(floor.footprint)
@@ -172,14 +172,14 @@ def _geometry(case):
 
 
 @pytest.mark.parametrize("case", ["diagonal", "spanning_core"])
-def test_full_source_contacts_ids_opening_hosts_and_hash_exactly_match_legacy(case, monkeypatch):
+def test_full_source_contacts_ids_opening_hosts_and_hash_exactly_match_reference(case, monkeypatch):
     geometry, profile = _geometry(case)
     current = source.build_source_bim(geometry.model_copy(deep=True), capability_profile=profile)
-    monkeypatch.setattr(source, "_contacts", _legacy_contacts)
-    legacy = source.build_source_bim(geometry.model_copy(deep=True), capability_profile=profile)
+    monkeypatch.setattr(source, "_contacts", _reference_pair_contacts)
+    reference = source.build_source_bim(geometry.model_copy(deep=True), capability_profile=profile)
     assert current["validation"]["status"] == "pass"
     assert current["boundary_relations"]
-    assert current == legacy
+    assert current == reference
 
 
 def test_normal_computation_is_linear_and_cache_does_not_survive_a_call(monkeypatch):
@@ -188,7 +188,7 @@ def test_normal_computation_is_linear_and_cache_does_not_survive_a_call(monkeypa
         rows.extend([_wall(f"{i:02d}/a", z=(i*3, i*3+3)),
                      _wall(f"{i:02d}/b", z=(i*3, i*3+3), reverse=True)])
     boundaries = {row.id: row for row in rows}
-    original = source._newell
+    original = source.polygon_normal
     count = 0
 
     def counted(vertices):
@@ -196,16 +196,16 @@ def test_normal_computation_is_linear_and_cache_does_not_survive_a_call(monkeypa
         count += 1
         return original(vertices)
 
-    monkeypatch.setattr(source, "_newell", counted)
-    expected = _legacy_contacts(copy.deepcopy(boundaries))
-    legacy_count = count
+    monkeypatch.setattr(source, "polygon_normal", counted)
+    expected = _reference_pair_contacts(copy.deepcopy(boundaries))
+    reference_count = count
     count = 0
     assert source._contacts(copy.deepcopy(boundaries)) == expected
     assert count == len(rows)
-    assert legacy_count == len(rows)*(len(rows)-1)
+    assert reference_count == len(rows)*(len(rows)-1)
     # Reusing the same IDs with new geometry must recompute, not reuse a cache.
     for vertex in boundaries["00/b"].vertices:
         vertex[1] += 1
-    expected_changed = _legacy_contacts(copy.deepcopy(boundaries))
+    expected_changed = _reference_pair_contacts(copy.deepcopy(boundaries))
     assert expected_changed != expected
     assert source._contacts(copy.deepcopy(boundaries)) == expected_changed

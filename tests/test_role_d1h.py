@@ -113,7 +113,7 @@ def deliver_plan(session, task_id, floor, *, previous=None):
     if previous:
         task.update(previous_task_id=previous, issues=["space name corrected"], rework_targets=["plan.space_seeds:room"])
     task = session._task(task)
-    plan = {"floor_id": floor, "z_floor": {"value": 0 if floor == "F1" else 3000, "unit": "mm"},
+    plan = {"reading_type": "plan", "floor_id": floor, "z_floor": {"value": 0 if floor == "F1" else 3000, "unit": "mm"},
         "ceiling_height": {"value": 3000, "unit": "mm"},
         "x_anchors": [[1, 0], [11, 10]], "y_anchors": [[1, 6], [7, 0]],
         "basis": "plan height assumption", "footprint_pixels": [[1, 1], [11, 1], [11, 7], [1, 7]],
@@ -124,12 +124,15 @@ def deliver_plan(session, task_id, floor, *, previous=None):
     trial = session.registry.child(task_id).task_directory / "bim/trial_workspace"
     shutil.copytree(session.run_directory / "images", trial / "images")
     shutil.copy2(session.run_directory / "inputs.json", trial / "inputs.json")
-    result = Toolkit(trial).build_plan("plan.png", json.dumps(plan))
-    assert result["source_geometry_ready"], result
-    source = trial / result["candidate"] / "source_model.json"
-    session.registry.save(task, status="completed", artifact={"plan": plan, "unresolved": []}, validation={
-        "validation_passed": True, "candidate": result["candidate"],
-        "candidate_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
+    from tests.test_role_trial import example, Tools
+    from src.agent.runtime_roles.trial import PlanTrial
+    plan["wall_metadata"] = example()["wall_metadata"]
+    reading = PlanTrial(Tools(), image_name="plan.png", workspace=trial,
+                        receipt_directory=trial / "trial_receipts")
+    result = asyncio.run(reading.run(plan))
+    assert result["reading_geometry_ready"], result
+    session.registry.save(task, status="completed", artifact={"plan": reading.numeric_plan(result), "unresolved": []},
+                          validation={**result, "validation_passed": True})
 
 
 def test_repeated_assembly_and_one_floor_rework_reuse_unaffected_build(tmp_path):
