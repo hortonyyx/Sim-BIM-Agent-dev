@@ -4,6 +4,8 @@
 
 2026-10-31 成品发布交接：[Sim-BIM 与 HTML 清理版](reports/2026-10-31_clean_product_release.md)。开发远端现为 `Sim-BIM-Agent-dev`，独立成品接管 `Sim-BIM-Agent`；发布范围不含旧评测/legacy/RAG/EP。源 runtime44/domain156，成品为独立内容身份；真实模型与前端未在本轮实施，后续产品结构由主线决定。该记录补充发布事实，不覆盖用户尚未提交的 roadmap 讨论。
 
+同日后续：[成品公开与用户说明](reports/2026-10-31_public_product_readme.md)。成品已按用户授权公开，最新 `release-2026-10-31.3`；README 改为安装、资料、模型配置、运行与结果说明，含已离线核对的 DeepSeek Flash 示例。程序与依赖未改，内部维护事务留在开发库。
+
 2026-10-26 讨论入口：[当前问题与跨模型讨论背景](reports/2026-10-26_harness_value_discussion_brief.md)，以及随后与用户讨论的[价值口径与对照基线](reports/2026-10-26_harness_value_axes_discussion.md)。用户澄清：更快、更好按同 model、同配置衡量，“至少快一半”不是硬门槛；更省指提高弱模型承担的比重，不比 token。以往通用组已拿到 BIM rules（文字）和部分 methods（文字），不能据此判 harness 无用；近期局部 B 是指定原生路径，也不能据此判定完全可选工具成为负担。指代按[术语](project/terminology.md) 2026-10-26 补充。两份文档均无程序改动或模型实验，实施状态仍以当前交接为准。
 
 ## 每次开始
