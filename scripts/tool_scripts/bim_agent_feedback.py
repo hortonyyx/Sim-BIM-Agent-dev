@@ -30,7 +30,7 @@ def resolve_image_name(images, name):
                      "not a measurement label. Available filenames: " + json.dumps(sorted(images)))
 
 
-_NAMED_IMAGE_TOOLS = {"view_image", "pixel_profile", "view_pixel_profile",
+_NAMED_IMAGE_TOOLS = {"view_image", "view_pixel_profile",
                       "view_pixel_region_overview", "view_pixel_region"}
 
 
@@ -93,7 +93,7 @@ def repair_hint(toolkit, tool, arguments, message):
         return "Use claim_transaction action=apply, or action=decide with disposition=deferred and a reason."
     if "stale for" in message:
         return "Read the reported changed targets/views/values; record new evidence for those targets. Unchanged targets can be handled separately in claim_transaction."
-    if tool == "revise_plan_bim":
+    if tool == "revise_plan_bim" and "operation" in message.lower():
         try:
             ops = json.loads(arguments.get("operations_json", "[]"))
             if not isinstance(ops, list):
@@ -138,8 +138,10 @@ def repair_hint(toolkit, tool, arguments, message):
         return 'Next: read get_bim_reference(topic="wall_dimensions") for the explicit wall reference and position format.'
     if tool == "compare_facade_spans":
         return 'Next: read get_bim_reference(topic="facade_correspondence") for independently declared axis anchors and opening spans.'
-    if tool in {"prepare_elevation_reading", "apply_elevation_readings"}:
+    if tool in {"prepare_elevation_reading", "apply_elevation_readings", "finish_bim"}:
         return 'Next: read get_bim_reference(topic="drawing_process") for the reading, review and application format.'
+    if tool == "revise_plan_bim":
+        return 'Next: read get_bim_reference(topic="plan_partition") for saved plan revisions and draft identity.'
     return "Next: read get_bim_reference(topic=" + json.dumps(
         "claims" if "claim" in tool else "edits" if "revise" in tool else "plan_partition") + ") for the operation format."
 
