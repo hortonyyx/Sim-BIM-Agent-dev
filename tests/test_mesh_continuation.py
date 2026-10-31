@@ -181,6 +181,19 @@ def test_native_mesh_saved_candidate_continues_to_handoff_and_resume(tmp_path, m
     if worker_count:
         assert first["mesh_workers"]["tasks"][0]["status"] == "child_model_budget_exhausted"
     source = ReadOnlyRun(original)
+    source_tool_names = [event.payload.tool_name for event in source.all_events
+                         if event.payload.event_type == "tool_invocation"]
+    assert source_tool_names == ["build_bim", *(["delegate_mesh_workers"] if worker_count else []),
+                                 "view_mesh", "overlay_mesh_candidate"]
+    source_model_calls = sum(event.payload.event_type == "adapter_request" for event in source.all_events)
+    if worker_count:
+        child = source.for_task("unfinished", source.task_id)
+        child_receipt = source.read_json((child.task_directory / "receipt.json").relative_to(source.directory))
+        # The only child request is reserved for its answer. A tool request on
+        # that turn is not executed and must not consume a tool allowance.
+        assert child_receipt["model_calls"] == 1
+        assert child_receipt["tool_calls"] == 0
+        assert not any(event.payload.event_type == "tool_invocation" for event in child.events)
     before = tree_hashes(original)
     requested = runtime_entry.RunLimits.model_validate(EventStore.latest_checkpoint(source)[1]["config"]["limits"])
     inspect_mesh_continuation(original, tmp_path / "not-created", requested, root=root,
@@ -221,8 +234,8 @@ def test_native_mesh_saved_candidate_continues_to_handoff_and_resume(tmp_path, m
     assert [e.payload.tool_name for e in events if e.payload.event_type == "tool_invocation"] == (
         ["read_mesh_worker", "finish_bim"] if worker_count else ["finish_bim"])
     imported = json.loads((continued / "continuation_manifest.json").read_bytes())
-    assert imported["effective_limits"]["model_calls"] == 12 - 2 * worker_count
-    assert imported["effective_limits"]["tool_calls"] == 21 - 2 * worker_count
+    assert imported["effective_limits"]["model_calls"] == requested.model_calls - source_model_calls
+    assert imported["effective_limits"]["tool_calls"] == requested.tool_calls - len(source_tool_names)
     assert imported["effective_limits"]["seconds"] is None
     args.continue_from = args.source_events_sha256 = None
     args.resume = True
