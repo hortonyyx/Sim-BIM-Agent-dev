@@ -9,11 +9,17 @@
 - 无 Git 的构建和安装导出：`D:/Sim-BIM-Agent/releases/`
 - 验收证据、环境和临时数据：成品 Git 跟踪范围之外。
 
-## 首版文件边界
+`Sim-BIM-Agent` 已由成品仓库接管，旧开发 URL 不再用于定位开发历史。首次设置或更换 remote 时按上面的仓库 ID 验证身份，开发与成品不得共用同一个 origin URL；本地目录名称保持不变。
 
-沿用 `build_product.py` 当前已追踪源文件选择。输入案例、评测答案、实验记录、开发报告、tests、开发 Git 历史、凭据和运行产物不进入包。全部被当前 runtime/domain 登记的文件、完整版本表、共享依赖及可选 EnergyPlus 资源保持原样。部分历史评测工具是当前不可变 domain 的已登记成员；本轮保留其代码以维持核验，不带其评测数据。后续裁剪由开发主线统一实施并登记新版本，不能在发布端悄悄改旧版本。
+## 当前成品文件边界
 
-构建从固定 Git 提交直接读取文件，Windows `.cmd`、`.bat`、`.ps1` 启动脚本显式输出 CRLF，其余保持提交字节，不依赖开发工作区的换行状态。`.gitignore` 排除本地环境、缓存及用户文件；`.gitattributes` 使用 `* -text` 保留已验证发行字节，避免 Windows Git 自动换行转换破坏清单 SHA-256。成品 Git 的完整跟踪集合必须等于 manifest 中的文件加 `release-manifest.json`。发布说明由开发库的 `product/README.md` 生成；没有另一份需要手工维护的产品源码。
+成品范围止于 Sim-BIM 和 HTML 查看器。由当前入口、真实工具与必要资源的运行闭包生成发布内容；旧 GT/评测脚本、历史编排、RAG、EnergyPlus 服务/转换/运行以及 IDD/天气数据均不属于成品。开发库保留这些历史代码和完整版本记录。成品使用单独生成的依赖锁和当前版本登记，记录源提交及源版本关系；不能通过沿用旧版本号或跳过核验来裁剪文件。旧运行是否可恢复以身份核验结果为准，不承诺跨版本强行恢复。
+
+输入案例、评测答案、实验记录、开发报告、tests、开发 Git 历史、凭据和运行产物也不进入包。生成策略和资源范围由发布代码管理；增加当前功能时先在开发库修改、测试，再重建成品，不能在成品仓库手工补文件。
+
+构建从固定 Git 提交直接读取文件；普通源码保持提交字节，Windows `.cmd`、`.bat`、`.ps1` 启动脚本显式输出 CRLF。包入口 facade、依赖项目文件和当前版本登记由同一提交内的策略生成，每个成品文件的来源与转换记录在 manifest 的 `projection.file_origins` 中，不依赖开发工作区的换行状态。`.gitignore` 排除本地环境、缓存及用户文件；`.gitattributes` 使用 `* -text` 保留已验证发行字节，避免 Windows Git 自动换行转换破坏清单 SHA-256。成品 Git 的完整跟踪集合必须等于 manifest 中的文件加 `release-manifest.json`。发布说明由开发库的 `product/README.md` 生成；没有另一份需要手工维护的产品源码。
+
+`scripts/release/product_profile.json` 定义入口、必要动态资源、禁入子系统和依赖映射；`product_projection.py` 计算运行闭包，遇到未声明的动态导入或禁入子系统会拒绝构建。依赖范围变化时先运行 `python scripts/release/prepare_product_dependencies.py D:/Sim-BIM-Agent/cache/<new-dependency-stage>`，审阅生成的 `product-runtime.lock` 与元数据再提交；生成器离线复用开发锁版本，不能静默升级共同包。固定代码提交后在开发库正常 `python -m src.agent_runtime.agent_registry register` 并提交新登记，再构建。成品登记由构建器生成，不能在安装目录修改登记或补旧版本 alias 来恢复旧运行。
 
 ## 每次发布
 

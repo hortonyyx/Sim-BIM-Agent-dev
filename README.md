@@ -1,6 +1,6 @@
 # Sim-BIM Agent dev
 
-从图纸、文字和带贴图三维网格生成可查看、可修改、可供下游分析使用的轻量 BIM。当前有两条输入线：较完善的图纸分工（调度员加平面、立面读图员），以及开发中的 textured mesh 单模型路线；近期还通过 domain 的 Python SDK 在 Codex runtime 上做对照。桌面发布版目前只含图纸线。EnergyPlus 是可选下游。稳定识读质量、完整编辑界面与真实 ChatGPT 订阅推理仍有独立验收边界。
+从图纸、文字和带贴图三维网格生成轻量 BIM 与 HTML 查看器。当前实现包含图纸分工（调度员加平面、立面读图员）以及 textured mesh 单模型入口，后续产品结构继续由本开发主线迭代。独立成品范围止于 Sim-BIM 与查看器，不包含本库保留的旧评测流程、RAG 或 EnergyPlus 下游。模型识读质量、完整编辑界面和真实服务连通仍有独立验收边界。
 
 本仓库位于 `D:\Sim-BIM-Agent\repo`，GitHub 开发主库为 [hortonyyx/Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)。已验收成品发布到独立的 [Sim-BIM Agent](https://github.com/hortonyyx/Sim-BIM-Agent) 仓库；本地成品目录为 `D:\Sim-BIM-Agent\product-repo`。桌面固定入口保持 `Sim BIM Agent`，从已提交的发布包原位更新，见 [更新与回滚](AI_agent/workflow/development.md)。日常在开发库修改代码，验证后生成成品；不在成品目录累计开发历史。
 

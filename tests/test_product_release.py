@@ -9,22 +9,26 @@ import sys
 import pytest
 from PIL import Image
 
-from scripts.release.build_product import selected_payload
+from scripts.release.product_projection import project_sources
 from scripts.release.verify_product import _input_routes_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_payload_keeps_runtime_resources_and_excludes_development_evidence():
-    files = ["src/agent_runtime/agent_versions.json", "src/agent/data/room_types.json",
-             "scripts/tool_scripts/vendor/three.min.js", "scripts/tool_scripts/affected_tests.py",
-             "AI_agent/logs/old.json", "case_tests/gt.json", "tests/test_x.py", ".env",
-             "product/README.md", "product/config.example.json", "product/Start.cmd", "sim_bim.py",
-             "src/agent/legacy/intake/reading/guide.md", "skills/unused/guide.md"]
-    selected = selected_payload(files)
-    assert set(selected) == {"src/agent_runtime/agent_versions.json", "src/agent/data/room_types.json",
-                             "scripts/tool_scripts/vendor/three.min.js", "README.md", "config.example.json",
-                             "Start.cmd", "sim_bim.py", "src/agent/legacy/intake/reading/guide.md"}
+    files = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                                    cwd=ROOT).decode().split("\0")
+    sources = {name: (ROOT / name).read_bytes() for name in files if name and (ROOT / name).is_file()}
+    selected, origins, _, _ = project_sources(sources)
+    assert {"src/agent/data/room_types.json", "src/agent_runtime/model_profiles.json",
+            "scripts/tool_scripts/vendor/three.min.js", "README.md", "config.mesh.example.json",
+            "Start.cmd", "sim_bim.py"}.issubset(selected)
+    assert not any(name.startswith(("data/", "src/agent/judge/", "src/agent/legacy/", "src/rag/",
+                                   "src/mcp/", "src/converters/", "tests/", "AI_agent/")) for name in selected)
+    assert "src/agent/sdk.py" not in selected
+    assert "src/validator/data_model.py" not in selected
+    assert origins["src/agent/execution/__init__.py"]["transform"] == "package_facade"
+    assert "scripts/tool_scripts/evaluate_bim_agent.py" not in selected
 
 
 def test_cli_help_does_not_import_old_pipeline_or_need_git():

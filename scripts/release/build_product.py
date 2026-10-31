@@ -1,4 +1,4 @@
-"""Build a new immutable source distribution from a committed, verified checkout."""
+"""Build the current BIM product from one committed development tree."""
 from __future__ import annotations
 
 import argparse
@@ -12,20 +12,16 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from scripts.release.product_projection import (
+    PROFILE, REGISTRY, json_bytes, project_sources, register_projection, sha, with_dependencies,
+)
 
 
-def selected_payload(tracked):
-    selected = {}
-    for name in tracked:
-        if name.startswith(("src/", "scripts/tool_scripts/", "data/")) or name in {
-                "pyproject.toml", "uv.lock", ".python-version", "sim_bim.py",
-                "scripts/glm_code.py", "scripts/glm_code.sh"}:
-            if Path(name).name in {"affected_tests.py", "affected_tests_rules.yaml"}:
-                continue
-            selected[name] = name
-        if name.startswith("product/"):
-            selected[name.removeprefix("product/")] = name
-    return selected
+def committed_sources(root, commit):
+    """Read archive members as bytes; never extract archive paths to disk."""
+    archived = subprocess.check_output(["git", "archive", "--format=tar", commit], cwd=root)
+    with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as tree:
+        return {item.name: tree.extractfile(item).read() for item in tree if item.isfile()}
 
 
 def build(destination: Path):
@@ -35,49 +31,40 @@ def build(destination: Path):
         raise ValueError("Use a new destination; existing releases are never overwritten")
     if destination.is_relative_to(ROOT):
         raise ValueError("Build releases outside the development checkout")
-    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
-    selected = selected_payload(filter(None, tracked))
-    if "README.md" not in selected or "Start.cmd" not in selected:
-        raise ValueError("Commit product entry files before building")
-    # Only payload changes affect this build; in-progress reports can remain unstaged.
-    subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", *selected.values()], cwd=ROOT,
+    # Reports may remain uncommitted, but all source, dependency and projection
+    # implementation inputs must belong to the one sealed source commit.
+    subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", "src", "scripts", "product",
+                    "pyproject.toml", "uv.lock", ".python-version", "sim_bim.py"], cwd=ROOT,
                    check=True, stdout=subprocess.DEVNULL)
-    records = release_records(ROOT)
+    release_records(ROOT)
     commit = source_commit(ROOT)
-    for original in selected.values():
-        path = ROOT / original
-        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(ROOT):
-            raise ValueError(f"Invalid payload path: {original}")
-    # Read the immutable Git tree, not checkout bytes affected by core.autocrlf
-    # or nested attributes. Windows launch scripts have an explicit output format.
-    archived = subprocess.check_output(["git", "archive", "--format=tar", commit, "--", *selected.values()], cwd=ROOT)
-    with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as tree:
-        committed = {}
-        for relative, original in selected.items():
-            item = tree.getmember(original)
-            if not item.isfile():
-                raise ValueError(f"Invalid committed payload path: {original}")
-            data = tree.extractfile(item).read()
-            if Path(relative).suffix.casefold() in {".cmd", ".bat", ".ps1"}:
-                data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-            committed[relative] = data
+    sources = committed_sources(ROOT, commit)
+    payload, origins, profile, imports = project_sources(sources)
+    requirements = with_dependencies(sources, payload, origins, profile, imports)
     destination.mkdir(parents=True)
-    files = {}
-    for relative, original in sorted(selected.items()):
+    for relative, data in sorted(payload.items()):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(committed[relative])
-        files[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+        target.write_bytes(data)
+    registry, projection = register_projection(destination, sources=sources, commit=commit, profile=profile)
+    registry_bytes = json_bytes(registry)
+    (destination / REGISTRY).write_bytes(registry_bytes)
+    payload[REGISTRY] = registry_bytes
+    origins[REGISTRY] = {"source": REGISTRY, "source_sha256": sha(sources[REGISTRY]),
+                         "transform": "current_product_registration"}
+    files = {name: sha(data) for name, data in sorted(payload.items())}
     manifest = {"schema_version": "sim-bim-release.v1", "source_commit": commit,
-                "runtime_version": records["runtime"]["version_id"],
-                "domain_version": records["domain"]["version_id"], "files": files,
+                "runtime_version": registry["current_runtime_version"],
+                "domain_version": registry["current_domain_version"], "files": files,
+                "projection": {**projection, "profile": profile, "file_origins": origins,
+                               "direct_dependencies": requirements},
                 "environment": "Rebuild with uv sync --frozen --no-dev --no-install-project; .venv is not payload"}
-    (destination / "release-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (destination / "release-manifest.json").write_bytes(json_bytes(manifest))
     release_records(destination)
     return {"directory": str(destination), "files": len(files),
-            "payload_bytes": sum((destination / name).stat().st_size for name in files),
-            "source_commit": manifest["source_commit"], "runtime_version": manifest["runtime_version"],
-            "domain_version": manifest["domain_version"]}
+            "payload_bytes": sum(map(len, payload.values())), "source_commit": commit,
+            "runtime_version": manifest["runtime_version"], "domain_version": manifest["domain_version"],
+            "direct_dependencies": len(requirements)}
 
 
 if __name__ == "__main__":

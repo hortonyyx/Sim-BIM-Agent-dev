@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_product_projection.py": {
+      "group": "targeted",
+      "reason": "Current BIM product import closure, locked dependency projection, immutable content identities and shared geometry compatibility"
+    },
     "tests/test_product_repository.py": {
       "group": "targeted",
       "reason": "Manifest-owned product Git synchronization, byte-preserving clone/export, source validation and local-file protection"
