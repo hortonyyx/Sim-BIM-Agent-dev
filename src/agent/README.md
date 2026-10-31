@@ -74,8 +74,8 @@ schemas still contain shared or optional consumers: their names do not define
 the current task sequence. Do not delete them without inspecting dependencies.
 
 The development repository's
-[architecture](https://github.com/hortonyyx/Sim-BIM-Agent/blob/main/AI_agent/design/architecture.md)
-and [lineage](https://github.com/hortonyyx/Sim-BIM-Agent/blob/main/AI_agent/design/domain_lineage.md)
+[architecture](https://github.com/hortonyyx/Sim-BIM-Agent-dev/blob/main/AI_agent/design/architecture.md)
+and [lineage](https://github.com/hortonyyx/Sim-BIM-Agent-dev/blob/main/AI_agent/design/domain_lineage.md)
 explain current boundaries and what was reused, transformed or added. These
 development documents are not bundled in the product. New tasks start from the
 current tool and role guidance above, never from a staged prompt library.

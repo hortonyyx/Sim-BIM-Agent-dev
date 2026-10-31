@@ -24,7 +24,7 @@ and are excluded from isolated reader workspaces.
 These resources ship with their optional consumers and are included in domain file
 hashes. No current role automatically reads them. Historical instructions can be
 recovered through the development repository's
-[archive index](https://github.com/hortonyyx/Sim-BIM-Agent/blob/main/AI_agent/reports/archive-index.md);
+[archive index](https://github.com/hortonyyx/Sim-BIM-Agent-dev/blob/main/AI_agent/reports/archive-index.md);
 new cases use its
-[current run guide](https://github.com/hortonyyx/Sim-BIM-Agent/blob/main/AI_agent/workflow/run_case.md).
+[current run guide](https://github.com/hortonyyx/Sim-BIM-Agent-dev/blob/main/AI_agent/workflow/run_case.md).
 These development documents are not bundled in the product.

@@ -1,6 +1,8 @@
-# Sim BIM Agent
+# Sim-BIM Agent
 
 从建筑图纸或带贴图的三维网格生成轻量 BIM 和 HTML 查看器。一个程序提供两个输入入口，共用源 BIM、几何工具、查看器和自有 runtime；运行不需要 Codex 进程。模型调用需要用户自己的账号授权或 API 凭据。
+
+本仓库为 [Sim-BIM Agent 成品](https://github.com/hortonyyx/Sim-BIM-Agent)；程序开发与问题修复在 [Sim-BIM Agent dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，验收后再生成本仓库。
 
 ## 安装与启动
 

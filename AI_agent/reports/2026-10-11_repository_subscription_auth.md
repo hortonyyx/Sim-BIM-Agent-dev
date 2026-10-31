@@ -1,5 +1,7 @@
 # 2026-10-11 仓库改名与 ChatGPT 订阅授权
 
+> 后续命名说明（2026-10-31）：本页记录当时的开发仓库名称。该仓库现位于 [Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，原 `Sim-BIM-Agent` 名称现交给成品仓库；查看本页所述源码提交时应使用开发库的新地址。
+
 用户要求将 GitHub 仓库改名为 `Sim-BIM-Agent`，并允许启动此前暂缓的 ChatGPT 订阅授权。本轮完成仓库改名、独立账号授权、开发入口与桌面产品的模型目录核验。程序未修改，runtime/domain 版本不变。
 
 ## GitHub 与本地仓库

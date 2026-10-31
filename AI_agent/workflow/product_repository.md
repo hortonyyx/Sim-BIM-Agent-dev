@@ -4,6 +4,8 @@
 
 - 开发库：`D:/Sim-BIM-Agent/repo`
 - 成品库：`D:/Sim-BIM-Agent/product-repo`
+- 开发远端：`https://github.com/hortonyyx/Sim-BIM-Agent-dev`（仓库 ID `1216622598`）
+- 成品远端：`https://github.com/hortonyyx/Sim-BIM-Agent`（仓库 ID `1440941560`）
 - 无 Git 的构建和安装导出：`D:/Sim-BIM-Agent/releases/`
 - 验收证据、环境和临时数据：成品 Git 跟踪范围之外。
 

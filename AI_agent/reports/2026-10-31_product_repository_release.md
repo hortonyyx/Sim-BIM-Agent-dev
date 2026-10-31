@@ -1,5 +1,7 @@
 # 2026-10-31 现状成品仓库交付
 
+> 后续命名说明：本页保存首次快照发布记录。开发仓库现名为 [Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，成品仓库现名为 [Sim-BIM-Agent](https://github.com/hortonyyx/Sim-BIM-Agent)。下方旧仓库名与首次内容保留为历史，不代表后续清理版。
+
 按用户授权建立独立成品 Git 仓库，沿用当前 Python 源码发行形态与 PNG 图纸、GLB＋辅助材料两个入口。本轮只做发布工程，不新增前端、模型策略、交互编辑或最终产品架构；后续统一多模态产品方向由开发主线继续决定。
 
 ## 成品身份
