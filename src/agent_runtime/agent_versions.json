@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v46-20261101",
-  "current_domain_version": "domain-v166-20261101",
+  "current_domain_version": "domain-v167-20261101",
   "runtime_versions": {
     "runtime-v46-20261101": {
       "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v166-20261101": {
-      "source_commit": "795063e27dd24c2f672e92eef2bce8c4e252e6b8",
+    "domain-v167-20261101": {
+      "source_commit": "2208cb4e2c899bbfc8086f32dd7786c3437e56a2",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -341,7 +341,7 @@
         },
         "scripts/tool_scripts/run_bim_agent.py": {
           "kind": "task_description",
-          "sha256": "532d4b729a33d654a26c510064cf9578dd9bdcf46e8fbf9db3aad9df8bc29173"
+          "sha256": "41e13b6bac088fdda3472e45bc4b2f69335754d183df68acd081957877ddd93a"
         },
         "scripts/tool_scripts/vendor/OrbitControls.js": {
           "kind": "tool",
@@ -401,7 +401,7 @@
         },
         "src/agent/execution/source_proposal.py": {
           "kind": "tool",
-          "sha256": "a98ec740278b0b0f06d1e8227527ece4c91d7910a0275f66700bc425e845cd35"
+          "sha256": "a9e5586d5d13866786b3959d4f9d82df5437c856aecf45efc6e82d083e3077e7"
         },
         "src/agent/geometry/__init__.py": {
           "kind": "tool",
@@ -577,7 +577,7 @@
         },
         "src/agent/geometry/source_bim.py": {
           "kind": "tool",
-          "sha256": "ae985975bda08a261de950f953d5287fde9651bdfc21f9bf939bf8cfec7d8b9f"
+          "sha256": "925375c1486f82dfab2a451540c9bb21a2034d167b12366e0f09bd87e2f51049"
         },
         "src/agent/geometry/source_curves.py": {
           "kind": "tool",

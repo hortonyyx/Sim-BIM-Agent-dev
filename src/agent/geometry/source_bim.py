@@ -565,9 +565,8 @@ def build_source_bim(geom: GeometryInput, *, capability_profile="orthogonal_poly
 def source_view_geometry(source: dict) -> dict:
     """Project full source boundaries into the existing viewer's display schema.
 
-    Display names map straight back to source IDs. No thermal boundary condition
-    is synthesized. Coincident display overlap is handled
-    by the renderer, never by changing the authoritative source.
+    Display names map straight back to source IDs. The renderer handles coincident
+    display overlap without changing the authoritative source.
     """
     expected = _digest({k:v for k,v in source.items() if k != "source_model_sha256"})
     if source.get("schema_version") not in {"source_bim_v2", "source_bim_v3"} or source.get("source_model_sha256") != expected:
