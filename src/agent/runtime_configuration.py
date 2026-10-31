@@ -128,6 +128,13 @@ def resolve_supplemental_inputs(case: dict) -> tuple[Path | None, Path | None]:
 
 def load_configuration(path: Path, *, low_output_limit_reason: str | None = None) -> dict:
     value = json.loads(path.read_bytes())
+    if not isinstance(value, dict):
+        raise ValueError("configuration must be a JSON object")
+    missing = {"batch_id", "maximum_seconds_per_case", "cases"} - value.keys()
+    if missing:
+        raise ValueError("configuration is missing required fields: " + ", ".join(sorted(missing)))
+    if not isinstance(value["batch_id"], str) or not value["batch_id"].strip():
+        raise ValueError("batch_id must be a nonempty string")
     if value.get("schema_version") != 1:
         raise ValueError("unsupported run configuration schema")
     if not value.get("approval_required_before_launch"):
@@ -135,6 +142,27 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
     cases = value.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError("configuration needs at least one case")
+    string_fields = ("case_id", "mode", "provider", "model", "input_kind", "image_kind",
+                     "input", "output", "scope")
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict):
+            raise ValueError(f"cases[{index}] must be a JSON object")
+        for name in string_fields:
+            if not isinstance(case.get(name), str) or not case[name].strip():
+                raise ValueError(f"cases[{index}].{name} must be a nonempty string")
+        for name in ("output_tokens", "max_candidates"):
+            if type(case.get(name)) is not int or case[name] <= 0:
+                raise ValueError(f"cases[{index}].{name} must be a positive integer")
+        limits = case.get("limits")
+        if not isinstance(limits, dict):
+            raise ValueError(f"cases[{index}].limits must be a JSON object")
+        missing_limits = {"model_calls", "tool_calls", "seconds"} - limits.keys()
+        if missing_limits:
+            raise ValueError(f"cases[{index}].limits is missing: " + ", ".join(sorted(missing_limits)))
+        for name in ("input_root", "run_root"):
+            configured = case.get(name, value.get(name))
+            if configured is not None and (not isinstance(configured, str) or not configured.strip()):
+                raise ValueError(f"{name} must be a nonempty directory path")
     identities = [case.get("case_id") for case in cases]
     if len(set(identities)) != len(identities) or not all(identities):
         raise ValueError("case IDs must be present and unique")
@@ -156,7 +184,10 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
                 raise ValueError("reader_task requires role_division without whole-run continuation")
             import jsonschema
             from src.agent.runtime_roles.session import TASK_SCHEMA
-            jsonschema.validate(case["reader_task"], TASK_SCHEMA)
+            try:
+                jsonschema.validate(case["reader_task"], TASK_SCHEMA)
+            except jsonschema.ValidationError as error:
+                raise ValueError(f"reader_task: {error.message}") from error
         if continuation is not None:
             import re
             mesh_continuation = mode == "single_model" and case.get("input_kind") == "mesh"
