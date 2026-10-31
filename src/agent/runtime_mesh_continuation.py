@@ -335,7 +335,7 @@ def inspect_mesh_continuation(source_path, destination, requested_limits, *, roo
     if versions.get("mode") != "single_model" or source.task_id != "coordinator":
         raise ValueError("mesh continuation requires an original single-model coordinator")
     manifest = source.read_json("bim/inputs.json")
-    if manifest.get("input_mode") != "native_mesh_agent_experiment":
+    if manifest.get("input_mode") != "native_mesh":
         raise ValueError("continuation source is not admitted native mesh input")
     imported = ImportedContext(source)
     if imported.saved["versions"] != versions:

@@ -748,6 +748,11 @@ _STYLE = r"""
   #panel button:hover { background:#e7ebf0; }
   .sec { border-top:1px solid #ebedf0; padding-top:9px; margin-top:9px; }
   #rinfo { position:absolute; top:12px; right:12px; width:340px; max-height:calc(100% - 24px); overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  #rinfo > * { flex-shrink:0; }
+  .source-notes { padding:12px 16px; background:rgba(255,255,255,0.96); color:#222;
+    border:1px solid #d7dbe0; border-radius:8px; overflow-wrap:anywhere; }
+  .source-notes details { margin-top:6px; }
+  .source-notes ul { padding-left:18px; }
   #hud { background:rgba(20,28,44,0.88); color:#eef; padding:12px 16px; border-radius:8px; font-size:15px; }
   #hud .hh { font-size:12px; letter-spacing:.05em; color:#8fb0e0; margin:8px 0 3px; text-transform:uppercase; }
   #hud .hh:first-child { margin-top:0; }

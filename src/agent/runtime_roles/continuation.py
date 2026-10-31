@@ -218,7 +218,8 @@ def _plan_delivery(source, registry, task, record, imported_manifest):
         if event.payload.event_type != "tool_execution" or event.payload.tool_name != "trial_plan_bim":
             continue
         # Existing selection logic checks the entire saved receipt identity.
-        one = SimpleNamespace(events=[event], resolve=child.resolve)
+        one = SimpleNamespace(events=[event], resolve=child.resolve,
+                              task_directory=child.task_directory)
         scope = SimpleNamespace(store=source, registry=SimpleNamespace(child=lambda _: one))
         candidate = RoleSession._recoverable_plan_trial_event(scope, task["task_id"])
         if (candidate and candidate.get("draft_status") == "passed"
