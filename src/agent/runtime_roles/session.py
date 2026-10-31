@@ -560,7 +560,15 @@ class RoleSession:
                     final["delivery_artifact_sha256"] = {file: hashlib.sha256(
                         (self.run_directory / file).read_bytes()).hexdigest()
                         for file in final.get("delivery_artifact_sha256", {})}
-                    result = envelope(final)
+                    # Rebind the full report after role attachments change the
+                    # delivery bytes; stale projection links must not override it.
+                    for key in ("details_file", "details_sha256", "details_read", "report_view"):
+                        final.pop(key, None)
+                    from scripts.tool_scripts.bim_agent_replies import compact_reply
+                    presented = compact_reply(self.run_directory, "finish_bim", final, force=True)
+                    presented.update({key: final[key] for key in
+                        ("candidate", "status", "delivery_artifact_sha256") if key in final})
+                    result = envelope(presented)
                 from scripts.tool_scripts.bim_agent_saved_result import result_metadata
                 meta = {**result_metadata(result), **(result.get("structuredContent") or {})}
                 candidate = meta.get("candidate")
