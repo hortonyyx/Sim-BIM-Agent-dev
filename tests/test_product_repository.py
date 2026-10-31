@@ -141,7 +141,7 @@ def test_failed_copy_restores_previous_owned_payload(tmp_path, monkeypatch):
     assert not (repo / "new.py").exists()
 
 
-@pytest.mark.parametrize("path", ["../outside", ".git/config", ".venv/config", "C:/outside", "a\\b", "CON", "a/../b"])
+@pytest.mark.parametrize("path", ["../outside", ".git/config", ".GiT/config", ".venv/config", ".VENV/config", "C:/outside", "a\\b", "CON", "a/../b"])
 def test_manifest_cannot_claim_git_environment_or_escape(tmp_path, path):
     root = tmp_path / "release"
     release(root, "a")

@@ -47,7 +47,7 @@ def member(root, relative):
     if (not relative or name.is_absolute() or name.as_posix() != relative
             or any(c in relative for c in '\\:*?"<>|')
             or any(ord(c) < 32 for c in relative)
-            or any(p in {".", "..", ".git", ".venv"} or p.endswith((".", " "))
+            or any(p.casefold() in {".", "..", ".git", ".venv"} or p.endswith((".", " "))
                    or re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?", p)
                    for p in name.parts)):
         raise ValueError(f"Unsafe payload path: {relative}")
