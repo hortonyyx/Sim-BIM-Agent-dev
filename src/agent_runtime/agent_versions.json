@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v46-20261101",
-  "current_domain_version": "domain-v165-20261101",
+  "current_domain_version": "domain-v166-20261101",
   "runtime_versions": {
     "runtime-v46-20261101": {
       "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v165-20261101": {
-      "source_commit": "e9149a473c874ead9eee416eb3ba7f2449c051c8",
+    "domain-v166-20261101": {
+      "source_commit": "795063e27dd24c2f672e92eef2bce8c4e252e6b8",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -721,7 +721,7 @@
         },
         "src/agent/runtime_mesh_continuation.py": {
           "kind": "tool",
-          "sha256": "ac3528c9dbfc3d82530738df76a1a8d61ba69fbfdafe02193d0d36e1d1e26d6a"
+          "sha256": "379c05270153cc8d9e019f6db6e81845a3daffbd2ff16011b390a5fb236a8bb8"
         },
         "src/agent/runtime_mesh_evidence.py": {
           "kind": "tool",
