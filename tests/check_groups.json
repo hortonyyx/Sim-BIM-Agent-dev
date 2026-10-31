@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_product_repository.py": {
+      "group": "targeted",
+      "reason": "Manifest-owned product Git synchronization, byte-preserving clone/export, source validation and local-file protection"
+    },
     "tests/test_bim_sdk_workflow.py": {
       "group": "targeted",
       "reason": "Composed native save/views retain partial failures and actual admission policy; explicit inspection and unchanged finish gates remain required"

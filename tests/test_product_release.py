@@ -1,4 +1,5 @@
 """Current product entry and deterministic distribution boundaries."""
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from PIL import Image
 
 from scripts.release.build_product import selected_payload
+from scripts.release.verify_product import _input_routes_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,3 +102,20 @@ def test_product_configuration_check_rejects_unusable_image_inputs(tmp_path, inp
     path.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match=expected):
         load_configuration(path)
+
+
+def test_release_probe_exercises_both_shipped_input_routes_without_models(tmp_path):
+    report = asyncio.run(_input_routes_probe(ROOT / "product", tmp_path))
+    assert report["passed"] and report["live_model_requests"] == 0
+    drawing, mesh = report["routes"]["drawings"], report["routes"]["mesh"]
+    assert drawing["mode"] == "role_division"
+    assert drawing["entrypoint"] == "src.agent.runtime_roles.entry"
+    assert drawing["frozen_files"] == 1
+    assert mesh["mode"] == "single_model"
+    assert mesh["entrypoint"] == "src.agent.runtime_entry"
+    assert mesh["source_input_mode"] == "native_mesh_with_images_with_building_declaration"
+    assert mesh["frozen_files"] == 3
+    assert mesh["render"]["surface_pixels"] > 0
+    with Image.open(mesh["render"]["image"]) as picture:
+        assert picture.size == (64, 64)
+    assert "whole-building reconstruction" in report["not_exercised"]

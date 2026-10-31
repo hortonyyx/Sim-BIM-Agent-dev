@@ -1,76 +1,83 @@
 # Sim BIM Agent
 
-从建筑图纸、图片或三维网格生成可查看的轻量 BIM。当前图纸主路径按调度员、平面读图员和立面读图员分工，先统一使用 GPT-6 Sol。程序负责几何约束、状态维护和交付核验，通过自有 runtime 接模型服务，不需要 Codex 进程。
+从建筑图纸或带贴图的三维网格生成轻量 BIM 和 HTML 查看器。一个程序提供两个输入入口，共用源 BIM、几何工具、查看器和自有 runtime；运行不需要 Codex 进程。模型调用需要用户自己的账号授权或 API 凭据。
 
-## 开始使用
+## 安装与启动
 
-本目录包含已验证的程序与资源。已安装环境时直接使用 `Start.cmd`；重建环境时在 PowerShell 执行 `./setup.ps1`（需 Python 3.12 和 uv）。
+当前交付为 **Windows 源码安装包**，不是独立 EXE。安装前准备 Python 3.12 和 uv，在产品目录内用 PowerShell 执行：
 
 ```powershell
+./setup.ps1
 ./Start.cmd doctor
-./Start.cmd demo --output D:/Sim-BIM-Agent/runs/my-first-demo
+./Start.cmd demo --output D:/Sim-BIM-Data/runs/demo-001
+```
+
+`setup.ps1` 按随包的 `uv.lock` 建立本目录的 `.venv`，首次安装可能需要联网下载依赖。不要复制其他目录的虚拟环境。`doctor` 校验发布文件、版本和基础依赖，不调用模型；`demo` 生成明确标记的两房间合成示例及离线查看器，不验证真实建筑识读质量。示例每次使用新的输出目录。
+
+## 两个输入入口
+
+| 入口 | 配置模板 | 输入与运行方式 |
+|---|---|---|
+| 图纸 | `config.example.json` | PNG 图纸目录；调度员、平面读图员和立面读图员分工 |
+| Textured mesh | `config.mesh.example.json` | 自包含、带贴图的 `.glb`；单模型调度员，可附辅助 PNG 和文字声明，可选只读 worker |
+
+将需要的模板复制到产品目录外，例如 `D:/Sim-BIM-Data/config/drawings.json` 或 `mesh.json`，再修改：
+
+- `input_root`：本案输入的专用绝对路径；`input`：其中的图纸目录或 GLB 文件相对路径。
+- `run_root`：独立运行输出目录；`output`：本次运行名。新任务使用新名字，续跑保留原配置并加 `--resume`。
+- `case_id`：命令的 `--case` 值；`scope`：本次任务目标、材料含义和需要保留的不确定性。
+- 模型服务与凭据：按所用模板配置；图纸分工的顶层模型设置须与 `roles.coordinator` 一致。
+
+模板中的 `D:/Sim-BIM-Agent/...` 是示例路径，需换为自己的目录。图纸、个人配置、运行结果和凭据都应放在产品目录及成品 Git 仓库之外。
+
+图纸输入只读取指定目录直接包含的 PNG；当前此入口不接收 JPEG 或 PDF，也不递归查找子目录。`floor_plan_images` 如有填写，须为实际 PNG 的准确文件名。
+
+Mesh 模板的 `auxiliary_images` 指向辅助 PNG 目录，`building_input` 指向 UTF-8 JSON 对象，两者均须在本案 `input_root` 内。**只有 GLB 时，删除这两个可选字段。** 文字声明中的路径不会自动加载其他文件。可用以下声明起步，并按实际证据修改：
+
+```json
+{
+  "task_brief": "根据原网格重建轻量 BIM，优先外形、楼层关系和外窗。",
+  "confirmed_facts": [],
+  "user_conjectures": [],
+  "unknowns": ["内部房间布局未知"]
+}
+```
+
+Mesh 模板保留 8 个可选只读 worker 的并发上限；是否派工由调度员决定，worker 沿用本案模型和共享预算，主 BIM 只由调度员修改。删除 `mesh_workers` 字段可由调度员直接工作。模板默认模型、思考强度和预算见 JSON；本发布没有更改这些策略。时间目标、运行预算和建筑质量验收是不同事项。
+
+先预检，再运行所选案例：
+
+```powershell
+./Start.cmd check D:/Sim-BIM-Data/config/drawings.json
+./Start.cmd run D:/Sim-BIM-Data/config/drawings.json --case my-building
+./Start.cmd run D:/Sim-BIM-Data/config/drawings.json --case my-building --resume
+
+./Start.cmd check D:/Sim-BIM-Data/config/mesh.json
+./Start.cmd run D:/Sim-BIM-Data/config/mesh.json --case my-textured-building
+```
+
+`check` 验证配置和输入文件，不调用模型，也不验证整栋质量或 GLB 是否能完成重建。运行结果位于配置的输出目录；候选不等于正式交付，应检查最终运行回执及交付路径。
+
+## 模型授权
+
+默认模板使用 ChatGPT 订阅：
+
+```powershell
 ./Start.cmd auth status
 ./Start.cmd auth login
 ./Start.cmd auth models
-./Start.cmd check D:/Sim-BIM-Agent/my-run.json
-./Start.cmd run D:/Sim-BIM-Agent/my-run.json --case my-building
-./Start.cmd run D:/Sim-BIM-Agent/my-run.json --case my-building --resume
 ```
 
-`doctor` 检查文件、版本与依赖，不联网。`demo` 使用明确标记的两房间合成示例，生成源 BIM 和离线 HTML 查看页，不调用模型，也不代表真实建筑识读质量。每次演示使用新的输出目录。
+授权保存在本机专用存储，更新程序不要求重新登录。其他服务通过配置中的 `credentials_file` 指定外部凭据文件；OpenCode Go 示例为 `config.opencode-go.example.json` 和 `config.opencode-go-haiku.example.json`。不要把密钥填入模板、发布包或 Git。账号连通与模型质量须分别验证。
 
-## 输入和输出
+## 版本与更新
 
-复制 `config.example.json` 到自己的工作目录，按实际情况修改输入位置、模型和运行设置。`input_root` 是本次获准使用的输入根，`input` 是其中一个案例子目录；`run_root` 是独立输出目录，`output` 是本次运行名。避免把整个盘或程序目录当作运行根。图纸、输出和凭据不放在安装目录，更新程序不会覆盖它们。
+成品仓库存放由开发库生成的发布内容，不在这里进行功能开发。`release-manifest.json` 记录开发源提交、runtime/domain 版本及逐文件哈希；成品仓库自己的提交用于管理发布版本。
 
-默认示例采用 `role_division`，全部使用 GPT-6 Sol（`gpt-6-sol`），调度员及平面读图员为 high，立面读图员为 medium。立面 medium 已在当前案例四立面各两次独立读图验收通过；平面 medium 出现窗长错误，保留 high。读图可并发，默认最多6个读图员，共享120次模型请求、400次工具调用和30分钟运行预算。10分钟是优化目标，与运行预算及质量验收分开；独立读图验收不代表跨图组装、整案或未见图纸质量已验证。已有自定义配置保持原值。
+安装和隔离验收使用从已发布版本导出的 **无 `.git` 目录**。当前更新器与发布验收器拒绝把 Git 检出目录当作安装包。`.venv` 在安装目录本地建立，不进入 Git 或发布包。
 
-先做读图单元时，在案例中加入 `reader_task`，如 `{"task_id":"north-unit","role_id":"elevation_reader","image":"North_view.png","target":"North/F1,F2","origin":"Common southwest building origin; ground Z=0"}`。沿用同一运行命令、模型角色配置和预算，只执行该任务，不调用调度员、不自动增补其他图，也不产生整楼交付。单元预算应单独缩小。平面用 `plan_reader` 和楼层目标 `F1`。
+开发维护者在开发库使用 `scripts/release/build_product.py` 构建，经 `scripts/release/verify_product.py` 验证后再同步成品仓库。已有固定安装可由开发库的 `scripts/release/update_product.ps1` 按发布清单更新及回滚；这些维护脚本不属于本安装包。更新前结束当前运行，保留外部输入、配置、输出和授权存储。
 
-读图员交付包括结构数据、采用值图、原图回叠、`local_review` 和未解决项。立面先 `trial_elevation_reading`，看图后提交试稿ID；平面看实际试建图后提交。调度员复用局部检查，完成匹配/装配并在 `finish_bim` 携带建筑合理性判断。提交成功后自动结束任务。检查是模型自报，独立图纸质量另评。单模型入口仍支持无时间硬截止，分工入口仍要求有限 `limits.seconds`。
+离线发布验收覆盖文件身份、隔离导入、合成 BIM/查看器、两个模板的配置路由与输入冻结、mesh 渲染和 runtime 恢复。它不调用真实模型，不代表图纸分工、整栋重建或建筑质量已经通过。本程序的模型自检与独立质量评价也应分开看待。
 
-OpenCode Go订阅使用独立的`provider: "opencode-go"`，示例为`config.opencode-go.example.json`。支持GLM-5.3-Flash、Kimi K3、MiMo V2.6 Flash、MiniMax M3、Qwen3.8 Max、Claude Haiku 5.5及GPT-6 Luna，按型号选择协议；目录中的其他型号尚未接纳。凭据由显式`credentials_file`提供`OPENCODE_GO_BASE_URL`和`OPENCODE_GO_API_KEY`。凭据base固定为订阅/目录范围`https://opencode.ai/inference/go/v1`；推理使用该订阅下的`/go/openai/v1`或`/go/anthropic/v1`，由程序按协议选择。单模型和图纸分工都可使用Go，订阅用量与Paratera按量用量分别记录。接口可用不代表整楼图纸质量已验收。
-
-Haiku可复制`config.opencode-go-haiku.example.json`：单模型`claude-haiku-5-5/medium`、64,000输出tokens。使用时修改输入、输出及范围，并用`floor_plan_images`列出实际平面PNG文件名。当前为恢复基线后的精简检查流程，离线验证通过；唯一真实整案在13分44秒因Go HTTP 429 / GoUsageLimitError中断，没有finish，自动保留的候选不能算正式交付。中间结果30空间、54/61开口，仍有错拆和漏窗，后半流程与速度尚待完整实跑验证。历史8分39秒基线漏一窗且多数窗高有偏差；历史28分54秒版本完成61个开口及34个外开口高度，但有平面偏差，两者自检范围不同。原`high/32,000`设置出现连续截断。以上不表示稳定质量或速度达标；默认6 Sol配置保持。
-
-保留的单模型图纸示例启用`process_reviews: true`：先确认整套图纸的公共坐标和层高，读图期间完成平面实际源回叠和立面采用值回叠，装配时处理平立面冲突，再对整楼进行建筑合理性判断。检查结论随下一次正常操作提交，修改后复用未变范围，只返工具体问题。交付报告保留各范围的当前检查状态、假设和未解决项；检查由工作模型自报，不等于独立图纸质量认证。此选项只适用于单模型图纸；并发入口保留。
-
-`input_kind: "images"` 要求 `input` 指向至少包含一张可读 PNG 的目录；该目录直接包含的每个 `*.png` 都必须是有效图片文件，不能引用目录外的图片。图片不递归读取，目前不接收 JPEG 或 PDF。`floor_plan_images` 如有填写，必须使用这些 PNG 的准确文件名。单模型的 `input_kind: "mesh"` 要求 `input` 指向现有的 `.glb` 文件；分工模式目前仅接收图纸图片。`check` 只做配置及输入文件预检，不验证图纸识读质量或网格几何是否可用于建模。
-
-Mesh 开发入口见 [配置示例](config.mesh.example.json)：同一 `single_model` 可同时提供 `auxiliary_images`（辅助 PNG 目录）和 `building_input`（UTF-8 JSON 对象），均限定在本案 `input_root` 内；没有对应材料时删除该字段。声明可记录用途、层段、已知尺寸、草图含义和不确定性，用户确认、用户推测与模型假设分别写清。声明中的路径只是文字，不会自动加载其他文件。PNG 内容和声明会冻结并记录哈希，草图不自动触发精确量测或整楼 10 cm 规整。
-
-Mesh 调度员自主选择共用工具，也可在案例配置中加入 `mesh_workers: {"max_concurrent": 8}` 开启可选只读任务；删除该字段则由调度员直接工作。是否派工、问题与证据范围由调度员决定，没有固定立面分工。当前 worker 沿用本案模型和参数，共享整案请求、工具、时间及 token 预算，任务额度不能增加总预算。每个 worker 可看冻结 mesh、辅助 PNG 和声明，并可获得一个指定候选快照；结果分为观察、解释和不确定性，由调度员判断和修改主 BIM。完成的任务 ID 可复读，恢复沿用原身份和已用额度。
-
-整体外形、楼层关系和外窗优先，未知内部按合理性核查。回叠默认按实际源 BIM 宿主和几何遮挡显示；`read_candidate_items(collection="boundaries")` 可读取真实墙面 ID，完整投影报告可分页，`xray` 可显示背面。`view_mesh_section` 可读取原 mesh 在指定高度的真实三角面截线；`compare_mesh_source_pixels` 在同一相机采样视线上比较实际源 BIM 与原 mesh 的表面位置，报告有效覆盖及 5/10/30 cm 分档，不自动拟合或判断贴图窗的准确性。可见性、局部残差和 worker 完成都不代表整栋精度已经通过。
-
-公共 `source_polygon_v1` 和模板工具支持斜边、声明弦误差的圆弧离散、分层轮廓与庭院孔洞；保留原曲线、误差和实际宿主。孔洞由真实空间共同围合，不为绕过限制拆房。单个空间带孔、连续斜墙或沿高度连续变截面仍不支持，曲线开口限一个实际平面弦段；桌面安装支持范围以其版本为准。
-
-原 mesh 的不透明及 BLEND 透明贴图会保留。半透明表面实际参与合成的像素可观看，但没有唯一表面坐标，量测和位置误差统计会明确排除；原三角面截线仍代表几何载体。MASK 材质、完整 PBR 光照与折射尚不支持，超出透明层数或渲染预算会明确拒绝该视图。
-
-ChatGPT 订阅通过 `auth login` 使用用户自己的账号授权。凭据由本机专用存储保护，不打包进程序；默认存储位置保留 `%LOCALAPPDATA%/EnergyPlus-Agent/openai-subscription`。已有授权不需随版本更新重新登录。GLM 订阅和 Paratera 通过运行配置指定独立凭据文件，不能把密钥写入发布文件。
-
-## 更新与回滚
-
-桌面安装目录固定为 `Sim BIM Agent`。新版本先在 D 盘从 Git 构建，再使用开发库的发布工具更新这个目录；不再创建带版本号的桌面目录。更新前结束当前运行，维护期间不要启动另一个实例。
-
-```powershell
-# 在 D:/Sim-BIM-Agent/repo 执行；release-dir 是 build_product.py 生成的发布目录。
-./scripts/release/update_product.ps1 -Action plan -Release D:/Sim-BIM-Agent/releases/release-dir
-./scripts/release/update_product.ps1 -Action update -Release D:/Sim-BIM-Agent/releases/release-dir
-./scripts/release/update_product.ps1 -Action rollback
-./scripts/release/update_product.ps1 -Action status
-```
-
-工具只替换清单管理的程序文件，拒绝覆盖本地修改或冲突的个人文件。成功前使用安装自身环境完成离线验收；验证失败会恢复上一版，意外中断后也使用 `rollback`。依赖未变时保留 `.venv`；有变化时按锁文件同步，可加 `-Offline` 限制为已有依赖缓存。若依赖恢复也失败，会明确保留待恢复状态，不报告成功。
-
-D 盘 `archive/product-backup` 只保留一个 `previous.zip`、一份状态记录和更新锁，不打包虚拟环境、案例、结果或凭据。临时副本成功后清理；更早版本从 Git 恢复后重新构建。更新和回滚都不调用模型，也不要求重新登录。
-
-## 当前能力边界
-
-当前 domain 按 BIM rules、kernel、tools、methods、roles、guidance 组织，实际文件见 [domain 导航](src/agent/README.md)。旧阶段流程及参考资源集中在 `src/agent/legacy`，不作为当前任务的固定步骤或 skills 入口。
-
-单模型与图纸分工模式使用共同的源 BIM 和工具。10 cm 规整的目标是空间划分、关系及几何自洽；复杂图纸的稳定质量仍在迭代。完整交互编辑界面尚未交付。真实订阅是否可用须在用户完成账号授权后单独验证；离线示例不会验证账号。
-
-EnergyPlus 是可选下游，需要独立安装和适用的物性配置；本程序检查不等于仿真结果验收。`release-manifest.json` 标识本版提交、runtime/domain 版本与文件哈希。开发在 D 盘仓库进行；本目录由发布脚本生成，修改程序后应重新发布。
-
-查看器使用随程序附带的 Three.js/OrbitControls；来源及许可说明在 `scripts/tool_scripts/vendor` 中。
+完整交互编辑界面尚未交付；EnergyPlus 是可选下游，需要另行安装和验收。查看器使用随包附带的 Three.js/OrbitControls，来源及许可见 `scripts/tool_scripts/vendor`。

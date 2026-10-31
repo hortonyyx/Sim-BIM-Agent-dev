@@ -17,6 +17,7 @@
 | D:/Sim-BIM-Agent/archive | 迁移核验、精简前文档及旧树独有证据 |
 | D:/Sim-BIM-Agent/cache | pytest、临时工具和可再生产物 |
 | D:/Sim-BIM-Agent/releases | 固定提交生成的发布包 |
+| D:/Sim-BIM-Agent/product-repo | 已验收成品的独立 Git 仓库；只接收开发库生成的发布内容 |
 | 桌面/Sim BIM Agent | 固定独立产品目录；版本写在发布清单，不另建桌面版本目录 |
 
 历史 `AI_agent/logs`、`AI_agent/archive`、`case_tests`、`backup`、`showcase`、`output` 保留在 D repo 实体目录，已退出当前 Git 树、默认测试和产品。该布局是批量移位遭自动审批拒绝后的保守处理；实际映射见 [归档索引](../reports/archive-index.md)。新记录放 `AI_agent/reports`，原始大输出放外部 runs/cache。
@@ -61,6 +62,8 @@ python scripts/release/build_product.py D:/Sim-BIM-Agent/releases/<版本名>
 ```
 
 发布包不含.git、tests、开发文档、实验、GT、凭据。程序和资源按release-manifest校验；运行环境在安装原路径按锁文件建立，不能复制带旧绝对路径的虚拟环境。固定入口不变，更新后完成doctor、离线示例、当前接口/工具/恢复检查，失败则恢复原版。更新不覆盖外部用户数据。
+
+成品 Git 仓库的清单驱动同步、字节保真、提交/tag 和无 Git 安装导出见 [成品仓库发布](product_repository.md)。本轮仅交付当前源码形态；未来产品结构由开发主线决定。
 
 已有安装使用同一个 Windows 更新工具，不再并排创建桌面版本：
 ```powershell

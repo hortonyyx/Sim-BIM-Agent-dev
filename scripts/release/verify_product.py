@@ -252,6 +252,85 @@ def _response(tool=False):
         "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}}
 
 
+async def _input_routes_probe(product, output):
+    """Exercise the shipped templates and native input tools without a model."""
+    import numpy as np
+    from PIL import Image
+    import trimesh
+    from src.agent import runtime_configuration, runtime_entry
+    from src.agent.runtime_roles import entry as drawing_entry
+    from src.agent.geometry.mesh_observation import MeshObservation
+    from scripts.tool_scripts.run_bim_agent import build_tool_server
+
+    root = output / "input-routes"
+    inputs = root / "inputs"
+    drawings = inputs / "my-building"
+    auxiliary = drawings / "auxiliary"
+    auxiliary.mkdir(parents=True)
+    Image.new("RGB", (12, 8), "white").save(drawings / "plan.png")
+    Image.new("RGB", (12, 8), "gray").save(auxiliary / "sketch.png")
+    _save(drawings / "building.json", {"description": "Synthetic offline box; not a real building."})
+    box = trimesh.creation.box(extents=[4, 3, 6])
+    box.visual = trimesh.visual.TextureVisuals(
+        uv=np.zeros((len(box.vertices), 2)), image=Image.new("RGB", (4, 4), "gray"))
+    asset = drawings / "building.glb"
+    asset.write_bytes(trimesh.Scene(box).export(file_type="glb"))
+
+    results = {}
+    for name, template, entry in (("drawings", "config.example.json", drawing_entry),
+                                  ("mesh", "config.mesh.example.json", runtime_entry)):
+        configuration = json.loads((product / template).read_bytes())
+        configuration.update(input_root=str(inputs), run_root=str(root / "runs"))
+        path = root / f"{name}.json"
+        _save(path, configuration)
+        case = runtime_configuration.load_configuration(path)["cases"][0]
+        command = runtime_configuration.argv_for(case)
+        _require(command[2] == entry.__name__, f"Wrong {name} runtime entrypoint")
+        args = entry.parser().parse_args(command[3:])
+        run, _, _ = entry.prepare_inputs(args.out, images=args.images, mesh=args.mesh,
+            building_input=args.building_input, scope=args.scope, image_kind=args.image_kind,
+            max_candidates=args.max_candidates, floor_plan_images=args.floor_plan_images)
+        manifest = json.loads((run / "inputs.json").read_bytes())
+        frozen = []
+        for image_name, metadata in manifest["images"].items():
+            frozen.append((args.images / image_name, run / "images" / image_name, metadata["sha256"]))
+        if args.mesh is not None:
+            frozen.append((args.mesh, run / "assets/input.glb", manifest["mesh_input"]["sha256"]))
+        if args.building_input is not None:
+            frozen.append((args.building_input, run / "building_input.json",
+                           manifest["building_input"]["raw_sha256"]))
+        for original, copied, digest in frozen:
+            _require(original.read_bytes() == copied.read_bytes()
+                     and hashlib.sha256(copied.read_bytes()).hexdigest() == digest,
+                     f"{name} input was not frozen faithfully: {copied.name}")
+        catalog = await build_tool_server(run).list_tools()
+        available = {tool.name for tool in catalog}
+        required = {"inputs", "view_image", "build_bim", "finish_bim"}
+        if name == "mesh":
+            required.update({"inspect_mesh", "view_mesh", "measure_mesh_pixels"})
+        _require(required <= available, f"Missing {name} tools: {sorted(required - available)}")
+        results[name] = {"passed": True, "template": template, "mode": case["mode"],
+            "entrypoint": command[2], "source_input_mode": manifest["source_input_mode"],
+            "frozen_files": len(frozen), "required_tools": sorted(required)}
+        if name == "mesh":
+            prefix = run / "mesh_observations" / "release_probe"
+            prefix.parent.mkdir()
+            picture, metadata = MeshObservation(run / "assets/input.glb").render(prefix,
+                eye=[10, 10, 10], target=[0, 0, 0], width_m=10, height_m=10,
+                width_px=64, height_px=64)
+            with np.load(prefix.with_suffix(".npz")) as pixels:
+                hits = len(pixels["pixel_indices"])
+            _require(picture.size == (64, 64) and hits > 0, "Mesh renderer produced no surface pixels")
+            _require(metadata["mesh_sha256"] == manifest["mesh_input"]["sha256"],
+                     "Mesh observation refers to another input")
+            results[name]["render"] = {"image": str(prefix.with_suffix(".png")),
+                "image_sha256": metadata["image_sha256"], "surface_pixels": hits}
+    return {"passed": True, "live_model_requests": 0, "routes": results,
+            "scope": "shipped configuration, entrypoint parsing, frozen inputs, tool availability and mesh rendering",
+            "not_exercised": ["live model calls", "reader delegation", "whole-building reconstruction",
+                              "architectural quality", "browser rendering"]}
+
+
 async def _runtime_probe(product, output):
     from src.agent.runtime_tools import FrozenBimTools, coordinator_role
     from src.agent_runtime.adapter import ScriptedAdapter
@@ -343,6 +422,7 @@ def _worker(args):
         _require(Path(report["doctor"]["directory"]).resolve() == product, "Doctor inspected another checkout")
         report["module_specs"] = _all_module_specs(product)
         report["demo"] = _check_demo(product, output, _cli(product, ["demo", "--output", str(output / "demo")]))
+        report["input_routes"] = asyncio.run(_input_routes_probe(product, output))
         report["runtime"] = asyncio.run(_runtime_probe(product, output))
         report["loaded_project_modules"] = _loaded_origins(product)
         _require(not (output / "blocked-network.jsonl").exists(), "A network attempt was blocked; inspect evidence")
@@ -377,6 +457,8 @@ def main():
               "output": str(output), "live_model_requests": 0, "paid_api_requests": 0,
               "stdout": str(output / "stdout.txt"), "stderr": str(output / "stderr.txt")}
     try:
+        manifest_path = product / "release-manifest.json"
+        report["release_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         python = product / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         _require(python.is_file(), f"Product Python missing: {python}")
         _require(not (product / ".git").exists(), "Product contains Git metadata")
@@ -402,6 +484,8 @@ def main():
         report["returncode"] = returncode
         if (output / "worker-result.json").is_file():
             report["verification"] = json.loads((output / "worker-result.json").read_bytes())
+        _require(hashlib.sha256(manifest_path.read_bytes()).hexdigest() == report["release_manifest_sha256"],
+                 "Release manifest changed during verification")
         report["passed"] = returncode == 0 and report.get("verification", {}).get("passed") is True
     except Exception as error:
         report["error"] = {"type": type(error).__name__, "message": str(error)}
