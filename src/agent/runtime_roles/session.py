@@ -1194,13 +1194,20 @@ class RoleSession:
                                       validation=submitted["validation"] if accepted else None,
                                       reason=runtime["status"] if artifact is None else None)
 
-    async def _once(self, operation_id, name, arguments, *, reference):
+    def _recorded_operation(self, operation_id, name, arguments, *, reference):
         digest = hashlib.sha256(operation_id.encode()).hexdigest()
         path = self.store.directory / "role_operations" / (digest + ".json")
-        if path.is_file():
-            saved = json.loads(path.read_bytes())
-            if (saved["tool"], saved["arguments"], saved["reference"]) != (name, arguments, reference):
-                raise ValueError("operation identity already refers to different arguments")
+        if not path.is_file():
+            return path, None
+        saved = json.loads(path.read_bytes())
+        if (saved["operation_id"], saved["tool"], saved["arguments"], saved["reference"]) != (
+                operation_id, name, arguments, reference):
+            raise ValueError("operation identity already refers to different arguments")
+        return path, saved
+
+    async def _once(self, operation_id, name, arguments, *, reference):
+        path, saved = self._recorded_operation(operation_id, name, arguments, reference=reference)
+        if saved is not None:
             if "result" not in saved:
                 raise ValueError("operation outcome unknown; cannot repeat a possible model write")
             return saved["result"]
@@ -1228,7 +1235,8 @@ class RoleSession:
             self.assembly.guard()
             return await self._build_from_artifact(task_id, sha256, **levels)
 
-    async def _build_from_artifact(self, task_id, sha256, resolved_levels=None, elevation_readings=None, **levels):
+    async def _build_from_artifact(self, task_id, sha256, resolved_levels=None, elevation_readings=None,
+                                   *, _recover_only=False, **levels):
         value = self.registry.read(task_id, sha256=sha256, role_id="plan_reader")
         record = self.registry.records[task_id]
         if not record.get("validation", {}).get("validation_passed"):
@@ -1268,6 +1276,8 @@ class RoleSession:
                 plan, materialization = materialize_plan_reading(plan, elevations=elevation_readings or {},
                     image_size=image_size, image_name=record["image"])
             except PlanMaterializationError as error:
+                if _recover_only:
+                    return None
                 return envelope({"status": "assembly_conflict", "source_geometry_ready": False,
                     "reason": str(error), "materialization": error.decisions}, error=True)
             # Include accepted elevation identity in _once so new evidence cannot
@@ -1276,9 +1286,15 @@ class RoleSession:
         reference = {"task_id": task_id, "sha256": sha256}
         if citations:
             reference["levels"] = citations
-        result = await self._once(self._build_identity(task_id, levels), "build_plan_bim",
-            {"image": record["image"], "plan_json": json.dumps(plan, ensure_ascii=False)},
-            reference=reference)
+        identity = self._build_identity(task_id, levels)
+        arguments = {"image": record["image"], "plan_json": json.dumps(plan, ensure_ascii=False)}
+        if _recover_only:
+            _, saved = self._recorded_operation(identity, "build_plan_bim", arguments, reference=reference)
+            if saved is None or "result" not in saved:
+                return None
+            result = saved["result"]
+        else:
+            result = await self._once(identity, "build_plan_bim", arguments, reference=reference)
         if materialization:
             result = copy.deepcopy(result)
             result.setdefault("structuredContent", {})["materialization"] = materialization
@@ -1390,25 +1406,21 @@ class RoleSession:
                     continue
             elif call.tool_name in {"build_from_artifact", "apply_elevation_heights"}:
                 if call.tool_name == "build_from_artifact":
-                    levels = {k: v for k, v in call.full_arguments.items() if k not in {"task_id", "sha256"}}
-                    identity = self._build_identity(call.full_arguments["task_id"], levels)
-                    path = self.store.directory / "role_operations" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
-                    if not path.is_file() or "result" not in json.loads(path.read_bytes()):
+                    # Rebuild the exact prepared identity, including materialized
+                    # elevation evidence, without permitting a missing write.
+                    raw = await self._build_from_artifact(**call.full_arguments, _recover_only=True)
+                    if raw is None:
                         continue
-                    saved_result = json.loads(path.read_bytes())["result"]
                 else:
                     from .height_writes import match_ids, load_match, saved_application
                     ids = sorted({load_match(self, identity)["match_id"] for identity in match_ids(call.full_arguments["match_id"])})
                     saved = saved_application(self, ids)
                     if saved is None:
                         continue
-                    saved_result = saved["result"]
+                    raw = saved["result"]
                 # A process may die after the frozen build receipt was saved but
                 # before its reader binding/comparison. Complete that read-only
-                # bookkeeping from the receipt; _once will never rebuild it.
-                raw = (await self._build_from_artifact(**call.full_arguments)
-                       if call.tool_name == "build_from_artifact"
-                       else saved_result)
+                # bookkeeping from the receipt without repeating the build.
             else:
                 continue
             _, _, shown, _ = convert_tool_result(call.call_id, raw, self.store)

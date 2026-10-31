@@ -104,7 +104,7 @@ def completed_building_handoff(engine) -> dict | None:
 
 
 def finalize_building(run: Path, *, reason: str, elapsed_seconds: float) -> dict:
-    """Mirror the subscription runner's timeout/selection precedence.
+    """Choose a saved building for delivery according to the runtime stop reason.
 
     Time or CNY budget stops prefer the latest complete building, even if a
     later partial candidate was selected. Other stops preserve a selection.
