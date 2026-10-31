@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import hashlib
 import json
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -177,6 +178,107 @@ def test_real_readonly_call_preserves_sent_and_original_image_metadata(tmp_path)
             assert Path(origin["original_path"]) == run / "images" / "plan.png"
             assert origin["box_original_pixels"] == [1, 1, 10, 7]
             assert origin["original_pixels_per_returned_pixel"] == [1.0, 1.0]
+    asyncio.run(scenario())
+
+
+def _assert_readonly_inputs(reply, manifest, timing):
+    assert not reply["isError"], reply
+    payload = json.loads(reply["content"][0]["text"])
+    assert "candidate_budget" not in payload
+    assert "max_candidates" not in payload
+    assert payload["images"] == manifest["images"]
+    assert {key: payload[key] for key in timing} == timing
+    assert 0 < payload["remaining_seconds"] <= timing["time_budget_seconds"]
+    assert payload["input_view_status"]["no_direct_view_images"] == sorted(manifest["images"])
+    return payload
+
+
+def test_real_task_session_inputs_preserves_readonly_image_scope_and_clock(tmp_path):
+    async def scenario():
+        run = _prepared_run(tmp_path)
+        parent_bytes = (run / "inputs.json").read_bytes()
+        raw = (run / "images/plan.png").read_bytes()
+        started = time.time()
+        timing = {"started_epoch": started, "deadline_epoch": started + 120, "time_budget_seconds": 120}
+        role = local_observer_role(BudgetAmounts(calls=2))
+        parent = FrozenBimTools(None, coordinator_role(BudgetAmounts(calls=3)), run_directory=run)
+        child_run = tmp_path / "reader/bim"
+        async with parent.task_session(directory=child_run, root=ROOT, role=role, timing=timing,
+                                       images={"plan.png": (raw, (12, 8))}) as child:
+            manifest_bytes = (child_run / "inputs.json").read_bytes()
+            manifest = json.loads(manifest_bytes)
+            catalog = await child.list_tools()
+            assert {tool["name"] for tool in catalog} == set(LOCAL_OBSERVER_TOOL_NAMES)
+            assert all(child.repeatability(tool["name"]) == "read_only" for tool in catalog)
+            payload = _assert_readonly_inputs(await child.call_tool("inputs", {}), manifest, timing)
+            assert payload["input_mode"] == "runtime_local_observation"
+            assert payload["images"]["plan.png"] == {
+                "size": [12, 8], "sha256": hashlib.sha256(raw).hexdigest()}
+            assert (child_run / "images/plan.png").read_bytes() == raw
+            assert (child_run / "inputs.json").read_bytes() == manifest_bytes
+            with pytest.raises(ValueError, match="not whitelisted"):
+                await child.call_tool("build_bim", {"proposal_json": "{}"})
+        assert (run / "inputs.json").read_bytes() == parent_bytes
+        assert not list(child_run.glob("candidate_*"))
+    asyncio.run(scenario())
+
+
+def test_real_mesh_worker_inputs_preserves_readonly_assets_and_clock(tmp_path):
+    from src.agent.bim_inputs import prepare_bim_inputs
+    from src.agent.runtime_mesh_evidence import prepare_mesh_worker_packet
+    from tests.test_mesh_input_admission import _case
+
+    async def scenario():
+        inputs = Path(_case(tmp_path)["input_root"])
+        run, child_run = tmp_path / "parent", tmp_path / "worker/bim"
+        prepare_bim_inputs(run, images_path=inputs / "sketches", mesh_path=inputs / "building.glb",
+            building_input_path=inputs / "declaration.json", scope="synthetic readonly evidence",
+            image_kind="drawings", max_candidates=3)
+        started = time.time()
+        timing = {"started_epoch": started, "deadline_epoch": started + 120, "time_budget_seconds": 120}
+        packet = prepare_mesh_worker_packet(run, child_run, task_id="reader", question="Observe the mesh",
+                                            timing=timing)
+        manifest_bytes = (child_run / "inputs.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        async with frozen_bim_client(child_run, readonly=True, repository_root=ROOT) as client:
+            child = FrozenBimTools(client, local_observer_role(BudgetAmounts(calls=2)), run_directory=child_run)
+            catalog = await child.list_tools()
+            assert {tool["name"] for tool in catalog} == set(MESH_LOCAL_OBSERVER_TOOL_NAMES)
+            assert all(child.repeatability(tool["name"]) == "read_only" for tool in catalog)
+            payload = _assert_readonly_inputs(await child.call_tool("inputs", {}), manifest, timing)
+            assert payload["mesh_input"]["sha256"] == packet["mesh_sha256"]
+            assert payload["building_input"] == manifest["building_input"]
+            assert payload["input_mode"] == "runtime_mesh_worker_observation"
+            with pytest.raises(ValueError, match="not whitelisted"):
+                await child.call_tool("finish_bim", {"candidate": "candidate_01"})
+        assert (child_run / "inputs.json").read_bytes() == manifest_bytes
+        for relative, expected in packet["child_file_sha256"].items():
+            assert hashlib.sha256((child_run / relative).read_bytes()).hexdigest() == expected
+        assert not list(child_run.glob("candidate_*"))
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit", [None, 0, True, 3])
+def test_real_coordinator_inputs_requires_its_own_candidate_budget(tmp_path, limit):
+    async def scenario():
+        run = _prepared_run(tmp_path)
+        path = run / "inputs.json"
+        manifest = json.loads(path.read_bytes())
+        if limit is None:
+            manifest.pop("max_candidates")
+        else:
+            manifest["max_candidates"] = limit
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        async with frozen_bim_client(run, repository_root=ROOT) as client:
+            reply = await client.call_tool("inputs", {})
+            if limit == 3:
+                assert not reply["isError"], reply
+                payload = json.loads(reply["content"][0]["text"])
+                assert payload["candidate_budget"] == {"limit": 3, "used": 0, "remaining": 3}
+            else:
+                assert reply["isError"]
+                assert "max_candidates must be a positive integer" in json.dumps(reply)
+        assert not list(run.glob("candidate_*"))
     asyncio.run(scenario())
 
 
