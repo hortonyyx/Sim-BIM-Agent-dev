@@ -341,7 +341,7 @@ class FrozenBimTools:
         metadata = _result_metadata(raw)
         if (metadata.get("error") or not isinstance(metadata.get("queries"), list)
                 or not metadata.get("details_file") or not metadata.get("details_sha256")):
-            # Old replies without a readable full-report reference stay whole.
+            # Replies without a readable full-report reference stay whole.
             return raw
         from scripts.tool_scripts.bim_agent_replies import measurement_summary
         shown = copy.deepcopy(raw)

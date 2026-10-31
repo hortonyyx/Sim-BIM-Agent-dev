@@ -21,7 +21,7 @@
     "src.agent.version_fingerprints"
   ],
   "current_runtime_version": "runtime-v46-20261101",
-  "current_domain_version": "domain-v168-20261101",
+  "current_domain_version": "domain-v169-20261101",
   "runtime_versions": {
     "runtime-v46-20261101": {
       "source_commit": "1e3676d351b0cef53c35336d583b1db3b36949df",
@@ -223,8 +223,8 @@
     }
   },
   "domain_versions": {
-    "domain-v168-20261101": {
-      "source_commit": "c88e6596b7e352a4a369c7ebbf52fe713148e64b",
+    "domain-v169-20261101": {
+      "source_commit": "df2213024254c61f266343196cbcc1f347b538f8",
       "coverage": "automatic_directories",
       "files": {
         "scripts/tool_scripts/bim_agent_architectural.py": {
@@ -537,7 +537,7 @@
         },
         "src/agent/geometry/plan_partition.py": {
           "kind": "tool",
-          "sha256": "defc0fb67aadef38f506bbc820267b54003f96e5d9004d9965f69bdfea5a803c"
+          "sha256": "0a02756ee354c11056af0fd12c08720d1db99c00c5ffed547f7d88695470d233"
         },
         "src/agent/geometry/plan_regularization.py": {
           "kind": "tool",
@@ -697,11 +697,11 @@
         },
         "src/agent/roles.py": {
           "kind": "tool",
-          "sha256": "ae0f758d5646b4cef1187ad8e8249497340952eea1222c45d356f7dfb38611d4"
+          "sha256": "e70d2607e8c227bc3e0cd071fab077e5ec3a5ecc3423130f2b6f765f3b33d57d"
         },
         "src/agent/runtime_behaviour.py": {
           "kind": "tool",
-          "sha256": "4a72bc3e6237a5350a03bc7f05e27f7ef9b5a12256d477fe055a1e1598a74806"
+          "sha256": "9403a91ebe14df827dfeb95c6aefbfc6730cc4db9ac485e4f379da7783f0c8fa"
         },
         "src/agent/runtime_configuration.py": {
           "kind": "tool",
@@ -717,7 +717,7 @@
         },
         "src/agent/runtime_entry.py": {
           "kind": "tool",
-          "sha256": "4b1fbc6dd64e3b0c8878821dfe21c66931f33d9140c5b81520ecc0502bfc0bd5"
+          "sha256": "0c26db7670557faa6f5266e398a6737f2547a96be953b291d24fb07d854200be"
         },
         "src/agent/runtime_mesh_continuation.py": {
           "kind": "tool",
@@ -881,7 +881,7 @@
         },
         "src/agent/runtime_tools.py": {
           "kind": "tool",
-          "sha256": "055b6d33d4f277a914097e45eeac0443a390d129ecf6a277a9b6a8bf74f6002e"
+          "sha256": "6484cb4c3c637b245ce9bef6a31b792c3e5319fba0ace21dbb76d2acf7cbb216"
         },
         "src/agent/runtime_worker_budget.py": {
           "kind": "tool",

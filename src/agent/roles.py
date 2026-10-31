@@ -22,7 +22,7 @@ _LOOKUP.update({_key(row["label_zh"]): code for code, row in ROOM_TYPES.items()}
 
 
 def normalize(label: str | None) -> str:
-    """Resolve catalog names/known historical aliases; retain unknown text."""
+    """Resolve catalog names and synonyms; retain unknown text."""
     text = _key(str(label or ""))
     return _LOOKUP.get(text, text)
 

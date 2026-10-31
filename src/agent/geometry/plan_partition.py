@@ -633,7 +633,7 @@ def compile_plan_partition(
         proposal["geometry"]["reading_type"] = "plan"
     if not rectangular_footprint:
         # Same explicit floor ring as the parametric source-proposal adapter.
-        # Keep rectangular proposals unchanged for existing replay consumers.
+        # Rectangular floors use the shared footprint_x and footprint_y bounds.
         proposal["geometry"]["floors"][0]["footprint"] = {"vertices": world_footprint_ring}
     metadata = {
         "mode": "deterministic_plan_partition",
