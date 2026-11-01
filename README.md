@@ -2,7 +2,7 @@
 
 Sim-BIM Agent 将建筑图纸或带贴图的三维网格转换为结构化 Sim-BIM，并生成 HTML 查看器。两个输入入口共用数据模型、几何工具、运行时和交付格式。
 
-本仓库维护产品源码、测试和发布工具。用户安装和操作说明见 [产品说明](product/README.md)，公开使用版见 [Sim-BIM Agent](https://github.com/hortonyyx/Sim-BIM-Agent)。
+本仓库维护产品源码、测试和发布工具。用户安装和操作说明见 [产品说明](product/README.md)，公开使用版见 [Sim-BIM Agent](https://github.com/CRIBE-Lab/Sim-BIM-Agent)。
 
 ## 代码导航
 
@@ -33,7 +33,7 @@ python scripts/dev/agent_versions.py verify
 
 ## 发布
 
-开发库是唯一代码修改来源。构建后更新固定桌面安装，在桌面自身环境验收，再将已验收的同一份文件发布到云端。`product/` 是模板，发布暂存和 Git 缓存不作为另一套安装。
+个人账号下的开发库是唯一代码修改来源。构建后更新固定桌面安装，在桌面自身环境验收，再将已验收的同一份文件发布到 CRIBE-Lab 的成品仓库。`product/` 是模板，发布暂存和 Git 缓存不作为另一套安装。
 
 ```powershell
 python scripts/release/desktop_release.py stage

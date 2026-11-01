@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.release import sync_product_repo as sync
 
-PRODUCT = "hortonyyx/Sim-BIM-Agent"
+PRODUCT = "CRIBE-Lab/Sim-BIM-Agent"
 PRODUCT_ID = 1440941560
 DEVELOPMENT = "hortonyyx/Sim-BIM-Agent-dev"
 DEVELOPMENT_ID = 1216622598

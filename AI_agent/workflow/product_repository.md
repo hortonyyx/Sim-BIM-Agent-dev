@@ -1,6 +1,6 @@
 # 桌面验收与成品发布
 
-开发库是程序修改的唯一来源；桌面是唯一实际运行的成品安装。日常流程为：开发提交 → 构建候选 → 原位更新桌面 → 桌面自身环境验收 → 将同一份桌面文件发布云端。成品仓库不承接开发，修复回开发库后重新走该流程。当前仍是一个产品、图纸和 mesh 两入口，范围止于 Sim-BIM 与 HTML 查看器。
+个人账号下的开发库是程序修改的唯一来源；桌面是唯一实际运行的成品安装。日常流程为：个人开发库提交 → 构建候选 → 原位更新桌面 → 桌面自身环境验收 → 将同一份桌面文件发布到 CRIBE-Lab 的成品仓库。成品仓库不承接开发，修复回开发库后重新走该流程。当前仍是一个产品、图纸和 mesh 两入口，范围止于 Sim-BIM 与 HTML 查看器。
 
 ## 目录与身份
 
@@ -14,7 +14,7 @@
 | 上述管理目录内 `repository` | 成品 Git 发布缓存，不安装、不运行产品 |
 | `D:/Sim-BIM-Agent/releases` | 历史导出保留原位，不作为日常运行入口 |
 
-开发远端为 [Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，仓库 ID `1216622598`；成品远端为 [Sim-BIM-Agent](https://github.com/hortonyyx/Sim-BIM-Agent)，仓库 ID `1440941560`。首次设置或更换 remote 时核对仓库身份，不能混用两个 origin。旧开发 URL 已由成品接管，不能再用于定位开发历史。
+开发远端保留为个人账号下的 [Sim-BIM-Agent-dev](https://github.com/hortonyyx/Sim-BIM-Agent-dev)，仓库 ID `1216622598`；成品远端为实验室组织下的 [Sim-BIM-Agent](https://github.com/CRIBE-Lab/Sim-BIM-Agent)，仓库 ID `1440941560`。首次设置或更换 remote 时核对仓库身份，不能混用两个 origin。个人账号下的旧成品 URL 重定向到实验室成品仓库，不能用于定位开发历史。
 
 
 ## 日常操作
