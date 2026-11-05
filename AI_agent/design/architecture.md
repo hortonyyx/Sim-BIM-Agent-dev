@@ -25,6 +25,20 @@ mesh 入口由主模型组织建模，必要时委派只读观察任务。原始
 
 两入口使用同一工具服务、几何内核和交付契约。模型、角色、工具及输入形式分别组织，不把模型供应商写死在建筑算法里。当前 provider 配置由共享路由校验，模型连接和模型输出质量分别验证。
 
+## DeepSeek Harness 开发对照
+
+开发库提供 [DeepSeek Harness headless 配置](../workflow/configs/deepseek_harness.yml)。它通过 Harness 自带的 MCP 客户端为已准入的运行目录启动 BIM 工具服务。做对照时，应从相同原始资料用 `prepare_bim_inputs` 分别准备两个独立目录。每个可写目录由一个调度员持有。
+
+在 Windows 上，把 `SIM_BIM_REPO` 设为带有项目 `.venv` 的开发库绝对路径，`SIM_BIM_RUN` 设为已生成 `inputs.json` 的运行目录绝对路径。配置默认只开放 BIM 观察工具，显式设置 `SIM_BIM_WRITER=1` 可开放建模和交付工具。这里的权限只覆盖 BIM 服务，宿主自带的文件、shell 和分工工具另行配置。以下命令可检查配置组合，其他机器按实际 CLI 安装位置调整 `$dsh`。
+
+```powershell
+$dsh = 'D:/Program_AI/deepseek harness/resources/runtime/cli/bin/dsh.cmd'
+$patch = Join-Path $env:SIM_BIM_REPO 'AI_agent/workflow/configs/deepseek_harness.yml'
+& $dsh --profile headless --patch $patch --dump-config
+```
+
+正式对照时向两侧提供同版建模说明与任务，核对实际模型请求中的工具、图片、模型路线和预算。当前配置负责挂载工具；角色提示、分工权限、恢复行为和宿主退出条件仍需分别对齐。交付时用同一 `attest_finished_handoff` 核验实际 `finish_bim` 回执、候选 JSON 与查看器，建筑质量另做盲评。
+
 ## 数据与状态
 
 `geometry_model` 只负责数据定义和解析，`geometry` 负责算法。当前正交输入与 `source_polygon_v1` 均有实际使用路径；不能因版本号较小就误删。几何中的 `corrections` 保存局部编辑记录。
