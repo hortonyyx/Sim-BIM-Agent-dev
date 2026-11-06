@@ -4,9 +4,9 @@
 
 ## 当前任务
 
-2026-11-06：本轮已收工。DeepSeek Harness + 共用 BIM domain 已经通过整栋续跑交付；显示问题也已修复并独立验收。下一轮用户会开新会话，准备对当前最终版本做一次利苑整案冷启动验收。本轮不再启动模型或追加开发。
+2026-11-06：利苑整案冷启动已跑到失败终态并封存。GPT-6.1 Sol / high + DeepSeek Harness + domain-v173 一次启动、无恢复，在第 22 请求部分 SSE 后传输中断；保存 C01 阶段候选，未调用 finish_bim。结果见[冷启动记录](reports/2026-11-06_dsh_sol61_cold_start.md)。
 
-新会话先读[冷启动交接](reports/2026-11-06_handoff_cold_start.md)，再按用户当轮指令执行。基线为 GPT-6.1 Sol / high + DeepSeek Harness + 当前 domain，使用全新案例和会话、原始输入，不继承旧候选或模型上下文。之前四次恢复后的完成不能当作最终版本一次冷启动通过。runtime 选型继续开放。
+下一轮先读上述记录，再按用户当轮指令决定恢复、修复或另建冷启动。已封存案例为 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-cold-20261106`；其 pending 用量未知，后续恢复不得改写本次冷启动失败结论。原[冷启动交接](reports/2026-11-06_handoff_cold_start.md)保留条件来源；之前四次恢复后的完成仍不能当作最终版本一次冷启动通过。runtime 选型继续开放。
 
 ## 开始工作
 

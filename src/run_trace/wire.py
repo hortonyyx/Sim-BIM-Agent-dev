@@ -232,6 +232,20 @@ def _set_summary(event, wire):
             event["summary"] = summary
 
 
+def _set_failed_dsh_usage(event, wire, provider_usage):
+    """A failed host's counters cannot establish upstream consumption."""
+    if wire["arm"] != "dsh" or event.get("status") not in {"failed", "timeout"}:
+        return
+    detail = event["detail"]
+    if "usage" in detail:
+        detail["host_usage"] = {"source": "DeepSeek Harness", "value": detail["usage"]}
+    reported = isinstance(provider_usage, dict) and bool(provider_usage)
+    detail.update(usage=_safe(provider_usage) if reported else None,
+                  usage_status="reported" if reported else "unknown",
+                  usage_note="上游记录的用量" if reported else
+                             "上游未记录用量；宿主计数不能证明实际消耗为零。")
+
+
 def _partial_stream(path):
     items = {}
     last = None
@@ -322,6 +336,7 @@ def enrich_wire(events: list[dict], directory: Path, *, relay: Path | None = Non
             if event.get("end") is None:
                 event["end"] = wire["host_delivery"].get("host_end", ended)
             _set_summary(event, wire)
+            _set_failed_dsh_usage(event, wire, body.get("usage") or response_log.get("usage"))
             result[idx] = event
             continue
         status = ("failed" if body.get("error") is not None or body.get("status") == "failed" else
@@ -330,6 +345,7 @@ def enrich_wire(events: list[dict], directory: Path, *, relay: Path | None = Non
                             turn=turn, start=entered, end=ended, status=status,
                             summary="来自供应商转发记录", wire=wire)
         _set_summary(added, wire)
+        _set_failed_dsh_usage(added, wire, body.get("usage") or response_log.get("usage"))
         result.append(added)
     finish_file = relay_path.parent / "dsh-relay-finish.json"
     if finish_file.is_file():

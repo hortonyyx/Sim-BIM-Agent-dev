@@ -195,7 +195,7 @@ function loadDetails(file) {
   }));
   loading=job.catch(()=>{});files.set(file,job);job.catch(()=>files.delete(file));return job;
 }
-const fieldNames={input:'输入',inputs:'输入资料',messages:'消息',prompt:'提示',request:'请求',response:'响应',result:'结果',arguments:'调用参数',parameters:'参数',output:'输出',usage:'用量',status:'状态',error:'错误',reasoning:'推理记录',reasoning_content:'推理记录',content:'内容',tools:'工具',wire:'实际传输记录',raw_request:'原始请求',raw_response:'原始响应'};
+const fieldNames={input:'输入',inputs:'输入资料',messages:'消息',prompt:'提示',request:'请求',response:'响应',result:'结果',arguments:'调用参数',parameters:'参数',output:'输出',usage:'用量',host_usage:'宿主用量原始记录',usage_status:'用量状态',usage_note:'用量说明',status:'状态',error:'错误',reasoning:'推理记录',reasoning_content:'推理记录',content:'内容',tools:'工具',wire:'实际传输记录',raw_request:'原始请求',raw_response:'原始响应'};
 const fieldName=k=>Object.hasOwn(fieldNames,k)?fieldNames[k]:String(k);
 function inputImages(parent,images) {
   if(!images.length) return;
@@ -217,7 +217,7 @@ function addValue(parent,key,value) {
   const compound=value!==null&&typeof value==='object';
   if(!compound) {
     const row=make('div','field');if(key!==null) row.append(make('div','key',fieldName(key)));
-    const raw=value==null?'null':String(value);
+    const raw=value==null?(key==='usage'?'未知（未获得上游用量）':'null'):String(value);
     if(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(raw)) {
       const view=make('button','small-button','查看图像');view.type='button';
       view.onclick=()=>{const img=make('img','media');img.alt='记录中的图像';img.src=raw;view.replaceWith(img);};row.append(view);

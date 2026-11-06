@@ -1,6 +1,9 @@
 import gzip
 import json
 
+import pytest
+
+from src.run_trace.deepseek import read_deepseek
 from src.run_trace.wire import enrich_wire
 
 
@@ -116,3 +119,38 @@ def test_local_finish_confirmation_is_not_counted_as_provider_request(tmp_path):
     events = enrich_wire([host], wire)
     assert events[0]["kind"] == "status" and events[0]["turn"] is None
     assert events[0]["detail"]["local_completion"]
+
+
+@pytest.mark.parametrize("provider_usage", [None,
+    {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}])
+def test_failed_dsh_usage_requires_provider_evidence_and_keeps_host_record(tmp_path, provider_usage):
+    session = tmp_path / "private/dsh/session"
+    session.mkdir(parents=True)
+    placeholder = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+    headless = [
+        {"type": "status", "phase": "step_start", "turn": 1, "step": 1},
+        {"type": "status", "phase": "step_end", "turn": 1, "step": 1, "usage": placeholder},
+        {"type": "status", "phase": "turn_end", "turn": 1,
+         "reason": {"kind": "error", "error": {"code": "TRANSPORT"}}},
+    ]
+    log = session / "events.jsonl"
+    log.write_text("\n".join(map(json.dumps, headless)), encoding="utf-8")
+    original_log = log.read_bytes()
+    wire = tmp_path / "control/wire/dsh"
+    wire.mkdir(parents=True)
+    (wire / "01-out.json.gz").write_bytes(gzip.compress(b'{"input":[]}'))
+    if provider_usage is None:
+        partial = {"event": {"type": "response.created", "response": {"id": "r1"}}, "time": 2}
+        (wire / "01-events.jsonl.gz").write_bytes(gzip.compress(json.dumps(partial).encode()))
+    else:
+        (wire / "01-reply.json").write_text(json.dumps(
+            {"id": "r1", "status": "completed", "output": [], "usage": provider_usage}), encoding="utf-8")
+    rows = read_deepseek(session)
+    merged = enrich_wire(rows, wire, journal=session)
+    detail = next(row for row in merged if row["kind"] == "model")["detail"]
+    assert detail["usage"] == provider_usage
+    assert detail["usage_status"] == ("unknown" if provider_usage is None else "reported")
+    assert detail["host_usage"] == {"source": "DeepSeek Harness", "value": placeholder}
+    assert next(row for row in rows if row["kind"] == "model")["detail"]["usage"] == placeholder
+    assert log.read_bytes() == original_log
