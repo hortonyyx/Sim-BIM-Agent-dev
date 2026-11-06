@@ -4,9 +4,11 @@
 
 ## 当前任务
 
-2026-11-06：按用户要求修复 DSH 的交付闭环与自动恢复。普通文字结束、输出截断、可验证的断流均应继续到真实 `finish_bim`；只有有证据的外部故障允许作为显式未交付豁免。内部异常和预算耗尽仍是未完成运行，不能包装成外部问题或成功。实现与验收边界见[恢复修复记录](reports/2026-11-06_dsh_delivery_recovery.md)。
+2026-11-06：DSH 交付闭环修复后，已按用户要求完成一次 `gpt-6.1-sol / high + DeepSeek Harness + Sim-BIM domain` 的真实冷启动。31.04 分钟交付 C03，28 次模型请求、67 次工具；一次启动、零恢复，本轮操作及审计记录中无人工介入，真实 `finish_bim` 及交付哈希独立验真通过。见[修复版冷启动记录](reports/2026-11-06_dsh_sol61_repaired_cold_start.md)。本次没有外部断流，故不证明真实断流恢复已被触发；建筑真实性仍与完成交付分开评价。
 
-已封存失败案例为 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-cold-20261106`：第 22 请求部分 SSE 后传输中断，只保存 C01，pending 用量未知、未 finish，见[冷启动记录](reports/2026-11-06_dsh_sol61_cold_start.md)。后续不得改写该失败结论。恢复修复先以离线和真实 DSH/localhost 验证，尚不等于新一轮真实模型冷启动通过。原[冷启动交接](reports/2026-11-06_handoff_cold_start.md)保留条件来源；此前四次人工恢复后的完成也不能当作一次冷启动通过。runtime 选型继续开放。
+交付规则保持：普通文字结束、输出截断、可验证的断流应继续到真实 `finish_bim`；只有有证据的外部故障允许作为显式未交付豁免。内部异常和预算耗尽仍是未完成运行，不能包装成外部问题或成功。实现与验收边界见[恢复修复记录](reports/2026-11-06_dsh_delivery_recovery.md)。
+
+原失败案例 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-cold-20261106` 保持封存：第 22 请求部分 SSE 后传输中断，只保存 C01，pending 用量未知、未 finish，见[原冷启动记录](reports/2026-11-06_dsh_sol61_cold_start.md)。新成功案例不改写旧失败；原[冷启动交接](reports/2026-11-06_handoff_cold_start.md)保留条件来源，此前四次人工恢复后的完成也不能当作一次冷启动通过。runtime 选型继续开放。
 
 ## 开始工作
 
