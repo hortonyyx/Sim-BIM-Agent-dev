@@ -127,7 +127,15 @@ _APP_JS = r"""
     const declared=(GEO.floor_memberships||{})[z]||[];
     zoneFloors[z]=declared.length ? declared : [zoneFloor[z]];
   });
-  const onFloor = (u,f) => f<0 || (zoneFloors[u.zone]||[u.floor]).includes(f);
+  const zoneForSpace = Object.fromEntries(Object.entries(SOURCE_MAP.zones||{}).map(([z,s])=>[s,z]));
+  const verticalCore = z => ['stairwell','shaft'].includes(roleOf(z) || SOURCE_SPACES[(SOURCE_MAP.zones||{})[z]||z]?.role);
+  const onFloor = (u,f) => f<0 || (!verticalCore(u.zone) && (zoneFloors[u.zone]||[u.floor]).includes(f));
+  function partVisible(u,f,exploded){
+    if(!onFloor(u,f)) return false;
+    if(exploded || !u.dup) return true;
+    if(!u.occludedBy) return false;
+    return !u.occludedBy.some(sid=>{const z=zoneForSpace[sid]||sid; return onFloor({zone:z,floor:zoneFloor[z]},f);});
+  }
 
   // ---- zone centroids (explode-by-zone + window pop-out) ----
   const zoneSum = {};
@@ -206,55 +214,45 @@ _APP_JS = r"""
   // ---- build meshes (keep ALL faces; reciprocal dup hidden at rest, windows popped out) ----
   const surfMeshes=[], winMeshes=[], openingMeshes=[], enclosureMeshes=[], edgeSegs=[], logicalLines=[], enclosureLines=[], windowEdges=[];
   const root=new THREE.Group(); scene.add(root);
-  function fanTriangulate(n){ const idx=[]; for(let i=1;i<n-1;i++) idx.push(0,i,i+1); return idx; }
-  function projectRing(ring){
+  const surfaceEdges=[];
+  function projectionAxis(ring){
     let nx=0,ny=0,nz=0;
-    for(let i=0;i<ring.length;i++){ const a=ring[i],b=ring[(i+1)%ring.length];
+    const origin=ring[0]||[0,0,0];
+    for(let i=0;i<ring.length;i++){ const a=ring[i].map((v,j)=>v-origin[j]),b=ring[(i+1)%ring.length].map((v,j)=>v-origin[j]);
       nx+=(a[1]-b[1])*(a[2]+b[2]); ny+=(a[2]-b[2])*(a[0]+b[0]); nz+=(a[0]-b[0])*(a[1]+b[1]); }
     const ax=Math.abs(nx), ay=Math.abs(ny), az=Math.abs(nz);
-    if(ax>=ay && ax>=az) return ring.map(v=>[v[1],v[2]]);
-    if(ay>=ax && ay>=az) return ring.map(v=>[v[0],v[2]]);
-    return ring.map(v=>[v[0],v[1]]);
+    return ax>=ay && ax>=az ? 0 : ay>=ax && ay>=az ? 1 : 2;
+  }
+  function projectRing(ring,axis=projectionAxis(ring)){
+    return ring.map(v=>axis===0 ? [v[1],v[2]] : axis===1 ? [v[0],v[2]] : [v[0],v[1]]);
   }
   function signedArea2D(pts){ let a=0; for(let i=0;i<pts.length;i++){ const p=pts[i],q=pts[(i+1)%pts.length]; a+=p[0]*q[1]-q[0]*p[1]; } return a/2; }
-  function pointInTri(p,a,b,c){
-    const v0=[c[0]-a[0],c[1]-a[1]], v1=[b[0]-a[0],b[1]-a[1]], v2=[p[0]-a[0],p[1]-a[1]];
-    const dot00=v0[0]*v0[0]+v0[1]*v0[1], dot01=v0[0]*v1[0]+v0[1]*v1[1], dot02=v0[0]*v2[0]+v0[1]*v2[1];
-    const dot11=v1[0]*v1[0]+v1[1]*v1[1], dot12=v1[0]*v2[0]+v1[1]*v2[1];
-    const den=dot00*dot11-dot01*dot01; if(Math.abs(den)<1e-12) return false;
-    const u=(dot11*dot02-dot01*dot12)/den, v=(dot00*dot12-dot01*dot02)/den;
-    return u>-1e-9 && v>-1e-9 && u+v<1+1e-9;
+  function triangulateRings(ring,holes=[]){
+    const loops=[ring,...holes].map(r=>r.length>1 && r[0].every((v,i)=>v===r[r.length-1][i]) ? r.slice(0,-1) : r);
+    const axis=projectionAxis(loops[0]), projected=loops.map(r=>projectRing(r,axis));
+    // A shared local origin avoids cancellation in area validation for valid
+    // georeferenced models. The buffer positions retain source coordinates.
+    const origin=projected[0][0]?.slice()||[0,0];
+    projected.forEach(r=>r.forEach(p=>{p[0]-=origin[0];p[1]-=origin[1];}));
+    const vec=r=>r.map(p=>new THREE.Vector2(p[0],p[1]));
+    // Earcut handles concave quads and near-collinear returns too. A fan is
+    // never a valid fallback for arbitrary source boundaries.
+    const indices=THREE.ShapeUtils.triangulateShape(vec(projected[0]),projected.slice(1).map(vec)).flat();
+    const points=projected.flat(), expected=Math.abs(signedArea2D(projected[0]))-projected.slice(1).reduce((a,r)=>a+Math.abs(signedArea2D(r)),0);
+    let area=0;
+    for(let i=0;i<indices.length;i+=3){const [a,b,c]=indices.slice(i,i+3).map(j=>points[j]);
+      area+=Math.abs((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))/2;}
+    if(Math.abs(area-expected)>Math.max(1e-8,Math.abs(expected)*1e-8)) throw new Error('Display triangulation does not cover its boundary');
+    return {positions:loops.flat().flat(),indices};
   }
-  function earTriangulate(ring){
-    const n=ring.length; if(n<5) return fanTriangulate(n);
-    const pts=projectRing(ring); const area=signedArea2D(pts);
-    if(Math.abs(area)<1e-9) return fanTriangulate(n);
-    const ccw=area>0, verts=[...Array(n).keys()], idx=[]; let guard=0;
-    function cross(a,b,c){ return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]); }
-    while(verts.length>3 && guard++<n*n){
-      let clipped=false;
-      for(let vi=0;vi<verts.length;vi++){
-        const ia=verts[(vi-1+verts.length)%verts.length], ib=verts[vi], ic=verts[(vi+1)%verts.length];
-        const a=pts[ia], b=pts[ib], c=pts[ic]; const cr=cross(a,b,c);
-        if(ccw ? cr<=1e-10 : cr>=-1e-10) continue;
-        let contains=false;
-        for(const j of verts){ if(j===ia||j===ib||j===ic) continue; if(pointInTri(pts[j],a,b,c)){ contains=true; break; } }
-        if(contains) continue;
-        idx.push(ia,ib,ic); verts.splice(vi,1); clipped=true; break;
-      }
-      if(!clipped) return fanTriangulate(n);
-    }
-    if(verts.length===3) idx.push(verts[0],verts[1],verts[2]);
-    return idx.length ? idx : fanTriangulate(n);
-  }
-  function ringGeom(ring, holes=[]){ const pos=[]; [ring,...holes].forEach(r=>r.forEach(v=>pos.push(v[0],v[1],v[2])));
-    const vec = r => projectRing(r).map(p=>new THREE.Vector2(p[0],p[1]));
-    const idx=holes.length ? THREE.ShapeUtils.triangulateShape(vec(ring),holes.map(vec)).flat() : earTriangulate(ring);
+  function ringGeom(ring, holes=[]){ const {positions:pos,indices:idx}=triangulateRings(ring,holes);
     const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
     g.setIndex(idx); g.computeVertexNormals(); return g; }
   function edgeGeom(ring){ const pos=[]; for(let i=0;i<ring.length;i++){const a=ring[i],b=ring[(i+1)%ring.length];
     pos.push(a[0],a[1],a[2], b[0],b[1],b[2]);} const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); return g; }
+  function segmentGeom(segments){const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(segments.flat(2),3)); return g;}
   function dashedEdge(ring,color,dash,gap,userData){
     const line=new THREE.LineSegments(edgeGeom(ring),new THREE.LineDashedMaterial({color,transparent:true,opacity:0.95,dashSize:dash,gapSize:gap,depthTest:false}));
     line.computeLineDistances(); line.renderOrder=800; line.userData=userData; root.add(line); return line; }
@@ -274,19 +272,20 @@ _APP_JS = r"""
       if(enclosureCondition==='unknown') return;
       const mesh=new THREE.Mesh(ringGeom(part.verts,part.holes||[]), m.clone());
       mesh.userData={zone, floor:fi, type:s.type||'Wall', name:s.name, kind:'surface', dup,
+        occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined),
         enclosureCondition, publicName:(NAMES.parts||{})[s.name]?.[partIndex] || objectName(s.name),
         area:polyArea(part.verts)-(part.holes||[]).reduce((sum,r)=>sum+polyArea(r),0)};
       surfMeshes.push(mesh); root.add(mesh);
-      [part.verts,...(part.holes||[])].forEach(ring=>{
-        const em=new THREE.LineSegments(edgeGeom(ring), new THREE.LineBasicMaterial({color:0x303030}));
-        em.userData={zone, floor:fi, dup}; edgeSegs.push(em); root.add(em);
-      });
+      const segments=part.edge_segments ?? [part.verts,...(part.holes||[])].flatMap(r=>r.map((v,i)=>[v,r[(i+1)%r.length]]));
+      const em=new THREE.LineSegments(segmentGeom(segments), new THREE.LineBasicMaterial({color:0x303030}));
+      em.userData={...mesh.userData}; edgeSegs.push(em); root.add(em);
+      surfaceEdges.push({segments,userData:mesh.userData,name:s.name});
     });
     logicalLines.push(dashedEdge(s.verts,LOGICAL_COLOR,radius*0.018,radius*0.012,
       {zone,floor:fi,kind:'logical',dup:false}));
     m.dispose();
   });
-  const enclosureRegionKeys=new Set();
+  const enclosureRegionKeys=new Map();
   function enclosureRegionKey(ring){
     return ring.map(v=>v.map(x=>Math.round(x*1e6)/1e6).join(',')).sort().join('|');
   }
@@ -295,9 +294,10 @@ _APP_JS = r"""
     const sourceBoundary=SOURCE_BOUNDARIES[r.boundary_id] || {};
     const zone=r.space_id || sourceBoundary.space_id || '?';
     const fi=zoneFloor[zone] ?? nearestBase(Math.min(...r.verts.map(v=>v[2])),BASES);
-    const key=enclosureRegionKey(r.verts), duplicate=enclosureRegionKeys.has(key);
-    enclosureRegionKeys.add(key);
+    const key=enclosureRegionKey(r.verts), owners=enclosureRegionKeys.get(key)||[], duplicate=owners.length>0;
+    enclosureRegionKeys.set(key,[...owners,zone]);
     const userData={zone,floor:fi,kind:'enclosure-region',condition:r.condition,dup:duplicate,
+      occludedBy:owners,
       publicName:(NAMES.regions||[])[regionIndex] || objectName(r.boundary_id),
       boundaryId:r.boundary_id,area:polyArea(r.verts),sourceRefs:r.source_refs||[],assumptions:r.assumptions||[],
       evidenceKind:r.evidence_kind,baseColor:ENCLOSURE_COLOR};
@@ -326,11 +326,12 @@ _APP_JS = r"""
       opacity:o.state==='closed'?0.7:0.12,depthWrite:false});
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
     mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'门':'空开口',name:o.name,
+      occludedBy:dup ? [o.other_space_id] : [],
       parent:o.parent,kind:'opening',dup,area:polyArea(o.verts),baseColor:color,sourceId:o.source_opening_id,
       spaceId:o.space_id,otherSpaceId:o.other_space_id,state:o.state};
     openingMeshes.push(mesh);root.add(mesh);
     const em=new THREE.LineSegments(edgeGeom(o.verts),new THREE.LineBasicMaterial({color}));
-    em.userData={zone,floor:zoneFloor[zone]||0,dup,kind:'opening',baseColor:color};edgeSegs.push(em);root.add(em);
+    em.userData={...mesh.userData};edgeSegs.push(em);root.add(em);
   });
   const allMeshes = () => surfMeshes.concat(winMeshes,openingMeshes,enclosureMeshes);
   const allPickables = () => allMeshes().concat(enclosureLines);
@@ -364,9 +365,10 @@ _APP_JS = r"""
   const meshActive = () => Boolean(reference && $('showMesh').checked && parseFloat($('explode').value)===0);
   function comparisonPlanes(){
     const p=activePlanes().slice(), f=parseInt($('floorSel').value,10), floor=sourceFloor(f);
-    if(meshActive() && floor){
-      p.push(new THREE.Plane(new THREE.Vector3(0,0,1),-floor.z_floor),
-        new THREE.Plane(new THREE.Vector3(0,0,-1),floor.z_floor+floor.height));
+    if(floor && Number.isFinite(floor.height) && parseFloat($('explode').value)===0){
+      const pad=Math.max(1e-6,Math.abs(floor.z_floor+floor.height)*2e-7);
+      p.push(new THREE.Plane(new THREE.Vector3(0,0,1),-floor.z_floor+pad),
+        new THREE.Plane(new THREE.Vector3(0,0,-1),floor.z_floor+floor.height+pad));
     }
     return p;
   }
@@ -455,14 +457,19 @@ _APP_JS = r"""
     EDGES.push({a:new THREE.Vector3(a[0],a[1],a[2]), b:new THREE.Vector3(b[0],b[1],b[2]), zone, floor, dup, kind,
       publicName:(NAMES.edges||{})[name]?.[i] || objectName(name)+"_Edge"+(i+1), parentName:objectName(name), sourceName:name,
       len:Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])}); } }
-  SURF.forEach(s=>{ const z=s.zone||'?'; pushEdges(s.verts, z, zoneFloor[z]??nearestBase(zmin(s),BASES), isDup(s), 'surface', s.name); });
+  surfaceEdges.forEach(({segments,userData:u,name})=>segments.forEach(([a,b],i)=>{
+    EDGES.push({...u,a:new THREE.Vector3(...a),b:new THREE.Vector3(...b),
+      publicName:u.publicName+'_Edge'+(i+1),parentName:objectName(name),sourceName:name,
+      len:Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])});
+  }));
   WINS.forEach(w=>{ const z=zoneOfWindow(w); pushEdges(w.verts, z, zoneFloor[z]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), false, 'window', w.name); });
-  OPENS.forEach(o=>{const z=_surfZoneByName[o.parent];pushEdges(o.verts,z,zoneFloor[z]||0,Boolean(o.partner&&o.name>o.partner),'opening',o.name);});
+  OPENS.forEach(o=>{const z=_surfZoneByName[o.parent], start=EDGES.length;
+    pushEdges(o.verts,z,zoneFloor[z]||0,Boolean(o.partner&&o.name>o.partner),'opening',o.name);
+    EDGES.slice(start).forEach(e=>e.occludedBy=[o.other_space_id]);});
   // only pick an edge whose source face is currently shown (same predicate as applyFilter)
   function edgeVisible(e){ const f=parseInt($('floorSel').value,10); const exploded=parseFloat($('explode').value)>0;
     if(meshActive() && ($('meshMode').value==='mesh'||!$('showEdges').checked)) return false;
-    if(!onFloor(e,f)) return false;
-    if(!exploded && e.dup) return false;
+    if(!partVisible(e,f,exploded)) return false;
     return (e.kind==='window') ? $('showWin').checked : (e.kind==='opening') ? $('showOpen').checked : $('showWalls').checked; }
   function segDist(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy||1;
     let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
@@ -583,7 +590,7 @@ _APP_JS = r"""
     const comparison=meshActive(), mode=$('meshMode').value;
     const fills=!comparison || mode==='blend', contours=!comparison || mode!=='mesh';
     const sw=$('showWalls').checked, swin=$('showWin').checked, se=$('showEdges').checked;
-    const okF=(u)=>onFloor(u,f) && (exploded || !u.dup);
+    const okF=(u)=>partVisible(u,f,exploded);
     surfMeshes.forEach(m=>m.visible = fills && sw && okF(m.userData));
     winMeshes.forEach(m=>m.visible = fills && swin && okF(m.userData));
     openingMeshes.forEach(m=>m.visible=fills && $('showOpen').checked && okF(m.userData));
@@ -650,8 +657,11 @@ _APP_JS = r"""
     $('en'+a.key).onchange=refresh; $('pos'+a.key).oninput=refresh; $('flip'+a.key).onchange=refresh; });
 
   // ---- floor select + wiring ----
-  const fs=$('floorSel'); BASES.forEach((b,i)=>{const o=document.createElement('option'); o.value=i; o.textContent=floorName(i)+' (z='+b.toFixed(2)+')'; fs.appendChild(o);});
-  $('colorBy').onchange=()=>{ refreshColors(); clearSelection(); }; fs.onchange=applyFilter;
+  const fs=$('floorSel'); BASES.forEach((b,i)=>{
+    if(!SURF.some(s=>onFloor({zone:s.zone,floor:zoneFloor[s.zone]},i))) return;
+    const o=document.createElement('option'); o.value=i; o.textContent=floorName(i)+' (z='+b.toFixed(2)+')'; fs.appendChild(o);});
+  $('colorBy').onchange=()=>{ refreshColors(); clearSelection(); };
+  fs.onchange=()=>{clearSelection();clearMeasure();applyFilter();};
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
   $('showOpen').onchange=applyFilter; $('showLogical').onchange=applyFilter; $('showEnclosure').onchange=applyFilter;
   $('showMesh').onchange=applyFilter; $('meshMode').onchange=applyFilter; $('meshOpacity').oninput=applyFilter;

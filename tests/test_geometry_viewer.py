@@ -262,7 +262,7 @@ def test_source_spanning_spaces_are_filter_members_without_slicing_geometry():
         floor_index["CORE"], floor_index["F1"], floor_index["F2"]]
     assert "const zoneFloor = {}, zoneFloors = {};" in html
     assert "const declared=(GEO.floor_memberships||{})[z]||[]" in html
-    assert "const okF=(u)=>onFloor(u,f)" in html
+    assert "const okF=(u)=>partVisible(u,f,exploded)" in html
     # Primary floor remains single-valued for colouring/explode. Filtering uses
     # the declared local + spanning index set and never creates sliced geometry.
     assert "zoneFloors[z]=declared.length ? declared : [zoneFloor[z]]" in html
@@ -299,3 +299,99 @@ def test_app_js_parses_with_node(tmp_path):
     js.write_text(rgv.app_js(), encoding="utf-8")
     r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
     assert r.returncode == 0, f"node --check failed:\n{r.stderr}"
+
+
+def _node_result(tmp_path, code):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required to execute viewer geometry")
+    script = tmp_path / "viewer_properties.cjs"
+    script.write_text(code, encoding="utf-8")
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("ring,holes", [
+    # A concave quad must not use the diagonal from vertex zero.
+    ([[0, 0], [2, 1], [0, 2], [0.5, 1]], []),
+    # The former O21 cap contains a near-return at vertices 3/5.
+    ([[-12.16957057592, 8.701179316718], [-7.547400862034, 6.54582618184],
+      [-9.575968518389, 2.195548804064], [-7.038306714686, 1.01221767119],
+      [-4.772537247094, -0.044327983161], [-7.038306714685692, 1.0122176711898565],
+      [-7.207354019382, 0.649694556375], [-0.4, -2.5],
+      [0.009172541800332945, -0.5657298023984259], [0.1, -0.7], [2.6, -0.7],
+      [2.6, -2], [9.9, -2], [9.9, 2.7], [14.8, 2.7], [14.8, -6.208351418503],
+      [14.163340567401, -7.8], [-1.577251940125, -7.8],
+      [-16.11134547698, -1.184481562535], [-16.070150026769, 0.336359690373]], []),
+    ([[0, 0], [6, 0], [6, 5], [0, 5]], [[[1, 1], [3, 1], [3, 3], [1, 3]]]),
+])
+@pytest.mark.parametrize("vertical", [False, True])
+def test_viewer_triangles_cover_only_the_source_polygon(tmp_path, ring, holes, vertical):
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    lift = lambda p: [p[0], 7, p[1]] if vertical else [*p, 75.6]
+    loops = [[lift(p) for p in loop] for loop in [ring, *holes]]
+    script = rgv.app_js()
+    functions = script[script.index("  function projectionAxis("):script.index("  function edgeGeom(")]
+    output = _node_result(tmp_path,
+        f"const THREE=require({json.dumps(str(rgv._VENDOR / 'three.min.js'))});\n"
+        + functions + f"\nconsole.log(JSON.stringify(triangulateRings({json.dumps(loops[0])},{json.dumps(loops[1:])})));\n")
+    positions = output["positions"]
+    points = [positions[i:i+3] for i in range(0, len(positions), 3)]
+    points = [(p[0], p[2] if vertical else p[1]) for p in points]
+    indices = output["indices"]
+    triangles = [Polygon([points[j] for j in indices[i:i+3]]) for i in range(0, len(indices), 3)]
+    expected = Polygon(ring, holes)
+    actual = unary_union(triangles)
+    assert expected.is_valid
+    assert actual.difference(expected).area < 1e-8
+    assert expected.difference(actual).area < 1e-8
+    assert sum(p.area for p in triangles) == pytest.approx(expected.area, abs=1e-8)
+
+
+def test_floor_filter_restores_caps_and_hides_core_geometry_consistently(tmp_path):
+    script = rgv.app_js()
+    functions = script[script.index("  const zoneForSpace ="):script.index("  // ---- zone centroids")]
+    result = _node_result(tmp_path, """
+const SOURCE_MAP={zones:{lower:'lower',upper:'upper',lift:'lift',stair:'stair'}};
+const SOURCE_SPACES={};
+const roles={lift:'shaft',stair:'stairwell',lower:'office',upper:'office'};
+const roleOf=z=>roles[z];
+const zoneFloor={lower:0,upper:1,lift:2,stair:3};
+const zoneFloors={lower:[0],upper:[1],lift:[0,1,2],stair:[0,1,3]};
+""" + functions + """
+const cap={zone:'upper',floor:1,dup:true,occludedBy:['lower']};
+const contact={zone:'upper',floor:1,dup:true,occludedBy:['lift']};
+const core={zone:'lift',floor:2,dup:false};
+console.log(JSON.stringify({capAll:partVisible(cap,-1,false),capUpper:partVisible(cap,1,false),
+  capLower:partVisible(cap,0,false),capExploded:partVisible(cap,-1,true),
+  contactAll:partVisible(contact,-1,false),contactSingle:partVisible(contact,1,false),
+  coreAll:partVisible(core,-1,false),coreSingle:partVisible(core,1,false),
+  coreExplodedSingle:partVisible(core,1,true),stairSingle:onFloor({zone:'stair',floor:3},1)}));
+""")
+    assert result == {"capAll": False, "capUpper": True, "capLower": False, "capExploded": True,
+                      "contactAll": False, "contactSingle": True, "coreAll": True,
+                      "coreSingle": False, "coreExplodedSingle": False, "stairSingle": False}
+
+
+def test_viewer_triangulation_is_translation_invariant(tmp_path):
+    script = rgv.app_js()
+    functions = script[script.index("  function projectionAxis("):script.index("  function edgeGeom(")]
+    results = _node_result(tmp_path,
+        f"const THREE=require({json.dumps(str(rgv._VENDOR / 'three.min.js'))});\n"
+        + functions + """
+const ring=[[0,0,0],[4.1,0,0],[4.1,3.2,0],[2.2,3.2,0],[2.2,2.1,0],[0,2.1,0]];
+const hole=[[0.2,0.2,0],[1.2,0.2,0],[1.2,1.2,0],[0.2,1.2,0]];
+const result=[0,1e5,1e6].map(offset=>{
+  const move=r=>r.map(p=>[p[0]+offset,p[1]+offset,p[2]+7]);
+  const {positions,indices}=triangulateRings(move(ring),[move(hole)]);
+  let area=0;
+  for(let i=0;i<indices.length;i+=3){const [a,b,c]=indices.slice(i,i+3).map(j=>positions.slice(j*3,j*3+3));
+    area+=Math.abs((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))/2;}
+  return {area,first:positions.slice(0,3)};
+});
+console.log(JSON.stringify(result));
+""")
+    assert all(r["area"] == pytest.approx(results[0]["area"], abs=1e-8) for r in results)
+    assert results[-1]["first"] == [1e6, 1e6, 7]

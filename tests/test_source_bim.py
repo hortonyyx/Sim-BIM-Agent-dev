@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 from shapely.affinity import rotate, translate
-from shapely.geometry import Polygon, box
+from shapely.geometry import Polygon, box, LineString
+from shapely.ops import unary_union
 
 from src.agent.geometry_model.parse import parse_geometry
 from src.agent.geometry_model.schema import GeometryInput, WallOpening
@@ -253,3 +254,99 @@ def test_display_preserves_full_boundary_area_holes_and_partial_contact_visibili
     assert source["source_model_sha256"]==_digest({k:v for k,v in source.items() if k!="source_model_sha256"})
     changed=copy.deepcopy(source);changed["spaces"][0]["height"]+=1
     with pytest.raises(ValueError,match="digest"): source_view_geometry(changed)
+
+
+def test_display_contact_ownership_and_edges_keep_source_boundary_intact():
+    source = build_source_bim(three_rooms(), capability_profile="orthogonal_polygon")
+    original = copy.deepcopy(source)
+    display = source_view_geometry(source)
+    wall = next(b for b in source["boundaries"]
+                if b["space_id"] == "hall" and b["adjacent_space_ids"] == ["a", "b"])
+    rows = display["display_surface_parts"][wall["id"]]
+    assert {tuple(row["occluded_by"]) for row in rows} == {("a",), ("b",)}
+    assert all(row["duplicate_at_rest"] for row in rows)
+    # No full-height display seam at the boundary between the two neighbours.
+    # Real parent perimeter and the door notch are still available to draw.
+    edges = [LineString([(p[1], p[2]) for p in segment])
+             for row in rows for segment in row["edge_segments"]]
+    edge_union = unary_union(edges)
+    physical = box(0, 0, 6, 3).difference(box(1, 0, 2, 2.1))
+    assert edge_union.symmetric_difference(physical.boundary).length == pytest.approx(0)
+    assert edge_union.intersection(LineString([(3, .1), (3, 2.9)])).length == 0
+    assert source == original
+
+
+def _display_only_source(boundaries, relations=(), openings=(), hosts=None):
+    return {"schema_version": "source_bim_v3", "boundaries": boundaries,
+            "boundary_relations": list(relations), "openings": list(openings),
+            "opening_hosts": hosts or {}}
+
+
+def _display_wall(identifier, owner, low, high):
+    return {"id": identifier, "space_id": owner, "geometry_type": "wall",
+            "vertices": [[0, 0, low], [4.8, 0, low], [4.8, 0, high], [0, 0, high]]}
+
+
+def test_display_removes_ulp_contact_seam_without_changing_source():
+    from src.agent.geometry.source_bim import _display_parts
+    boundaries = [_display_wall("z", "shaft", 0, 78.6),
+                  _display_wall("a", "lower", 0, 27.599999999999998),
+                  _display_wall("b", "upper", 27.6, 78.6)]
+    relations = [{"boundary_ids": ["z", row["id"]],
+                  "regions": [{"vertices": row["vertices"], "holes": []}]}
+                 for row in boundaries[1:]]
+    source = _display_only_source(boundaries, relations)
+    original = copy.deepcopy(source)
+    rows = _display_parts(source)["z"]
+    assert len(rows) == 2
+    assert {tuple(row["occluded_by"]) for row in rows} == {("lower",), ("upper",)}
+    assert all(row["duplicate_at_rest"] for row in rows)
+    assert sum(Polygon([(v[0], v[2]) for v in row["verts"]]).area
+               for row in rows) == pytest.approx(4.8 * 78.6)
+    assert not any(abs(a[2] - 27.6) < 1e-8 and abs(b[2] - 27.6) < 1e-8
+                   for row in rows for a, b in row["edge_segments"])
+    assert source == original
+
+
+def test_display_precision_retains_small_real_reveal_and_opening():
+    from src.agent.geometry.source_bim import _display_parts
+    boundary = _display_wall("z", "shaft", 0, 3)
+    adjacent = _display_wall("a", "room", 1e-6, 3)
+    opening = {"id": "vent", "vertices": [[1, 0, 1], [1.000001, 0, 1],
+                                           [1.000001, 0, 2], [1, 0, 2]]}
+    source = _display_only_source([boundary, adjacent], [
+        {"boundary_ids": ["z", "a"], "regions": [{"vertices": adjacent["vertices"], "holes": []}]}],
+        [opening], {"vent": ["z"]})
+    rows = _display_parts(source)["z"]
+    free = [row for row in rows if not row["duplicate_at_rest"]]
+    assert sum(Polygon([(v[0], v[2]) for v in row["verts"]]).area
+               for row in free) == pytest.approx(4.8e-6)
+    total = sum(Polygon([(v[0], v[2]) for v in row["verts"]],
+                        [[(v[0], v[2]) for v in h] for h in row["holes"]]).area for row in rows)
+    assert total == pytest.approx(14.4 - 1e-6, abs=1e-10)
+
+
+def test_display_precision_cleans_near_return_without_changing_footprint():
+    from src.agent.geometry.source_bim import _display_parts
+    # The near-return at the fourth/sixth vertices left a machine-width spike
+    # in the actual top office display cap. Keep the concave shape unchanged.
+    xy = [[-12.16957057592, 8.701179316718], [-7.547400862034, 6.54582618184],
+          [-9.575968518389, 2.195548804064], [-7.038306714686, 1.01221767119],
+          [-4.772537247094, -.044327983161], [-7.038306714685692, 1.0122176711898565],
+          [-7.207354019382, .649694556375], [-.4, -2.5], [.009172541800333, -.565729802398426],
+          [.1, -.7], [2.6, -.7], [2.6, -2], [9.9, -2], [9.9, 2.7], [14.8, 2.7],
+          [14.8, -6.208351418503], [14.163340567401, -7.8], [-1.577251940125, -7.8],
+          [-16.11134547698, -1.184481562535], [-16.070150026769, .336359690373]]
+    boundary = {"id": "top", "space_id": "office", "geometry_type": "ceiling",
+                "vertices": [[x, y, 75.6] for x, y in xy]}
+    source = _display_only_source([boundary])
+    original = copy.deepcopy(source)
+    rows = _display_parts(source)["top"]
+    assert len(rows) == 1
+    ring = rows[0]["verts"]
+    result = Polygon([v[:2] for v in ring])
+    assert result.is_valid
+    assert len(ring) < len(xy)
+    assert result.symmetric_difference(Polygon(xy)).area < 1e-7
+    assert all(v[2] == 75.6 for v in ring)
+    assert source == original
