@@ -1,11 +1,13 @@
 """Offline regressions for T1's observed interface failures."""
 import asyncio
 import json
+import math
 from unittest.mock import patch
 
 import pytest
 from mcp.server.fastmcp import FastMCP
-from scripts.tool_scripts.bim_agent_feedback import resolve_image_name
+from mcp.types import CallToolResult, ImageContent, TextContent
+from scripts.tool_scripts.bim_agent_feedback import mcp_json_result, resolve_image_name
 from scripts.tool_scripts.run_bim_agent import Toolkit, serve
 from tests.test_bim_agent_tools import _run_with_one_image, _add_image, _server_session, _two_room_proposal, _json_result
 
@@ -20,6 +22,52 @@ def test_unique_image_aliases_and_ambiguous_names():
     for name in ("p1", "../East_view.png", "/East_view.png"):
         with pytest.raises(ValueError, match="Available filenames"):
             resolve_image_name(images, name)
+
+
+def test_mcp_signed_zero_preserves_json_types_images_and_error():
+    raw = '{"zeros":[-0,-0.0,-0e0],"integer":9007199254740993,"signed":-0.25,"exact":"[-0.0]","tiny":-1e-5000,"decimal":0.1234567890123456789012345}'
+    value = json.loads(raw)
+    image = ImageContent(type="image", data="AA==", mimeType="image/png")
+    original = CallToolResult(isError=True, structuredContent=value,
+        content=[TextContent(type="text", text=raw), image, TextContent(type="text", text="Keep -0.0 as written.")])
+    result = mcp_json_result(original)
+    assert result.isError and result.structuredContent == value
+    text_value = json.loads(result.content[0].text)
+    assert all(math.copysign(1, z) > 0 for z in text_value["zeros"])
+    assert all(math.copysign(1, z) > 0 for z in result.structuredContent["zeros"])
+    assert text_value["integer"] == 9007199254740993
+    assert text_value["signed"] == -0.25 and text_value["exact"] == "[-0.0]"
+    assert '"tiny":-1e-5000' in result.content[0].text
+    assert '"decimal":0.1234567890123456789012345' in result.content[0].text
+    assert result.content[1] is image
+    assert result.content[2].text == original.content[2].text
+    assert original.content[0].text == raw
+    assert math.copysign(1, original.structuredContent["zeros"][1]) < 0
+
+
+def test_candidate_domain_failure_keeps_structured_diagnostics_through_mcp(tmp_path):
+    async def scenario():
+        run = _run_with_one_image(tmp_path)
+        servers = []
+        with patch.object(FastMCP, "run", lambda s: servers.append(s)):
+            serve(run)
+        failure = {"status": "error", "error": "ring_adoption: 2 independent problem(s)",
+                   "draft": "parametric_drafts/draft_020.json",
+                   "error_details": {"regularization": {"rejections": [
+                       {"path": "templates.typical.footprint", "worst_vertex": {
+                           "before": [14.1, -9.1], "after": [14.1, -8.986752082251],
+                           "supports": [{"normal": [1.0, -0.0]}]}}]}}}
+        with patch("scripts.tool_scripts.bim_agent_parametric.build_parametric", return_value=failure):
+            result = await servers[0].call_tool("build_parametric_bim", {"plan_json": "{}"})
+        assert result.isError
+        details = result.structuredContent["error_details"]
+        assert details["regularization"]["rejections"][0]["path"] == "templates.typical.footprint"
+        value = details["regularization"]["rejections"][0]["worst_vertex"]
+        assert value["before"] == [14.1, -9.1] and value["after"] == [14.1, -8.986752082251]
+        assert math.copysign(1, value["supports"][0]["normal"][1]) > 0
+        text = next(json.loads(b.text) for b in result.content if b.type == "text" and b.text.startswith("{"))
+        assert text["error_details"] == details
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("scale,used", [(0.7, 1), (9, 8), (-3, 1)])

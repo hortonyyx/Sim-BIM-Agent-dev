@@ -2,6 +2,22 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_dsh_runtime.py": {
+      "group": "targeted",
+      "reason": "Installed DSH integration, exact Responses replay and bounded pre-write recovery"
+    },
+    "tests/test_run_trace_export.py": {
+      "group": "targeted",
+      "reason": "Local trace publication, verified request images and safe presentation of recorded data"
+    },
+    "tests/test_run_trace_readers.py": {
+      "group": "targeted",
+      "reason": "Native and DeepSeek session evidence, tool outcomes and incomplete event lifecycles"
+    },
+    "tests/test_run_trace_wire.py": {
+      "group": "targeted",
+      "reason": "Provider-side request and response evidence, independent of host receipt"
+    },
     "tests/test_desktop_release.py": {
       "group": "targeted",
       "reason": "Actual desktop evidence binding, same-tag Git/Release recovery and owned staging cleanup with offline local Git fixtures"

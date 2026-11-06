@@ -131,6 +131,70 @@ def test_acute_intersection_cannot_amplify_grid_adoption_into_a_metre_shift():
     assert raw == before
 
 
+@pytest.mark.parametrize('origin,yaw', [([0, 0], 0), ([103.024, -28.013], 31)])
+def test_grid_dimensioned_chamfer_keeps_derived_support_and_complete_aperture(origin, yaw, tmp_path):
+    local = [[0, 0], [8.1, 0], [8.1, 5.1], [7.5, 6.5], [0, 6.5]]
+    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    points = [[origin[0]+c*x-s*y, origin[1]+s*x+c*y] for x, y in local]
+    plan = single(points)
+    plan['modelling'] = {'frames': [dict(id='wing', origin=origin, yaw_degrees=yaw, templates=['main'])]}
+    # The whole chamfer is the declared host. Independently rounding its
+    # irrational normal or tangent offset moves already dimensioned endpoints.
+    plan['templates']['main']['doors'] = [dict(id='edge', space='room', other_space=None,
+        p1=points[2], p2=points[3], z=[0, 2.1], source_refs=['grid-dimensioned chamfer'])]
+    before = copy.deepcopy(plan)
+    adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+    assert plan == before
+    for old, new in zip(points, adopted['templates']['main']['footprint']):
+        assert new == pytest.approx(old, abs=1e-10)
+    door = adopted['templates']['main']['doors'][0]
+    assert door['p1'] == pytest.approx(points[2], abs=1e-10)
+    assert door['p2'] == pytest.approx(points[3], abs=1e-10)
+    assert audit['observed_max_vertex_displacement_m'] < 1e-10
+    support, = [row for row in audit['diagnostics'] if row['type'] == 'grid_derived_support']
+    for actual, expected in zip(sorted(support['source_edge']), sorted(local[2:4])):
+        assert actual == pytest.approx(expected, abs=1e-10)
+    assert abs(support['adopted_offset_m']*10-round(support['adopted_offset_m']*10)) > .01
+    repeated, _ = regularize_architectural_plan(adopted, policy={**POLICY, 'frames': plan['modelling']['frames']})
+    for old, new in zip(adopted['templates']['main']['footprint'], repeated['templates']['main']['footprint']):
+        assert new == pytest.approx(old, abs=1e-10)
+    for key in ('p1', 'p2'):
+        assert repeated['templates']['main']['doors'][0][key] == pytest.approx(door[key], abs=1e-10)
+    report = export_source_proposal(expand_parametric_proposal(adopted), tmp_path/'chamfer')
+    assert report['source_geometry_ready'], report
+
+
+def test_grid_derived_shared_wall_includes_partial_edges_and_preserves_incidence(tmp_path):
+    a, b = [.1, .1], [6.1, 4.1]
+    split = [a[i]+.37*(b[i]-a[i]) for i in (0, 1)]
+    plan = single([a, [6.1, .1], b, [.1, 4.1]])
+    template = plan['templates']['main']
+    template['spaces'] = [dict(id='upper', role='office', polygon=[a, split, b, [.1, 4.1]],
+                              source_refs=['synthetic shared partition']),
+                          dict(id='lower', role='office', polygon=[a, [6.1, .1], b],
+                              source_refs=['synthetic shared partition'])]
+    endpoints = [[a[i]+t*(b[i]-a[i]) for i in (0, 1)] for t in (.45, .7)]
+    template['doors'] = [dict(id='shared', space='upper', other_space='lower',
+        p1=endpoints[0], p2=endpoints[1], z=[0, 2.1], source_refs=['shared sloping wall'])]
+    adopted, audit = regularize_architectural_plan(plan, policy=POLICY)
+    for old, new in zip(template['spaces'], adopted['templates']['main']['spaces']):
+        assert Polygon(old['polygon']).hausdorff_distance(Polygon(new['polygon'])) < 1e-10
+    door = adopted['templates']['main']['doors'][0]
+    assert door['p1'] == pytest.approx(endpoints[0], abs=1e-10)
+    assert door['p2'] == pytest.approx(endpoints[1], abs=1e-10)
+    assert audit['observed_max_vertex_displacement_m'] < 1e-10
+    template['spaces'].reverse()
+    template['footprint'].reverse()
+    for space in template['spaces']:
+        space['polygon'].reverse()
+    reversed_plan, _ = regularize_architectural_plan(plan, policy=POLICY)
+    shapes = {s['id']: Polygon(s['polygon']) for s in adopted['templates']['main']['spaces']}
+    for space in reversed_plan['templates']['main']['spaces']:
+        assert shapes[space['id']].hausdorff_distance(Polygon(space['polygon'])) < 1e-10
+    report = export_source_proposal(expand_parametric_proposal(adopted), tmp_path/'shared')
+    assert report['source_geometry_ready'], report
+
+
 def test_curve_declarations_and_derived_vertices_are_untouched():
     plan = single([[0,0],[4.023,0],[2.85,2.85],[0,4.023]])
     path = [{'curve_id':'curve'}]

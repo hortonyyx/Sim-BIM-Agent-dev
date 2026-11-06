@@ -16,6 +16,65 @@ from tests.test_bim_agent_tools import (
 )
 
 
+def test_failed_draft_inspection_recovers_bound_rejections_and_patch_route(tmp_path):
+    from scripts.tool_scripts.bim_agent_replies import read_report
+    toolkit = _ParametricFunctionToolkit(tmp_path / 'run')
+    folder = toolkit.run / 'parametric_drafts'
+    folder.mkdir()
+    draft = folder / 'draft_020.json'
+    draft.write_text(json.dumps(_parametric_function_plan()), encoding='utf-8')
+    # Vertex and supports reproduce the final historical rejection. Extra rows
+    # exercise the explicit bounded summary + complete report reading route.
+    rejection = {'stage': 'ring_adoption', 'code': 'outline_displacement_exceeded',
+        'path': 'templates.typical.footprint', 'worst_vertex': {
+            'before': [14.1, -9.1], 'after': [14.1, -8.986752082251],
+            'supports': [{'normal': [1.0, -0.0], 'before_offset': 14.1, 'after_offset': 14.1}]}}
+    audit = {'status': 'rejected', 'grid_m': 0.1, 'max_outline_displacement_m': 0.1,
+             'rejections': [dict(copy.deepcopy(rejection), index=i) for i in range(6)]}
+    audit_file = draft.with_suffix('.regularization.json')
+    audit_file.write_text(json.dumps(audit), encoding='utf-8')
+    state = {'draft': 'parametric_drafts/draft_020.json',
+             'plan_sha256': hashlib.sha256(draft.read_bytes()).hexdigest(),
+             'error': 'ring_adoption: 6 independent problem(s)', 'regularization_failure': audit,
+             'regularization_failure_reference': {'file': 'parametric_drafts/draft_020.regularization.json',
+                 'sha256': hashlib.sha256(audit_file.read_bytes()).hexdigest()}}
+    draft.with_suffix('.state.json').write_text(json.dumps(state), encoding='utf-8')
+    original = _parametric_file_hashes(folder)
+    failure = subject._failure(toolkit, 'build_parametric_bim', ValueError(state['error']), state=state)
+    for reply in [failure, subject.inspect_parametric(toolkit, draft=state['draft']),
+                  subject.inspect_parametric(toolkit, draft=state['draft'], pointer='/templates', full=True)]:
+        assert reply.get('error', reply.get('draft_error')) == state['error']
+        if reply is not failure:
+            assert 'error' not in reply
+        assert reply['edit_route']['patch_arguments'] == {
+            'draft': state['draft'], 'expected_plan_sha256': state['plan_sha256']}
+        diagnostic = reply['error_details']['regularization']
+        assert diagnostic['rejection_count'] == 6 and diagnostic['rejections'] == audit['rejections'][:4]
+        route = diagnostic['read_all_rejections']
+        assert route['tool'] == 'read_candidate_items' and route['arguments']['candidate'] == ''
+        assert route['arguments']['collection'] == 'report'
+        complete = read_report(toolkit.run, route['arguments']['report_file'], 0, 12000,
+                               json_pointer=route['arguments']['json_pointer'])
+        assert complete['value'] == audit['rejections']
+        assert 'modelling.frames' in diagnostic['repair_hint']
+    assert _parametric_file_hashes(folder) == original
+    # Reading a rejected draft succeeds; the SDK must not confuse the prior
+    # construction failure with this inspection's own status.
+    from src.agent.sdk import BimSession
+    from tests.test_bim_agent_tools import _run_with_one_image
+    sdk_run = _run_with_one_image(tmp_path / 'sdk')
+    shutil.copytree(folder, sdk_run / 'parametric_drafts')
+    with BimSession(sdk_run) as session:
+        response = session.call('inspect_parametric_plan', draft=state['draft'])
+        inspected = response.require_ok()
+        assert not response.is_error and 'error' not in inspected
+        assert inspected['draft_error'] == state['error']
+        assert inspected['error_details']['regularization']['rejections'] == audit['rejections'][:4]
+    audit_file.write_text(json.dumps({**audit, 'status': 'tampered'}), encoding='utf-8')
+    stale = subject.inspect_parametric(toolkit, draft=state['draft'])
+    assert not stale['patch_allowed'] and 'diagnostics changed' in stale['error']
+
+
 def setup(tmp_path, count=43):
     toolkit = _ParametricFunctionToolkit(tmp_path / 'run')
     first = subject.build_parametric(toolkit, json.dumps(_parametric_function_plan()))
@@ -258,13 +317,17 @@ def test_parametric_retry_formal_mcp_rejects_side_effect_options_before_claim_th
         async with _server_session(run, readonly=False) as session:
             first = _json_result(await session.call_tool('build_parametric_bim', {'plan_json': json.dumps(_parametric_function_plan())}))
             args = {'candidate': first['candidate'], 'expected_plan_sha256': first['parametric']['plan_sha256']}
-            failed = _json_result(await session.call_tool('patch_parametric_bim', {**args,
-                'operations_json': json.dumps([op('replace', '/connections', [])])}))
+            failed_response = await session.call_tool('patch_parametric_bim', {**args,
+                'operations_json': json.dumps([op('replace', '/connections', [])])})
+            assert failed_response.isError
+            failed = failed_response.structuredContent
             request = {'retry_failed_batch': {key: failed['failed_batch'][key] for key in ('id', 'sha256')},
                        'edits': [{'op': 'replace', 'index': 0, 'operation': op('add', '/connections', [])}]}
             args['operations_json'] = json.dumps(request)
             for extra in ({'inferences_json': '[]'}, {'mesh_observations': ['mesh_001']}):
-                refused = _json_result(await session.call_tool('patch_parametric_bim', {**args, **extra}))
+                refused_response = await session.call_tool('patch_parametric_bim', {**args, **extra})
+                assert refused_response.isError
+                refused = refused_response.structuredContent
                 assert 'cannot combine' in refused['error']
                 assert not list((run / 'parametric_patch_failures').glob('*.claim.json'))
             saved = _json_result(await session.call_tool('patch_parametric_bim', args))

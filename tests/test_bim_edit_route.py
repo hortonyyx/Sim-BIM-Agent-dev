@@ -126,11 +126,13 @@ def test_mcp_accepts_returned_route_arguments_and_partial_semantic_patch(tmp_pat
         async with _server_session(run, readonly=False) as session:
             first = _json_result(await session.call_tool("build_parametric_bim", {"plan_json": json.dumps(plan())}))
             route = first["edit_route"]
-            refused = _json_result(await session.call_tool("patch_parametric_bim", {
+            refused_response = await session.call_tool("patch_parametric_bim", {
                 **route["patch_arguments"],
                 "operations_json": json.dumps([{
                     "op": "replace", "path": "/connections", "value": [],
-                    "reason": "explicit connection declaration", "source_refs": ["test"]}])}))
+                    "reason": "explicit connection declaration", "source_refs": ["test"]}])})
+            assert refused_response.isError
+            refused = refused_response.structuredContent
             assert refused["error_details"]["operation_index"] == 0
             assert refused["error_details"]["suggested_operation"] == "add"
             assert refused["edit_route"]["patch_arguments"] == route["patch_arguments"]

@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>运行轨迹</title>
+<style>
+:root{font:14px/1.5 "Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;color:#272d36;background:#fff;--faint:#eff1f3;--border:#dfe3e8;--muted:#68727f;--blue:#315ea8;--mono:Consolas,"SFMono-Regular",monospace}
+*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit;color:inherit}button,select{cursor:pointer}button{background:none;border:0}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #4477c3;outline-offset:2px}button:disabled{cursor:default}h1,h2,p{margin:0}[hidden]{display:none!important}
+[data-kind=input]{--tint:#e9f6ee;--ink:#207440;--bar:#46a773}
+[data-kind=model]{--tint:#f0ebf7;--ink:#704d94;--bar:#9774b5}
+[data-kind=tool]{--tint:#fff2df;--ink:#9c5714;--bar:#df943e}
+[data-kind=status]{--tint:#edf0f4;--ink:#5c6878;--bar:#9aa5b3}
+.shell{min-height:100vh}.top{padding:18px clamp(16px,3vw,46px) 15px;display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid var(--border)}
+.heading{min-width:0}.head-label{font-size:12px;color:var(--blue);font-weight:650;display:flex;align-items:center;gap:6px}.head-label svg{width:16px;height:16px}.heading h1{font-weight:650;letter-spacing:-.025em;font-size:clamp(19px,2.2vw,28px);overflow-wrap:anywhere;line-height:1.35;margin-top:3px}
+.run-switch{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted)}select{max-width:min(44vw,450px);min-height:34px;padding:4px 9px;background:white;border:1px solid #cbd2da;border-radius:5px;color:#263245}
+.controls,.ruler,.log{padding-inline:clamp(12px,2.5vw,40px)}.controls{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:51px;border-bottom:1px solid var(--faint)}
+.modes{display:flex;align-items:center;gap:2px}.mode{padding:4px 9px;display:inline-flex;align-items:center;gap:6px;border-radius:5px;font-size:13px;color:#616a76}.mode[aria-pressed=true]{background:#eaeef2;color:#202a36;font-weight:650}.mode:not(:disabled):hover{background:#f3f5f7}.mode:disabled{opacity:.43}.mode svg,.find svg{width:15px;height:15px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.find{display:flex;align-items:center;position:relative;color:#77818d}.find svg{position:absolute;left:9px;pointer-events:none}.find input{width:min(30vw,300px);min-width:145px;height:32px;border:1px solid #cfd5dd;background:white;border-radius:5px;padding:3px 9px 3px 31px}
+.ruler{padding-top:9px;padding-bottom:7px;background:#fdfdfe;border-bottom:1px solid var(--border)}
+.lane{display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;min-height:21px}.lane-label{font-size:12px;color:#64707d}.rail{height:16px;position:relative;border-left:1px solid var(--border);background:linear-gradient(to right,#e7ebee 1px,transparent 1px) left center / 25% 100%}.bar{position:absolute;top:3px;height:10px;min-width:3px;max-width:100%;border:0;border-radius:2px;background:var(--bar);padding:0}.bar:hover,.bar:focus-visible{height:14px;top:1px;z-index:2;box-shadow:0 0 0 1px #263449}.bar.chosen{outline:1.5px solid #253140;outline-offset:1px;z-index:3}.bar:disabled{opacity:.13}.bar.problem{box-shadow:inset 0 -2px #a3383b}
+.scale{margin-left:48px;display:flex;justify-content:space-between;color:#727e8a;font:11px/1.4 var(--mono);padding-top:2px}.ruler-note{color:var(--muted);font-size:12px;margin-left:48px;margin-top:3px}
+.log-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:17px 0 9px;border-bottom:1px solid var(--border)}.log-head h2{font-size:15px;font-weight:650}.stats{font-size:12px;color:var(--muted)}
+.entry{border-bottom:1px solid var(--faint);scroll-margin:10px}.entry.selected{box-shadow:inset 2px 0 var(--bar);background:#f8fafc}.row{display:grid;grid-template-columns:14px 65px 46px minmax(0,1fr) 72px;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 7px;min-height:38px}.row:hover{background:#f5f7f9}.arrow{width:7px;height:7px;border:solid #798391;border-width:0 1.5px 1.5px 0;transform:rotate(-45deg);justify-self:center}.row[aria-expanded=true] .arrow{transform:rotate(45deg)}.clock,.elapsed{font:12px/1.4 var(--mono);font-variant-numeric:tabular-nums;color:#68717e;white-space:nowrap}.elapsed{text-align:right}
+.tag{font-size:12px;font-weight:650;justify-self:start;padding:2px 6px;border-radius:4px;background:var(--tint);color:var(--ink);white-space:nowrap}
+.line{display:flex;gap:9px;align-items:baseline;overflow:hidden;white-space:nowrap;min-width:0}.name{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;max-width:65%}.line.solo .name{max-width:100%;flex-shrink:1}.entry[data-kind=tool] .name{font-family:var(--mono);font-size:13px}.preview{min-width:0;text-overflow:ellipsis;overflow:hidden;color:#66727d}.flag{font-size:11px;font-weight:650;background:#fff0ee;color:#a63c38;border-radius:3px;padding:1px 4px;white-space:nowrap}
+.panel{margin:0 8px 11px 95px;padding:11px 13px;background:white;border:1px solid var(--border);border-radius:5px}.meta{color:#68727e;font-size:12px;display:flex;gap:5px 15px;flex-wrap:wrap;margin-bottom:6px}.full-summary{color:#354150;white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 8px}
+.data-block{padding:4px 0;border-top:1px solid var(--faint)}.data-block summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}.data-block summary:hover{color:var(--blue)}.fields{margin:5px 0 2px 13px;border-left:1px solid var(--border);padding-left:10px}.field{padding:4px 0;min-width:0}.key{color:#535f6d;font-weight:600;font-size:12px}.count{font:11px var(--mono);color:#77818a;margin-left:7px}pre{font:12px/1.6 var(--mono);padding:8px 10px;margin:3px 0;background:#f6f8fa;white-space:pre-wrap;overflow-wrap:anywhere;max-height:430px;overflow:auto}.small-button{border:1px solid var(--border);border-radius:4px;background:white;padding:2px 8px;color:var(--blue);margin:3px 0}.media{display:block;max-width:100%;max-height:340px}.feedback{font-size:13px;color:var(--muted)}.feedback.error{color:#a03f34}.empty{color:#637080;padding:30px 8px;text-align:center}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.images{margin:9px 0}.thumbs{display:flex;gap:8px;flex-wrap:wrap}.thumb{display:flex;min-width:90px;max-width:190px;flex-direction:column;gap:3px;margin-top:4px;color:var(--blue);font-size:12px;overflow-wrap:anywhere}.thumb img{max-width:100%;width:150px;height:92px;object-fit:contain;background:#f6f8fa;border:1px solid var(--border);border-radius:3px}
+@media(min-width:701px){.trace-top{position:sticky;top:0;z-index:5;background:white}.entry{scroll-margin-top:155px}}
+@media(max-width:700px){.top{align-items:flex-start;flex-wrap:wrap;gap:10px;padding-block:13px}.run-switch{max-width:100%}.run-switch select{max-width:78vw}.controls{padding-block:6px;flex-wrap:wrap;gap:6px}.mode{padding:4px 7px}.find{flex:1}.find input{width:100%;min-width:114px}.lane{grid-template-columns:37px minmax(0,1fr)}.scale,.ruler-note{margin-left:37px}.row{grid-template-columns:8px 43px 34px minmax(0,1fr) 41px;gap:4px;padding:8px 2px}.line{display:block}.name,.preview{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}.preview{font-size:12px}.tag{padding:1px 3px}.clock,.elapsed{font-size:10px}.panel{margin-left:9px;padding:8px}.fields{margin-left:4px;padding-left:5px}.flag{display:inline-block}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="heading"><div class="head-label"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 4h4m2 0h7M1 8h8m2 0h4M1 12h3m2 0h7"/></svg>运行轨迹</div><h1 id="title">运行轨迹</h1></div>
+    <label class="run-switch">运行记录 <select id="runs" aria-label="选择运行记录"></select></label>
+  </header>
+  <div class="trace-top">
+    <div class="controls">
+      <div class="modes" role="group" aria-label="横轴刻度">
+        <button type="button" class="mode" data-mode="time" title="按实际经过时间定位"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>时长</button>
+        <button type="button" class="mode" data-mode="turn" title="每个有记录的轮次等宽"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M6 4v8m4-8v8"/></svg>轮次</button>
+        <button type="button" class="mode" data-mode="call" title="每次模型或工具调用等宽"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h5m2 0h5M2 8h2m2 0h7M2 12h8m2 0h2"/></svg>调用</button>
+      </div>
+      <label class="find"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="m11 11 4 4"/></svg><input id="search" type="search" placeholder="搜索事件" aria-label="搜索事件标题、摘要、编号、状态或轮次"></label>
+    </div>
+    <div class="ruler" aria-label="输入、模型和工具轨迹"><div id="lanes"></div><div id="scale" class="scale"></div><p id="axis-note" class="ruler-note"></p></div>
+  </div>
+  <main class="log"><div class="log-head"><h2>事件记录</h2><span id="stats" class="stats" role="status"></span></div><div id="events"></div></main>
+</div>
+<script>window.RUN_TRACE_DETAILS=Object.create(null);</script>
+<script src="trace-data.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const labels = {input:'输入',model:'模型',tool:'工具',status:'状态'};
+const kinds = ['input','model','tool'];
+const trace = window.RUN_TRACE || {};
+const runs = Array.isArray(trace.runs) ? trace.runs : [];
+const make = (tag, cl, value) => {
+  const node = document.createElement(tag);
+  if (cl) node.className = cl;
+  if (value !== undefined) node.textContent = String(value);
+  return node;
+};
+function finite(value) { return typeof value === 'number' && Number.isFinite(value); }
+function elapsed(value) {
+  if (!finite(value) || value < 0) return '—';
+  if (value < 1) return value === 0 ? '0 s' : Math.round(value*1000)+' ms';
+  if (value < 60) return Number(value.toFixed(2))+' s';
+  return Math.floor(value/60)+'分'+Math.floor(value%60)+'秒';
+}
+function stamp(value) {
+  if (!finite(value) || value < 0) return '—';
+  const v = Math.floor(value);
+  return Math.floor(v/60)+':'+String(v%60).padStart(2,'0');
+}
+function secondsOf(e) { return finite(e.start) && finite(e.end) && e.end >= e.start ? e.end-e.start : null; }
+const statusWords = {ok:'正常',recorded:'已记录',success:'成功',succeeded:'成功',complete:'完成',completed:'完成',failed:'失败',failure:'失败',error:'错误',missing:'缺失',unknown:'未知',not_received:'未收到回执',partial:'部分',incomplete:'未完整',unconfirmed:'未确认',unverified:'未核验',interrupted:'中断',cancelled:'已取消',timeout:'超时',pending:'待处理',truncated:'截断'};
+function statusText(value) {
+  if (value == null) return '';
+  const s = String(value);
+  return Object.hasOwn(statusWords,s.toLowerCase()) ? statusWords[s.toLowerCase()] : s;
+}
+function problem(e) { return /fail|error|missing|invalid|incomplete|not_received|unconfirmed|interrupt|truncat|timeout|timed.out|unavailable|abort|reject|失败|错误|缺失|中断|超时|截断/i.test(String(e.status || '')); }
+const modeButtons = [...document.querySelectorAll('[data-mode]')];
+let events=[], mode='time', positions=[], active=null, expanded=null, revision=0;
+let eventRows=new Map(), railButtons=new Map(), searchText=[];
+let ticks=[], axisNote='';
+function measure(choice) {
+  const timed = events.filter(e=>finite(e.start)||finite(e.end));
+  const turns = [...new Set(events.filter(e=>Number.isInteger(e.turn)&&e.turn>0).map(e=>e.turn))].sort((a,b)=>a-b);
+  const calls = events.filter(e=>e.kind==='model' || e.kind==='tool').length;
+  const available = {time:timed.length>0,turn:turns.length>0,call:calls>0};
+  mode = available[choice] ? choice : Object.keys(available).find(k=>available[k]) || choice;
+  for (const b of modeButtons) { b.disabled=!available[b.dataset.mode]; b.setAttribute('aria-pressed', String(b.dataset.mode===mode)); }
+  positions=events.map(()=>null);
+  ticks=[]; axisNote='';
+  const setPos=(i,start,end)=>{ positions[i]=[Math.max(0,Math.min(1,start)),Math.max(0,Math.min(1,end))]; };
+  if (mode==='time' && available.time) {
+    const max=timed.reduce((m,e)=>Math.max(m,finite(e.start)?e.start:0,finite(e.end)?e.end:0),0);
+    const divisor=max||1;
+    events.forEach((e,i)=>{
+      const a=finite(e.start)?e.start:e.end;
+      const b=finite(e.end)?e.end:a;
+      if (finite(a)) setPos(i,a/divisor,Math.max(a,b)/divisor);
+    });
+    ticks=[0,.25,.5,.75,1].map(f=>max<10?Number((max*f).toFixed(2))+' s':stamp(max*f));
+    const skipped=events.filter((e,i)=>kinds.includes(e.kind)&&!positions[i]).length;
+    axisNote='从最早有时间记录的事件计时。'+(skipped?'另有 '+skipped+' 条事件缺少时间，见下方记录。':'');
+  } else if (mode==='turn' && available.turn) {
+    const members=new Map(turns.map(t=>[t,[]]));
+    events.forEach((e,i)=>{if(kinds.includes(e.kind)&&members.has(e.turn)) members.get(e.turn).push(i);});
+    turns.forEach((t,j)=>{
+      const group=members.get(t), length=group.length;
+      group.forEach((i,k)=>setPos(i,(j+k/length)/turns.length,(j+(k+1)/length)/turns.length));
+    });
+    ticks=turns.length===1 ? ['第 '+turns[0]+' 轮'] : ['第 '+turns[0]+' 轮','第 '+turns.at(-1)+' 轮'];
+    axisNote='每次模型请求占一格，格内按顺序显示相关事件。';
+  } else if (mode==='call' && calls) {
+    let n=0;
+    events.forEach((e,i)=>{
+      if (e.kind==='model'||e.kind==='tool') {setPos(i,n/calls,(n+1)/calls);n++;}
+      else if (e.kind==='input') setPos(i,n/calls,n/calls);
+    });
+    ticks=calls===1?['第 1 次调用']:['第 1 次调用','第 '+calls+' 次调用'];
+    axisNote='每次模型或工具调用等宽，输入标在对应的调用边界。';
+  } else axisNote='暂无可定位的轨迹。';
+}
+function matches(i) { return searchText[i].includes($('search').value.trim().toLocaleLowerCase()); }
+function drawAxes() {
+  $('lanes').replaceChildren(); railButtons=new Map();
+  for(const kind of kinds) {
+    const lane=make('div','lane'),label=make('span','lane-label',labels[kind]),rail=make('div','rail');
+    lane.dataset.kind=kind; rail.setAttribute('role','group'); rail.setAttribute('aria-label',labels[kind]+'轨');
+    const enabled=[];
+    events.forEach((e,i)=>{
+      if(e.kind!==kind||!positions[i]) return;
+      const [a,b]=positions[i],btn=make('button','bar');
+      btn.type='button';btn.disabled=!matches(i);btn.tabIndex=-1;
+      btn.style.left='min('+a*100+'%, calc(100% - 3px))';btn.style.width=(b-a)*100+'%';
+      const caption=[labels[kind],e.title,e.turn?'第 '+e.turn+' 轮':'',finite(e.start)?stamp(e.start):'',statusText(e.status)].filter(Boolean).join(' · ');
+      btn.title=caption;btn.setAttribute('aria-label',caption);
+      btn.classList.toggle('chosen',active===i);btn.classList.toggle('problem',problem(e));
+      if(!btn.disabled) enabled.push(btn);
+      btn.addEventListener('click',()=>openEvent(i,true));
+      rail.append(btn);railButtons.set(i,btn);
+    });
+    if(enabled.length) enabled[0].tabIndex=0;
+    rail.addEventListener('keydown',ev=>{
+      const n=enabled.indexOf(ev.target);
+      if(n<0 || !['ArrowLeft','ArrowRight','Home','End'].includes(ev.key)) return;
+      ev.preventDefault();
+      const next=ev.key==='Home'?0:ev.key==='End'?enabled.length-1:Math.min(enabled.length-1,Math.max(0,n+(ev.key==='ArrowRight'?1:-1)));
+      enabled[n].tabIndex=-1;enabled[next].tabIndex=0;enabled[next].focus();
+    });
+    lane.append(label,rail);$('lanes').append(lane);
+  }
+  $('scale').replaceChildren(...ticks.map(t=>make('span','',t)));
+  $('axis-note').textContent=axisNote;$('axis-note').hidden=!axisNote;
+}
+
+// The exporter supplies local JavaScript sidecars so opening index.html from disk works.
+// Keep the values of each file separately, including when two runs reuse a detail key.
+const detailKeys=new Map(), files=new Map();
+let loading=Promise.resolve();
+for(const run of runs) for(const e of run.events||[]) {
+  if(!e.detailFile||e.detailKey==null) continue;
+  if(!detailKeys.has(e.detailFile)) detailKeys.set(e.detailFile,new Set());
+  detailKeys.get(e.detailFile).add(e.detailKey);
+}
+function loadDetails(file) {
+  if(files.has(file)) return files.get(file);
+  const valid=typeof file==='string' && !/[\\:%?#]/.test(file) && !file.startsWith('/') && file.endsWith('.js') &&
+    file.split('/').every(s=>s && s!=='.' && s!=='..');
+  if(!valid) return Promise.reject(new Error('详情文件路径无效。'));
+  const job=loading.then(()=>new Promise((resolve,reject)=>{
+    const keys=detailKeys.get(file),store=window.RUN_TRACE_DETAILS;
+    for(const key of keys) delete store[key];
+    const script=document.createElement('script');
+    script.onload=()=>{
+      const data=new Map();
+      for(const key of keys) {
+        if(Object.prototype.hasOwnProperty.call(window.RUN_TRACE_DETAILS,key)) data.set(key,window.RUN_TRACE_DETAILS[key]);
+        delete window.RUN_TRACE_DETAILS[key];
+      }
+      script.remove();resolve(data);
+    };
+    script.onerror=()=>{script.remove();reject(new Error('无法打开详情文件。请将网页和导出的数据目录放在一起。'));};
+    script.src=file;document.head.append(script);
+  }));
+  loading=job.catch(()=>{});files.set(file,job);job.catch(()=>files.delete(file));return job;
+}
+const fieldNames={input:'输入',inputs:'输入资料',messages:'消息',prompt:'提示',request:'请求',response:'响应',result:'结果',arguments:'调用参数',parameters:'参数',output:'输出',usage:'用量',status:'状态',error:'错误',reasoning:'推理记录',reasoning_content:'推理记录',content:'内容',tools:'工具',wire:'实际传输记录',raw_request:'原始请求',raw_response:'原始响应'};
+const fieldName=k=>Object.hasOwn(fieldNames,k)?fieldNames[k]:String(k);
+function inputImages(parent,images) {
+  if(!images.length) return;
+  const section=make('section','images'),list=make('div','thumbs');
+  section.append(make('p','key','本次记录的图片'),list);
+  for(const [index,item] of images.entries()) {
+    const label=String(item?.label||'图片 '+(index+1));
+    if(typeof item?.src!=='string'||!/^media\/[a-f0-9]{64}\.(png|jpg|webp|gif)$/.test(item.src)) {
+      list.append(make('span','feedback error',label+' · 图片路径无效'));continue;
+    }
+    const link=make('a','thumb'),img=make('img');
+    link.href=item.src;link.target='_blank';link.rel='noopener noreferrer';link.title='打开原图';
+    img.alt=label;img.loading='lazy';img.onerror=()=>{link.replaceWith(make('span','feedback error',label+' · 图片文件缺失'));};img.src=item.src;
+    link.append(img,make('span','',label));list.append(link);
+  }
+  parent.append(section);
+}
+function addValue(parent,key,value) {
+  const compound=value!==null&&typeof value==='object';
+  if(!compound) {
+    const row=make('div','field');if(key!==null) row.append(make('div','key',fieldName(key)));
+    const raw=value==null?'null':String(value);
+    if(/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(raw)) {
+      const view=make('button','small-button','查看图像');view.type='button';
+      view.onclick=()=>{const img=make('img','media');img.alt='记录中的图像';img.src=raw;view.replaceWith(img);};row.append(view);
+    } else {
+      const text=make('pre','');const increment=16000;let end=0;
+      const more=make('button','small-button','继续显示');more.type='button';
+      const chunk=()=>{const next=Math.min(end+increment,raw.length);text.append(document.createTextNode(raw.slice(end,next)));end=next;more.hidden=end===raw.length;};
+      chunk();more.onclick=chunk;row.append(text,more);
+    }
+    parent.append(row);return;
+  }
+  const list=Array.isArray(value),keys=Object.keys(value);
+  const box=make('details','data-block'),heading=make('summary','',key===null?'详情':fieldName(key));
+  heading.append(make('span','count',keys.length+(list?' 项':' 个字段')));box.append(heading);
+  let mounted=false;
+  box.addEventListener('toggle',()=>{
+    if(!box.open || mounted) return; mounted=true;
+    const body=make('div','fields');box.append(body);let index=0;
+    const more=make('button','small-button','显示更多字段');more.type='button';body.append(more);
+    const append=()=>{const fragment=document.createDocumentFragment(),until=Math.min(index+40,keys.length);
+      for(;index<until;index++){const k=keys[index];addValue(fragment,list?'['+k+']':k,value[k]);}
+      body.insertBefore(fragment,more);more.hidden=index===keys.length;};
+    more.onclick=append;append();
+  });
+  parent.append(box);
+}
+async function showDetail(panel,e,token) {
+  if(!e.detailFile || e.detailKey==null) {panel.append(make('p','feedback','此事件未附详情。'));return;}
+  const feedback=make('p','feedback','正在读取详情…');panel.append(feedback);
+  const current=()=>token===revision&&panel.isConnected;
+  try {
+    const data=await loadDetails(e.detailFile);if(!current()) return;
+    if(!data.has(e.detailKey)) throw new Error('文件中缺少这条事件的详情。');
+    feedback.remove();const obj=data.get(e.detailKey);
+    if(obj && typeof obj==='object' && !Array.isArray(obj) && Object.keys(obj).length) {
+      if(Array.isArray(obj.inputImages)) inputImages(panel,obj.inputImages);
+      for(const key of Object.keys(obj)) if(key!=='inputImages'||!Array.isArray(obj.inputImages)) addValue(panel,key,obj[key]);
+    } else addValue(panel,null,obj);
+  } catch(error) {
+    if(!current()) return;
+    feedback.className='feedback error';feedback.textContent=error.message;
+    const retry=make('button','small-button','重试');retry.type='button';
+    retry.onclick=()=>{feedback.remove();retry.remove();showDetail(panel,e,token);};panel.append(retry);
+  }
+}
+function openEvent(i,jump) {
+  const entry=eventRows.get(i);if(!entry) return;
+  const same=expanded===i;
+  if(expanded!==null) {
+    const previous=eventRows.get(expanded);
+    if(previous){previous.querySelector('.panel')?.remove();previous.querySelector('.row').setAttribute('aria-expanded','false');}
+  }
+  if(active!==null){eventRows.get(active)?.classList.remove('selected');railButtons.get(active)?.classList.remove('chosen');}
+  active=i;expanded=null;entry.classList.add('selected');railButtons.get(i)?.classList.add('chosen');
+  const row=entry.querySelector('.row');
+  if(!same||jump) {
+    expanded=i;row.setAttribute('aria-expanded','true');
+    const e=events[i],panel=make('div','panel'),meta=make('div','meta');
+    const items=[e.id,e.turn?'第 '+e.turn+' 轮':'','开始 '+elapsed(e.start),'结束 '+elapsed(e.end),'耗时 '+elapsed(secondsOf(e)),statusText(e.status)];
+    items.filter(v=>v!=null&&v!=='').forEach(v=>meta.append(make('span','',v)));panel.append(meta);
+    if(finite(e.rawStart)||finite(e.rawEnd)) addValue(panel,'原始时间戳（秒）',{开始:e.rawStart,结束:e.rawEnd});
+    if(e.summary) panel.append(make('p','full-summary',e.summary));entry.append(panel);showDetail(panel,e,revision);
+  }
+  if(jump){entry.scrollIntoView({block:'start'});row.focus({preventScroll:true});}
+}
+function drawRows() {
+  expanded=null;eventRows=new Map();const fragment=document.createDocumentFragment();
+  events.forEach((e,i)=>{
+    if(!matches(i)) return;
+    const kind=Object.prototype.hasOwnProperty.call(labels,e.kind)?e.kind:'status';
+    const entry=make('article','entry'),row=make('button','row');entry.dataset.kind=kind;entry.classList.toggle('selected',active===i);row.type='button';
+    row.setAttribute('aria-expanded','false');row.append(make('span','arrow'),make('span','clock',stamp(e.start)),make('span','tag',labels[kind]));
+    const line=make('span','line');if(problem(e)) line.append(make('span','flag',statusText(e.status)));
+    line.append(make('span','name',e.title||labels[kind]));
+    if(e.summary && e.summary!==e.title) line.append(make('span','preview',e.summary)); else line.classList.add('solo');
+    row.append(line,make('span','elapsed',elapsed(secondsOf(e))));row.addEventListener('click',()=>openEvent(i,false));
+    entry.append(row);fragment.append(entry);eventRows.set(i,entry);
+  });
+  if(!eventRows.size) fragment.append(make('p','empty',events.length?'没有匹配的事件。请更换搜索词。':runs.length?'该运行没有事件记录。':'未加载运行记录，请检查同目录的 trace-data.js。'));
+  $('events').replaceChildren(fragment);
+  $('stats').textContent=eventRows.size===events.length?events.length+' 条事件':eventRows.size+' / '+events.length+' 条事件';
+}
+function chooseRun(idx) {
+  revision++;
+  const raw=Array.isArray(runs[idx]?.events)?runs[idx].events:[];
+  const timeOrigin=raw.reduce((min,e)=>Math.min(min, finite(e.start)?e.start:Infinity,finite(e.end)?e.end:Infinity),Infinity);
+  events=raw.map(e=>({...e,rawStart:e.start,rawEnd:e.end,start:finite(e.start)?e.start-timeOrigin:null,end:finite(e.end)?e.end-timeOrigin:null}));
+  searchText=events.map(e=>[e.id,labels[e.kind],e.kind,e.title,e.summary,e.status,statusText(e.status),
+    e.turn?'第 '+e.turn+' 轮 第'+e.turn+'轮':''].filter(v=>v!=null).join(' ').toLocaleLowerCase());
+  active=null;expanded=null;$('search').value='';measure(mode);drawAxes();drawRows();
+}
+const title=trace.title||'运行轨迹';$('title').textContent=title;document.title=title;
+runs.forEach((r,i)=>{const o=make('option','',r.label||r.id||('运行 '+(i+1)));o.value=i;$('runs').append(o);});
+$('runs').disabled=!runs.length;$('runs').addEventListener('change',()=>chooseRun(Number($('runs').value)));
+for(const button of modeButtons) button.addEventListener('click',()=>{measure(button.dataset.mode);drawAxes();});
+$('search').addEventListener('input',()=>{revision++;drawAxes();drawRows();});
+chooseRun(0);
+</script>
+</body>
+</html>

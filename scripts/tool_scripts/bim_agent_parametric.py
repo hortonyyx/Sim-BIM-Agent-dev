@@ -189,6 +189,35 @@ def _base(toolkit, candidate, draft):
     return _load((folder / "parametric_plan.json").read_bytes()), state, candidate
 
 
+def _regularization_diagnostics(toolkit, state):
+    audit = state.get("regularization_failure")
+    if not isinstance(audit, dict):
+        return None
+    reference = state.get("regularization_failure_reference")
+    if reference:
+        path = _inside(toolkit, toolkit.run / reference["file"])
+        if _sha(path) != reference.get("sha256") or _load(path.read_bytes()) != audit:
+            raise ValueError("saved regularization diagnostics changed")
+    from scripts.tool_scripts.bim_agent_replies import compact_reply
+    rejections = audit.get("rejections", [])
+    summary = {key: copy.deepcopy(audit[key]) for key in
+               ("status", "grid_m", "max_outline_displacement_m", "not_assessed", "required_next_check")
+               if key in audit}
+    summary.update(rejection_count=len(rejections), rejections=copy.deepcopy(rejections[:4]))
+    summary["repair_hint"] = (
+        "Inspect each rejection's path, before/after vertex and supporting lines. "
+        "Patch the preserved draft using its current plan_sha256. For an unintended "
+        "ruler, declare modelling.frames explicitly. Without an explicit override, "
+        "a template using one primitive frame inherits it as the architectural ruler; "
+        "mixed frames fall back to identity. Read get_bim_reference(topic='parametric') "
+        "for the declaration and patch format.")
+    result = compact_reply(toolkit.run, "parametric_failure", summary, full_result=audit, force=True)
+    result["read_all_rejections"] = {"tool": "read_candidate_items", "arguments": {
+        "candidate": "", "collection": "report", "report_file": result["details_file"],
+        "json_pointer": "/rejections"}}
+    return result
+
+
 def _failure(toolkit, action, error, *, state=None, stage="parametric_input", details=None, edit_route=None,
              failed_batch=None):
     result = saved_result({"status": "error", "error": str(error), "error_stage": stage,
@@ -202,6 +231,9 @@ def _failure(toolkit, action, error, *, state=None, stage="parametric_input", de
         result["edit_route"] = draft_edit_route(toolkit, state["draft"])
     if details is None:
         details = getattr(error, "details", None)
+    regularization = _regularization_diagnostics(toolkit, state) if state else None
+    if regularization:
+        details = {**(details or {}), "regularization": regularization}
     if details:
         result["error_details"] = details
     if edit_route is not None:
@@ -556,6 +588,13 @@ def inspect_parametric(toolkit, candidate: str = "", *, draft: str = "",
                              ("base", "patch", "proposal_sha256", "source_file_sha256",
                               "feedback_parent", "feedback_parent_unavailable",
                               "architectural_regularization") if key in state}
+        if state.get("error"):
+            result["draft_error"] = state["error"]
+            from scripts.tool_scripts.bim_agent_edit_route import draft_edit_route
+            result["edit_route"] = draft_edit_route(toolkit, state["draft"])
+        regularization = _regularization_diagnostics(toolkit, state)
+        if regularization:
+            result["error_details"] = {"regularization": regularization}
         if pointer is not None or full:
             pointer = pointer if pointer is not None else ""
             result.update(_selection(_select(plan, _tokens(pointer)), pointer, max_chars, offset))

@@ -226,8 +226,10 @@ def test_plan_wall_support_stdio_reads_saved_paths_and_preserves_source(tmp_path
             openings=[dict(id='door', kind='door', p1=[20,20], p2=[20,29], z=[0,2.1],
                            source_refs=['synthetic'])], assumptions=[], unresolved=[])
         async with _server_session(run, readonly=False) as session:
-            failed = _json_result(await session.call_tool('build_plan_bim',
-                dict(image='plan.png', plan_json=json.dumps(plan))))
+            failed_response = await session.call_tool('build_plan_bim',
+                dict(image='plan.png', plan_json=json.dumps(plan)))
+            assert failed_response.isError
+            failed = failed_response.structuredContent
             assert not failed['source_geometry_ready']
             args = dict(draft_id='draft_001', rgb=[128]*3, tolerance=0, radius_pixels=1)
             first = await session.call_tool('view_plan_wall_support', args)
@@ -1303,7 +1305,7 @@ def test_parametric_tool_stdio_builds_repeated_spaces_and_preserves_compact_plan
                 'candidate': revised['candidate'], 'pointer': '/instances/1/height'}))
             assert current['status'] == 'current' and current['value'] == 3.2
             failed=await session.call_tool('build_parametric_bim', {'plan_json':'{"oops":1}'})
-            assert 'missing fields' in _json_result(failed)['error']
+            assert failed.isError and 'missing fields' in failed.structuredContent['error']
         async with _server_session(run, readonly=True) as session:
             names={t.name for t in (await session.list_tools()).tools}
             assert 'build_parametric_bim' not in names

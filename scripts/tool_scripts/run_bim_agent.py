@@ -2257,7 +2257,8 @@ def build_tool_server(run: Path, readonly=False):
         from scripts.tool_scripts.bim_agent_replies import compact_reply
         result = compact_reply(toolkit.run, "build_bim", result)
         content.append(TextContent(type="text", text=json.dumps(result, ensure_ascii=False, separators=(",", ":"))))
-        return CallToolResult(content=content, structuredContent=result)
+        return CallToolResult(content=content, structuredContent=result,
+                              isError=result.get("status") in {"error", "rejected"})
 
     @server.tool()
     def map_pixels(points: list[list[float]], x_anchors: list[list[float]],

@@ -425,6 +425,22 @@ def regularize_architectural_plan(plan, *, policy=None):
                 for cluster in _cluster(group['offsets']):
                     anchor = cluster[0]
                     target = _snap(anchor, grid)
+                    # A sloping edge between two declared grid points already
+                    # has architectural dimensions. Its normal offset is a
+                    # derived quantity, like the intersection of grid supports.
+                    # Rounding that offset again moves the dimensioned corners.
+                    # Adopt one existing support for the whole seam cluster,
+                    # including partial shared walls with nongrid endpoints.
+                    cluster_values = set(cluster)
+                    grid_edges = [(d, a, b) for d, a, b in group['endpoints']
+                                  if d in cluster_values and min(map(abs, n)) > EPS
+                                  and all(abs(v - _snap(v, grid)) <= EPS for p in (a, b) for v in p)]
+                    if grid_edges:
+                        target, start, end = min(grid_edges, key=lambda row: (row[0], sorted(row[1:])))
+                        audit['diagnostics'].append(dict(type='grid_derived_support', frame_id=fid,
+                            normal=n, observed_offsets_m=sorted(set(cluster)), adopted_offset_m=target,
+                            source_edge=sorted([start, end]),
+                            basis='declared edge endpoints already lie on the local architectural grid'))
                     if target in targets:
                         audit['diagnostics'].append(dict(type='rounded_line_coincidence', frame_id=fid,
                             offsets_m=[targets[target], anchor], adopted_offset_m=target,
@@ -432,11 +448,12 @@ def regularize_architectural_plan(plan, *, policy=None):
                     targets[target] = anchor
                     mapping.update({value: target for value in cluster})
                     representatives.update({value: anchor for value in cluster})
-                    cluster_values = set(cluster)
                     along = [sum(v*w for v,w in zip(tangent, point))
                              for d,a,b in group['endpoints'] if d in cluster_values for point in (a,b)]
                     tangent_anchor = min(along)
-                    tangent_shift = _snap(tangent_anchor, grid) - tangent_anchor
+                    # The along-line origin is also derived from those grid
+                    # points. A second snap would slide an unchanged aperture.
+                    tangent_shift = 0.0 if grid_edges else _snap(tangent_anchor, grid) - tangent_anchor
                     tangent_shifts.update({value: tangent_shift for value in cluster})
                     if any(abs(value-target) > 1e-10 for value in cluster):
                         audit['changes'].append(dict(type='supporting_line_anchor', frame_id=fid,

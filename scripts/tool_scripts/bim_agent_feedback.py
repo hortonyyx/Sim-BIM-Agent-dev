@@ -142,6 +142,10 @@ def repair_hint(toolkit, tool, arguments, message):
         return 'Next: read get_bim_reference(topic="drawing_process") for the reading, review and application format.'
     if tool == "revise_plan_bim":
         return 'Next: read get_bim_reference(topic="plan_partition") for saved plan revisions and draft identity.'
+    if tool in {"build_parametric_bim", "patch_parametric_bim", "inspect_parametric_plan"}:
+        return ('Next: read get_bim_reference(topic="parametric"). For a preserved draft, use '
+                'inspect_parametric_plan(draft="parametric_drafts/draft_NNN.json") to read its '
+                'failure diagnostics and exact patch arguments.')
     return "Next: read get_bim_reference(topic=" + json.dumps(
         "claims" if "claim" in tool else "edits" if "revise" in tool else "plan_partition") + ") for the operation format."
 
@@ -186,6 +190,55 @@ def plan_feedback_error(error, **plans):
     plan = next(iter(plans.values()), None)
     return dict(status='unavailable', reason=f'{type(error).__name__}: {error}',
         repair_hint=plan_error_hint(plan, str(error)))
+
+
+def _json_zero(value):
+    """Use JSON's unsigned zero without changing geometry or stored audit bytes."""
+    if isinstance(value, float) and value == 0:
+        return 0.0
+    if isinstance(value, dict):
+        return {key: _json_zero(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_zero(item) for item in value]
+    return value
+
+
+def _json_content(content):
+    result = []
+    for block in content:
+        if not isinstance(block, TextContent) or "-0" not in block.text:
+            result.append(block)
+            continue
+        try:
+            # Validate without converting numbers: a tiny nonzero literal must
+            # not underflow to zero, and large integers/decimals stay exact.
+            json.loads(block.text, parse_float=str, parse_int=str)
+        except ValueError:
+            result.append(block)
+            continue
+        # Consume strings as one token so quoted coordinates and escaped JSON
+        # are untouched. Only the sign of an actual zero number is removed.
+        tokens = r'"(?:[^"\\]|\\.)*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?'
+        text = re.sub(tokens, lambda match: match[0][1:] if
+                      re.fullmatch(r'-0(?:\.0+)?(?:[eE][+-]?\d+)?', match[0]) else match[0], block.text)
+        if text != block.text:
+            block = block.model_copy(update={"text": text})
+        result.append(block)
+    return result
+
+
+def mcp_json_result(result):
+    """DSH's lossless-JSON guard rejects numeric -0; keep all result structures."""
+    if isinstance(result, CallToolResult):
+        return result.model_copy(update={
+            "content": _json_content(result.content),
+            "structuredContent": _json_zero(result.structuredContent),
+        })
+    if isinstance(result, tuple):
+        return (_json_content(result[0]), _json_zero(result[1]))
+    if isinstance(result, dict):
+        return _json_zero(result)
+    return _json_content(result)
 
 
 class FeedbackMCP(FastMCP):
@@ -249,4 +302,4 @@ class FeedbackMCP(FastMCP):
                 result = (extra + [TextContent(type="text", text=json.dumps(result))], result)
             else:
                 result = list(result) + extra
-        return result
+        return mcp_json_result(result)
