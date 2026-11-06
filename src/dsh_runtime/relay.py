@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -17,7 +18,7 @@ import httpx
 from src.agent_runtime.responses import build_responses_body, ENDPOINT, TOOL_NAMESPACE
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
 from .handoff import attest_response_input
-from .transport import PooledTransport
+from .transport import PooledTransport, classify_failure, public_error, response_ids
 MODEL = 'gpt-6.1-sol'
 PREFIX = 'mcp__sim_bim__'
 IO_TIMEOUT = 1500.0
@@ -86,6 +87,30 @@ def cfg():
 class Gate(Exception):
     pass
 
+
+class ProviderInterruption(Exception):
+    def __init__(self, failure):
+        super().__init__(failure['code'])
+        self.failure = failure
+
+
+def provider_failure(status, problem):
+    """Separate service/access failures from rejected adapter requests."""
+    code = public_provider_fields(problem)['code']
+    external = status in {401, 403, 408, 429} or status >= 500
+    return {'category': ('external_auth' if status in {401, 403} else
+                         'external_service' if external else 'internal_request'),
+            'code': code or f'HTTP_{status}', 'http_status': status,
+            'message': 'The upstream service rejected the request; inspect the recorded status and error code.',
+            'external': external, 'retryable': status in {408, 429} or status >= 500}
+
+
+def public_provider_fields(problem):
+    problem = problem if isinstance(problem, dict) else {}
+    return {key: value if isinstance(value := problem.get(key), str)
+            and re.fullmatch(r'[A-Za-z0-9_.:/\[\]-]{1,128}', value) else None
+            for key in ('type', 'code', 'param')}
+
 def collect_item(done, event):
     index, item = (event.get('output_index'), event.get('item'))
     if type(index) is not int or index < 0 or (not isinstance(item, dict)):
@@ -137,11 +162,18 @@ class Session:
         self.tool_calls = 0
         self.stop = False
         self.pending = None
+        self.failure = None
+        self.last_raw = None
+        self.completion_checkpoint = None
+        self.delivery_requested = False
+        self.request_snapshot = None
+        self.host_events = None
 
     def request(self, raw):
         if self.pending is not None:
             from .continuation import verified_resume
             from .image_history import native_tool
+            instruction = self.pending.get('continuation_instruction')
             body = verified_resume(
                 self.pending, raw, RESUME_MARKER,
                 runtime_tool=native_tool() if self.image_history is not None else None,
@@ -170,7 +202,12 @@ class Session:
             )
             self.pending = None
             self.stop = False
+            self.failure = None
             (CONTROL / 'pending.json').unlink(missing_ok=True)
+            if instruction:
+                body['input'].append({'role': 'developer', 'content': instruction})
+                body['tool_choice'] = 'required'
+                audit('bounded_output_continuation', instruction=instruction)
             return body
         if raw.get('model') != MODEL or raw.get('stream') is not True:
             raise Gate('unexpected model or non-streaming request')
@@ -187,6 +224,17 @@ class Session:
         body = copy.deepcopy(self.initial)
         if not self.requests:
             return body
+        if self.completion_checkpoint is not None and self.delivery_requested:
+            from .completion import verified_delivery_continuation
+            body = verified_delivery_continuation(self.completion_checkpoint, raw)
+            self.completion_checkpoint = None
+            self.delivery_requested = False
+            self.stop = False
+            self.failure = None
+            (CONTROL / 'continuation.json').unlink(missing_ok=True)
+            audit('delivery_continuation_verified', after_turn=self.requests,
+                  body_sha256=digest(encoded(body)))
+            return body
         if not self.last_calls or self.stop:
             raise Gate('previous provider response did not request a tool')
         items = raw.get('input')
@@ -200,16 +248,26 @@ class Session:
         for item in tail:
             if item.get('type') == 'function_call_output' and item.get('call_id') in ids:
                 continue
-            if item.get('role') == 'user' and item.get('type') in {None, 'message'}:
-                continue
+            if item.get('role') == 'user' and self.delivery_requested:
+                from .completion import DELIVERY_MARKER
+                if item == {'role': 'user', 'content': [{'type': 'input_text', 'text': DELIVERY_MARKER}]}:
+                    continue
             raise Gate('unexpected new item after the latest tool output')
         body['input'] = self.history + tail
+        if self.delivery_requested:
+            from .completion import DELIVERY_MARKER
+            marker = {'role': 'user', 'content': [{'type': 'input_text', 'text': DELIVERY_MARKER}]}
+            if tail[-1:] != [marker] or tail.count(marker) != 1:
+                raise Gate('missing exact delivery continuation marker')
+            body['tool_choice'] = 'required'
+            self.delivery_requested = False
         return body
 
     def observed(self, body, response):
         self.history = body['input'] + response.get('output', [])
         self.last_calls = [i for i in response.get('output', []) if i.get('type') == 'function_call']
         self.tool_calls += len(self.last_calls)
+        self.failure = None
 
 def native_name(name):
     from .image_history import NAME, PREFIX as IMAGE_PREFIX
@@ -372,6 +430,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.mutex.acquire(False):
             return self.error(409, 'another request is active')
         opened = False
+        accepted_terminal = False
         try:
             state = self.server.state
             if state.stop and state.pending is None:
@@ -387,6 +446,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise Gate('invalid request length')
             raw = json.loads(self.rfile.read(size))
             body = state.request(raw)
+            state.last_raw = copy.deepcopy(raw)
             full_body = body
             if any((call.get('name') == 'finish_bim' for call in state.last_calls)):
                 bim_run = CASE / 'private/dsh/work/bim'
@@ -427,7 +487,8 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 raise Gate('run budget reached')
             available = remaining(deadline)
-            token = asyncio.run(asyncio.wait_for(self.server.credential.get_access_token(), available))
+            from .credentials import acquire_token
+            token = asyncio.run(acquire_token(self.server.credential, available))
             turn = state.requests + 1
             save(WIRE / f'{turn:02}-in.json.gz', raw, compressed=True)
             if state.image_history is not None:
@@ -440,6 +501,12 @@ class Handler(BaseHTTPRequestHandler):
             state.requests = turn
             self.server.transport.turn = turn
             publish_budget(state)
+            from .lifecycle_evidence import work_snapshot
+            state.request_snapshot = work_snapshot(RUN)
+            save(CONTROL / 'checkpoints' / f'{turn:03}.json', {
+                'turn': turn, 'work_snapshot': state.request_snapshot,
+                'body_sha256': digest(encoded(body)),
+            })
             audit(
                 'request',
                 turn=turn,
@@ -464,22 +531,24 @@ class Handler(BaseHTTPRequestHandler):
                 if not r.is_success:
                     raw_error = r.read()
                     try:
-                        problem = json.loads(raw_error).get('error', {})
+                        document = json.loads(raw_error)
+                        problem = document.get('error') if isinstance(document, dict) else None
                     except ValueError:
                         problem = {}
                     public = {
                         'error': {
-                            'type': problem.get('type'),
-                            'code': problem.get('code'),
-                            'param': problem.get('param'),
+                            **public_provider_fields(problem),
                             'status': r.status_code,
                         },
                     }
                     save(WIRE / f'{turn:02}-reply.json', public)
-                    audit('provider_error', turn=turn, status=r.status_code, error=public['error'])
+                    state.failure = provider_failure(r.status_code, public['error'])
+                    audit('provider_error', turn=turn, status=r.status_code, error=public['error'],
+                          failure=state.failure, request_ids=response_ids(r))
                     state.stop = True
-                    if r.status_code == 429 or r.status_code >= 500:
-                        mark_pending(state, raw, body, turn, f'HTTP {r.status_code}', False)
+                    if state.failure['retryable']:
+                        mark_pending(state, raw, body, turn, f'HTTP {r.status_code}', False,
+                                     failure=state.failure)
                     return self.error(
                         r.status_code,
                         'subscription upstream rejected request; see relay audit',
@@ -533,33 +602,96 @@ class Handler(BaseHTTPRequestHandler):
                                 ) > state.limits['tool_calls']:
                                     raise Gate('tool call budget exceeded')
                                 state.observed(full_body, rep)
+                                if not state.last_calls:
+                                    from .completion import delivery_checkpoint
+                                    try:
+                                        state.completion_checkpoint = delivery_checkpoint(raw, full_body, rep)
+                                    except ValueError as exc:
+                                        raise ProviderInterruption({
+                                            'category': 'model_output_incomplete', 'code': 'no_action_or_text',
+                                            'message': 'The completed provider response contained no usable action or text.',
+                                            'external': False, 'retryable': True,
+                                            'continuation_instruction': 'Continue the original BIM task with one small valid tool call. Do not end with an empty response.',
+                                        }) from exc
+                                    save(CONTROL / 'continuation.json', state.completion_checkpoint)
+                                else:
+                                    state.completion_checkpoint = None
+                                    (CONTROL / 'continuation.json').unlink(missing_ok=True)
                                 publish_budget(state)
                             else:
-                                state.stop = True
+                                reason = (rep.get('incomplete_details') or {}).get('reason')
+                                if kind == 'response.incomplete' and reason == 'max_output_tokens':
+                                    failure = {
+                                        'category': 'model_output_incomplete', 'code': 'max_output_tokens',
+                                        'message': 'The provider output was truncated before a complete action could be accepted.',
+                                        'external': False, 'retryable': True,
+                                        'continuation_instruction': 'The previous output exceeded the response limit and was not executed. Continue the same BIM task using one smaller tool action at a time; inspect saved state and avoid repeating completed writes.',
+                                    }
+                                elif kind == 'response.failed':
+                                    error = public_provider_fields(rep.get('error'))
+                                    external = error.get('code') in {'server_error', 'rate_limit_exceeded', 'overloaded', 'temporarily_unavailable'}
+                                    failure = provider_failure(503 if external else 400, error)
+                                else:
+                                    failure = {'category': 'external_policy' if reason == 'content_filter' else 'internal_response',
+                                               'code': reason or 'unclassified_incomplete_response',
+                                               'message': 'The provider explicitly returned an incomplete response.',
+                                               'external': reason == 'content_filter', 'retryable': False}
+                                raise ProviderInterruption(failure)
                         self.wfile.write(wire_frame(name, downstream(obj)))
                         self.wfile.flush()
+                        if kind == 'response.completed':
+                            # The native host can execute this accepted tool batch
+                            # immediately. Do not roll it back into pending because
+                            # an already-complete upstream stream closes badly.
+                            accepted_terminal = True
+                            return
                 if not (WIRE / f'{turn:02}-reply.json').exists():
-                    raise Gate('stream ended before terminal response')
+                    raise httpx.RemoteProtocolError('stream ended before terminal response')
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             self.server.state.stop = True
+            self.server.state.failure = {'category': 'internal_error', 'code': 'downstream_connection_lost',
+                                         'message': 'The native host disconnected from its local relay.',
+                                         'external': False, 'retryable': False}
             audit('relay_error', reason='downstream connection lost')
         except Exception as exc:
+            if accepted_terminal and isinstance(exc, httpx.TransportError):
+                audit('completed_stream_cleanup_error', turn=turn, causes=public_error(exc),
+                      completed_response_preserved=True)
+                return
             self.server.state.stop = True
             reason = str(exc) if isinstance(exc, Gate) else type(exc).__name__
             audit('relay_error', reason=reason)
-            recoverable = isinstance(exc, httpx.TransportError)
-            if recoverable and 'body' in locals():
-                mark_pending(state, raw, body, turn, reason, self.server.transport.safe_to_repeat)
+            if isinstance(exc, ProviderInterruption):
+                failure = exc.failure
+            elif isinstance(exc, httpx.TransportError):
+                diagnostic = self.server.transport.last_failure or {**classify_failure(exc), 'causes': public_error(exc)}
+                external = diagnostic['category'] == 'upstream_transport'
+                failure = {'category': 'external_transport' if external else 'internal_transport',
+                           'code': type(exc).__name__, 'message': 'The model response transport was interrupted.',
+                           'external': external, 'retryable': external, 'diagnostic': diagnostic}
+            else:
+                failure = {'category': 'budget_exhausted' if isinstance(exc, Gate) and ('budget' in reason or 'deadline' in reason) else 'internal_error',
+                           'code': reason, 'message': 'The admitted run encountered an internal contract or execution error.',
+                           'external': False, 'retryable': False}
+            self.server.state.failure = failure
+            audit('run_failure_classified', failure=failure)
+            recoverable = failure['retryable']
+            if recoverable and 'body' in locals() and 'turn' in locals():
+                mark_pending(state, raw, body, turn, reason, self.server.transport.safe_to_repeat,
+                             failure=failure)
             if not opened:
-                self.error(502 if recoverable else 409, reason)
+                self.error(502 if failure['external'] else 409, reason)
         finally:
             self.close_connection = True
             self.server.mutex.release()
 RESUME_MARKER = 'Resume the interrupted provider request.'
 
-def mark_pending(state, raw, body, turn, reason, safe_to_repeat):
+def mark_pending(state, raw, body, turn, reason, safe_to_repeat, *, failure=None):
     record = {'turn': turn, 'safe_to_repeat': safe_to_repeat, 'reason': reason,
-              'body_sha256': digest(encoded(body))}
+              'body_sha256': digest(encoded(body)), 'failure': failure,
+              'work_snapshot': state.request_snapshot}
+    if failure and failure.get('continuation_instruction'):
+        record['continuation_instruction'] = failure['continuation_instruction']
     state.pending = {**record, 'raw': raw, 'body': body}
     save(CONTROL / 'pending.json', record)
 

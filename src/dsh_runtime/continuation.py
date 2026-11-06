@@ -31,8 +31,27 @@ def restore_pending(state, control):
     ):
         raise ValueError('Pending turn does not match the last provider request')
     state.requests = turn
-    state.tool_calls = sum((len(r.get('tool_calls', [])) for r in events if r['event'] == 'response'))
+    state.tool_calls = sum((len(r.get('tool_calls', [])) for r in events
+                           if r['event'] == 'response' and r.get('finish_reason', 'completed') == 'completed'))
     state.pending = {**pending, 'raw': raw, 'body': body, 'redacted': True}
+    state.failure = pending.get('failure')
+    state.request_snapshot = pending.get('work_snapshot')
+
+
+def restore_delivery(state, control):
+    """Restore a completed text checkpoint, without fabricating a tool receipt."""
+    from .relay import read_json
+    state.completion_checkpoint = read_json(control / 'continuation.json')
+    events = [json.loads(line) for line in (control / 'relay.jsonl').read_bytes().splitlines()]
+    requests = [row for row in events if row['event'] == 'request']
+    if not requests:
+        raise ValueError('Delivery continuation has no recorded provider request')
+    state.requests = requests[-1]['turn']
+    state.tool_calls = sum(len(row.get('tool_calls', [])) for row in events
+                           if row['event'] == 'response' and row.get('finish_reason', 'completed') == 'completed')
+    state.delivery_requested = True
+    checkpoint = control / 'checkpoints' / f'{state.requests:03}.json'
+    state.request_snapshot = read_json(checkpoint)['work_snapshot'] if checkpoint.is_file() else None
 
 def verified_resume(pending, raw, marker, *, runtime_tool=None):
     from .relay import clean, digest, encoded

@@ -162,7 +162,9 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
     if resume:
         command += ['--session-id', session_id(session)]
     command += ['--json', '-']
-    prompt = relay.RESUME_MARKER if resume else (case / 'shared/task.txt').read_text(encoding='utf-8')
+    from .completion import DELIVERY_MARKER
+    prompt = (DELIVERY_MARKER if resume == 'delivery' else relay.RESUME_MARKER if resume else
+              (case / 'shared/task.txt').read_text(encoding='utf-8'))
     env['SIM_BIM_LOCAL_TRANSPORT_RECEIPT'] = str(out / 'local-fetch.json')
     started = time.time()
     proc = None
@@ -200,7 +202,8 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
             'exit_code': exit_code,
             'model': config['model'],
             'reasoning_effort': 'high',
-            'resume': resume,
+            'resume': bool(resume),
+            'continuation_kind': 'delivery' if resume == 'delivery' else 'request_retry' if resume else None,
             'startup_error': error,
             'native_session_id': journals[0].parent.name if len(journals) == 1 else None,
             'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
@@ -242,10 +245,19 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     session = case / 'private/dsh/session'
     run = case / 'private/dsh/work/bim'
     if resume:
-        if not (control / 'pending.json').exists():
-            raise ValueError('No recorded interrupted request to resume')
+        if not any((control / name).exists() for name in ('pending.json', 'continuation.json')):
+            raise ValueError('No recorded interrupted request or delivery checkpoint to resume')
     elif (control / 'relay.jsonl').exists():
         raise ValueError('Existing run requires explicit --resume')
+    from .lifecycle import drive, REVISION, EXTERNAL_RETRIES
+    delivery_policy = {'revision': REVISION, 'external_retries_per_streak': EXTERNAL_RETRIES,
+                       'completion': 'attested_model_finish_only',
+                       'uncertain_tool_write': 'inspect_before_continue'}
+    policy_file = control / 'delivery-policy.json'
+    if policy_file.exists() and read(policy_file) != delivery_policy:
+        raise ValueError('Recorded delivery recovery policy differs from this runtime')
+    if not policy_file.exists():
+        relay.save(policy_file, delivery_policy)
     if credential is None:
         credential = SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project' else SubscriptionCredentials()
     server = relay.create_server(
@@ -256,68 +268,57 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         config.get('minimum_floor_elevations', 1),
         image_history=images,
     )
-    if resume:
-        from .continuation import restore_pending
-        restore_pending(server.state, control)
-    nonce = secrets.token_urlsafe(40)
-    server.auth = 'Bearer ' + nonce
-    url = f'http://127.0.0.1:{server.server_port}/dsh/v1'
-    epoch = read(run / 'inputs.json')['started_epoch']
-    if not (case / 'private/start.json').exists():
-        relay.save(case / 'private/start.json', {'epoch': epoch})
-    first = next_attempt(session)
-    relay.save(
-        control / f'launch-{first:03}.json',
-        {
-            'started': time.time(),
-            'model': config['model'],
-            'limits': config['limits'],
-            'runtime_files': {p.name: digest(p) for p in PACKAGE.iterdir() if p.suffix in {'.py', '.cjs'}},
-            'dsh_executable_sha256': digest(Path(config['dsh_executable'])),
-            'resumed': resume,
-            'runtime_policy': policy,
-            'runtime_policy_sha256': digest(policy_path) if policy else None,
-        },
-    )
-    relay.save(
-        control / 'relay-ready.json',
-        {'pid': os.getpid(), 'port': server.server_port, 'model': config['model']},
-    )
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    exit_code = 1
+    serving = False
     try:
-        for attempt in range(first, first + 4):
-            exit_code = host(case, session, config, url, nonce, attempt, resume)
-            if (control / 'dsh-relay-finish.json').exists():
-                exit_code = 0
-                break
-            pending = server.state.pending
-            if (
-                not pending
-                or not pending['safe_to_repeat']
-                or server.state.requests >= config['limits']['model_calls']
-            ):
-                break
-            relay.audit('automatic_prewrite_recovery', attempt=attempt, prior_turn=pending['turn'])
-            resume = True
-        proof = read(control / 'dsh-relay-finish.json') if (control / 'dsh-relay-finish.json').exists() else None
-        terminal = {
-            'ended': time.time(),
-            'exit_code': exit_code,
-            'delivered': bool(proof),
-            'proof': proof,
-            'model_requests': server.state.requests,
-            'tool_calls_reserved': server.state.tool_calls,
-            'pending': bool(server.state.pending),
-        }
-        relay.save(control / 'terminal.json', terminal)
-        return 0 if proof else 2
+        if resume:
+            from .continuation import restore_delivery, restore_pending
+            if (control / 'pending.json').exists():
+                restore_pending(server.state, control)
+            else:
+                restore_delivery(server.state, control)
+                resume = 'delivery'
+        nonce = secrets.token_urlsafe(40)
+        server.auth = 'Bearer ' + nonce
+        url = f'http://127.0.0.1:{server.server_port}/dsh/v1'
+        epoch = read(run / 'inputs.json')['started_epoch']
+        if not (case / 'private/start.json').exists():
+            relay.save(case / 'private/start.json', {'epoch': epoch})
+        first = next_attempt(session)
+        relay.save(
+            control / f'launch-{first:03}.json',
+            {
+                'started': time.time(),
+                'model': config['model'],
+                'limits': config['limits'],
+                'runtime_files': {p.name: digest(p) for p in PACKAGE.iterdir() if p.suffix in {'.py', '.cjs'}},
+                'dsh_executable_sha256': digest(Path(config['dsh_executable'])),
+                'resumed': bool(resume),
+                'delivery_policy': delivery_policy,
+                'runtime_policy': policy,
+                'runtime_policy_sha256': digest(policy_path) if policy else None,
+            },
+        )
+        relay.save(
+            control / 'relay-ready.json',
+            {'pid': os.getpid(), 'port': server.server_port, 'model': config['model']},
+        )
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        serving = True
+        terminal = drive(case, session, config, server, url, nonce, first, resume, host)
+        print(json.dumps(terminal, ensure_ascii=False))
+        if not terminal['delivered']:
+            failure = terminal['failure']
+            print(f"Delivery failed [{failure['category']} / {failure['code']}]: {failure['message']}", file=sys.stderr)
+        return terminal['exit_code']
     except BaseException as exc:
         relay.save(
             control / 'terminal.json',
             {
                 'ended': time.time(),
                 'delivered': False,
+                'status': 'cancelled' if isinstance(exc, KeyboardInterrupt) else 'internal_error',
+                'exit_code': 2,
+                'allowed_external_failure': False,
                 'error_type': type(exc).__name__,
                 'model_requests': server.state.requests,
                 'tool_calls_reserved': server.state.tool_calls,
@@ -326,7 +327,8 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         )
         raise
     finally:
-        server.shutdown()
+        if serving:
+            server.shutdown()
         server.server_close()
         server.transport.client.close()
 
@@ -344,11 +346,16 @@ def main():
     group.add_argument(
         '--resume',
         action='store_true',
-        help='Resume a recorded interrupted request, including an uncertain upstream attempt',
+        help='Resume an interrupted request or a verified unfinished-delivery checkpoint',
     )
     args = parser.parse_args()
     case = args.case.resolve()
     if args.prepare:
         print(prepare(case))
         return 0
-    return run(case, args.resume, image_history_batches=args.image_history_batches)
+    try:
+        return run(case, args.resume, image_history_batches=args.image_history_batches)
+    except Exception as exc:
+        print(json.dumps({'status': 'admission_or_internal_error', 'delivered': False,
+                          'error_type': type(exc).__name__, 'allowed_external_failure': False}), file=sys.stderr)
+        return 2

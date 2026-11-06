@@ -153,7 +153,8 @@ def test_safe_connect_retry_does_not_survive_later_uncertain_send(during_stream)
     assert pool.safe_to_repeat is False
 
 @pytest.mark.parametrize("status,pending",[(429,True),(503,True),(400,False)])
-def test_http_rejection_is_recorded_for_explicit_recovery_only(tmp_path,monkeypatch,status,pending):
+@pytest.mark.parametrize('problem', [{'error': {'type': 'fixture'}}, [], {'error': 'temporarily unavailable'}, {'error': None}])
+def test_http_rejection_is_recorded_with_classified_recovery(tmp_path,monkeypatch,status,pending,problem):
     import threading
     import time
     shared=tmp_path/"shared"
@@ -175,7 +176,7 @@ def test_http_rejection_is_recorded_for_explicit_recovery_only(tmp_path,monkeypa
     received=[]
     def reject(request):
         received.append(request)
-        return httpx.Response(status,json={"error":{"type":"fixture"}})
+        return httpx.Response(status,json=problem)
     server.transport.client=httpx.Client(transport=httpx.MockTransport(reject))
     threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
@@ -211,6 +212,59 @@ def image_body():
             {'type': 'input_text', 'text': 'unaltered geometry and coordinates'}, image(c['call_id'].encode())]} for c in calls)
     body['input'].insert(1, {'type': 'reasoning', 'id': 'rs', 'encrypted_content': 'private fixture', 'summary': []})
     return body
+
+
+def test_auth_disconnect_is_external_without_submitting_or_replaying_model_request(tmp_path):
+    import threading
+    import time
+    from src.agent_runtime.openai_subscription import SubscriptionAuthError
+    shared = tmp_path / 'shared'
+    shared.mkdir()
+    run = tmp_path / 'private/dsh/work/bim'
+    run.mkdir(parents=True)
+    epoch = time.time()
+    (run / 'inputs.json').write_text(json.dumps({'started_epoch': epoch}))
+    (tmp_path / 'private/start.json').write_text(json.dumps({'epoch': epoch}))
+    for name, value in {
+        'initial-messages.json': [{'role': 'user', 'content': 'fixture'}], 'tools.json': [],
+        'limits.json': {'model_calls': 10, 'tool_calls': 20, 'wall_seconds': None},
+    }.items():
+        (shared / name).write_text(json.dumps(value))
+    class Credential:
+        attempts = 0
+        async def get_access_token(self):
+            self.attempts += 1
+            try:
+                raise httpx.ReadTimeout('private-credential-fixture')
+            except httpx.HTTPError:
+                raise SubscriptionAuthError('Token refresh could not reach OpenAI.') from None
+    credential = Credential()
+    server = relay.create_server(tmp_path, tmp_path / 'control', 'gpt-6.1-sol', credential)
+    server.auth = 'Bearer local-fixture'
+    server.transport.client.close()
+    # An old Responses diagnostic must not overwrite the new auth evidence.
+    server.transport.last_failure = {'category': 'local_transport', 'reason_code': 'UnsupportedProtocol'}
+    def unexpected(request):
+        pytest.fail('No model request may be submitted after credential acquisition failed')
+    server.transport.client = httpx.Client(transport=httpx.MockTransport(unexpected))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(f'http://127.0.0.1:{server.server_port}/dsh/v1/responses',
+                headers={'Authorization': server.auth},
+                json={'model': 'gpt-6.1-sol', 'stream': True, 'reasoning': {'effort': 'high'}, 'input': [], 'tools': []})
+        assert response.status_code == 502
+        assert credential.attempts == 1 and server.state.requests == 0
+        assert server.state.pending is None
+        assert server.state.failure['category'] == 'external_auth'
+        assert server.state.failure['diagnostic']['phase'] == 'authentication'
+        audit = (tmp_path / 'control/relay.jsonl').read_text()
+        assert 'private-credential-fixture' not in audit
+        assert not (tmp_path / 'control/wire/dsh').exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        server.transport.client.close()
 
 
 def test_image_projection_keeps_initial_and_three_complete_batches_and_exact_retrieval(tmp_path):
@@ -274,3 +328,101 @@ def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_histo
     assert state.request(resumed_again) == full
     state.observed(full, {'output': []})
     assert state.history == original['input']
+
+
+@pytest.mark.parametrize('terminal,category,retryable,external,cleanup_error', [
+    (None, 'external_transport', True, True, False),
+    ({'status': 'incomplete', 'output': [], 'incomplete_details': {'reason': 'max_output_tokens'}},
+     'model_output_incomplete', True, False, False),
+    ({'status': 'completed', 'output': []}, 'model_output_incomplete', True, False, False),
+    ({'status': 'failed', 'output': [], 'error': {'code': 'server_error'}},
+     'external_service', True, True, False),
+    ({'status': 'incomplete', 'output': [], 'incomplete_details': {'reason': 'content_filter'}},
+     'external_policy', False, True, False),
+    ({'status': 'completed', 'output': [{'id': 'fc_partial', 'type': 'function_call',
+       'call_id': 'call_partial', 'name': 'build_bim', 'arguments': '{}', 'namespace': 'runtime'}]},
+     None, False, None, False),
+    ({'status': 'completed', 'output': [{'id': 'fc_partial', 'type': 'function_call',
+       'call_id': 'call_partial', 'name': 'build_bim', 'arguments': '{}', 'namespace': 'runtime'}]},
+     None, False, None, True),
+])
+def test_stream_interruptions_never_forward_an_executable_terminal(
+        tmp_path, monkeypatch, terminal, category, retryable, external, cleanup_error):
+    """A partial function proposal must not become an executed native tool."""
+    import threading
+    import time
+    shared = tmp_path / 'shared'
+    shared.mkdir()
+    run = tmp_path / 'private/dsh/work/bim'
+    run.mkdir(parents=True)
+    epoch = time.time()
+    (run / 'inputs.json').write_text(json.dumps({'started_epoch': epoch}))
+    (tmp_path / 'private/start.json').write_text(json.dumps({'epoch': epoch}))
+    for name, value in {
+        'initial-messages.json': [{'role': 'user', 'content': 'fixture'}], 'tools.json': [],
+        'limits.json': {'model_calls': 10, 'tool_calls': 20, 'wall_seconds': None},
+    }.items():
+        (shared / name).write_text(json.dumps(value))
+    class Credential:
+        async def get_access_token(self):
+            return 'offline-fixture-token'
+    server = relay.create_server(tmp_path, tmp_path / 'control', 'gpt-6.1-sol', Credential())
+    server.auth = 'Bearer local-fixture'
+    server.transport.client.close()
+    events = [{'type': 'response.created', 'response': {'id': 'resp_fixture', 'status': 'in_progress', 'output': []}},
+              {'type': 'response.output_item.added', 'output_index': 0,
+               'item': {'id': 'fc_partial', 'type': 'function_call', 'call_id': 'call_partial',
+                        'name': 'build_bim', 'arguments': '', 'namespace': 'runtime'}}]
+    if terminal is not None:
+        if category is None:
+            events.append({'type': 'response.output_item.done', 'output_index': 0,
+                           'item': terminal['output'][0]})
+        events.append({'type': 'response.' + terminal['status'], 'response': terminal})
+    content = b''.join(relay.wire_frame(event['type'], event) for event in events)
+    class TrailingDisconnect(httpx.SyncByteStream):
+        def __iter__(self):
+            yield content
+            raise httpx.RemoteProtocolError('peer closed incomplete body after completed terminal')
+        def close(self):
+            if cleanup_error:
+                raise httpx.CloseError('fixture close failed')
+    server.transport.client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=TrailingDisconnect(), headers={'Content-Type': 'text/event-stream'})))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    raw = {'model': 'gpt-6.1-sol', 'stream': True, 'reasoning': {'effort': 'high'}, 'input': [], 'tools': []}
+    try:
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(f'http://127.0.0.1:{server.server_port}/dsh/v1/responses',
+                                   headers={'Authorization': server.auth}, json=raw)
+        assert response.status_code == 200
+        if category is None:
+            assert 'response.completed' in response.text
+            assert server.state.failure is None and server.state.pending is None
+            assert server.state.tool_calls == 1
+            assert server.state.last_calls[0]['call_id'] == 'call_partial'
+            return
+        assert 'response.completed' not in response.text
+        assert 'response.incomplete' not in response.text
+        assert 'response.failed' not in response.text
+        assert server.state.failure['category'] == category
+        assert server.state.failure['external'] is external
+        assert (server.state.pending is not None) is retryable
+        assert server.state.last_calls == [] and server.state.tool_calls == 0
+        if retryable:
+            from src.dsh_runtime.lifecycle_evidence import work_snapshot
+            assert server.state.pending['work_snapshot'] == work_snapshot(run)
+            pending_body = copy.deepcopy(server.state.pending['body'])
+            resumed = {**raw, 'input': [{'role': 'user', 'content': [
+                {'type': 'input_text', 'text': relay.RESUME_MARKER}]}]}
+            restored = server.state.request(resumed)
+            if category == 'model_output_incomplete':
+                assert restored['tool_choice'] == 'required'
+                assert restored['input'][:-1] == pending_body['input']
+                assert restored['input'][-1]['role'] == 'developer'
+            else:
+                assert restored == pending_body
+        assert 'offline-fixture-token' not in (tmp_path / 'control/relay.jsonl').read_text()
+    finally:
+        server.shutdown()
+        server.server_close()
+        server.transport.client.close()

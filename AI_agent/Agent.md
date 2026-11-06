@@ -4,9 +4,9 @@
 
 ## 当前任务
 
-2026-11-06：利苑整案冷启动已跑到失败终态并封存。GPT-6.1 Sol / high + DeepSeek Harness + domain-v173 一次启动、无恢复，在第 22 请求部分 SSE 后传输中断；保存 C01 阶段候选，未调用 finish_bim。结果见[冷启动记录](reports/2026-11-06_dsh_sol61_cold_start.md)。
+2026-11-06：按用户要求修复 DSH 的交付闭环与自动恢复。普通文字结束、输出截断、可验证的断流均应继续到真实 `finish_bim`；只有有证据的外部故障允许作为显式未交付豁免。内部异常和预算耗尽仍是未完成运行，不能包装成外部问题或成功。实现与验收边界见[恢复修复记录](reports/2026-11-06_dsh_delivery_recovery.md)。
 
-下一轮先读上述记录，再按用户当轮指令决定恢复、修复或另建冷启动。已封存案例为 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-cold-20261106`；其 pending 用量未知，后续恢复不得改写本次冷启动失败结论。原[冷启动交接](reports/2026-11-06_handoff_cold_start.md)保留条件来源；之前四次恢复后的完成仍不能当作最终版本一次冷启动通过。runtime 选型继续开放。
+已封存失败案例为 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-cold-20261106`：第 22 请求部分 SSE 后传输中断，只保存 C01，pending 用量未知、未 finish，见[冷启动记录](reports/2026-11-06_dsh_sol61_cold_start.md)。后续不得改写该失败结论。恢复修复先以离线和真实 DSH/localhost 验证，尚不等于新一轮真实模型冷启动通过。原[冷启动交接](reports/2026-11-06_handoff_cold_start.md)保留条件来源；此前四次人工恢复后的完成也不能当作一次冷启动通过。runtime 选型继续开放。
 
 ## 开始工作
 

@@ -4,7 +4,27 @@
   "modules": {
     "tests/test_dsh_runtime.py": {
       "group": "targeted",
-      "reason": "Installed DSH integration, exact Responses replay and bounded pre-write recovery"
+      "reason": "Installed DSH integration, exact Responses replay and delivery recovery"
+    },
+    "tests/test_dsh_transport_diagnostics.py": {
+      "group": "targeted",
+      "reason": "Redacted upstream transport diagnostics and local versus remote error boundaries"
+    },
+    "tests/test_dsh_completion.py": {
+      "group": "targeted",
+      "reason": "Exact native text-only continuation, scope integrity and opaque-state restoration"
+    },
+    "tests/test_dsh_credentials.py": {
+      "group": "targeted",
+      "reason": "DSH credential-stage typed failure classification, bounded acquisition and non-replay of token refresh"
+    },
+    "tests/test_dsh_lifecycle_evidence.py": {
+      "group": "targeted",
+      "reason": "Persisted tool effects, closed native journals and attested finish recovery"
+    },
+    "tests/test_dsh_lifecycle.py": {
+      "group": "targeted",
+      "reason": "Delivery-only success, bounded external recovery and internal failure classification"
     },
     "tests/test_run_trace_export.py": {
       "group": "targeted",
