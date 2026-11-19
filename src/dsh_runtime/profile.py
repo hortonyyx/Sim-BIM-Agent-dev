@@ -9,7 +9,7 @@ DISABLED = [
     'tool-todo', 'tool-goal', 'tool-web', 'mcp-resources', 'session-title-llm',
     'compaction-basic', 'llm-deepseek', 'llm-deepseek-account', 'session-telemetry-otel',
 ]
-def make_patch(base_url, model, image_directory=None):
+def make_patch(base_url, model, image_directory=None, *, worker_args=None, context_window=1050000):
     max_tokens=128000
     profile = f"""- id: agent-default-model
   config:
@@ -30,7 +30,7 @@ def make_patch(base_url, model, image_directory=None):
         models:
           - id: {model}
             name: {model}
-            contextWindow: 1050000
+            contextWindow: {context_window}
             maxTokens: {max_tokens}
             input: [text, image]
             reasoningEfforts:
@@ -49,6 +49,19 @@ def make_patch(base_url, model, image_directory=None):
         command: !!js process.env.SIM_BIM_REPO + '/.venv/Scripts/python.exe'
         cwd: !!js process.env.SIM_BIM_REPO
         args: ['-B', '-X', 'utf8', '-m', 'src.dsh_runtime.image_history', '--directory', {json.dumps(str(image_directory))}]
+        failOnStartupError: true
+"""
+    if worker_args is not None:
+        args = ['-B', '-X', 'utf8', '-m', 'src.agent.observer_mcp', *worker_args]
+        profile += f"""- insert:
+    - id: sim-bim-observers
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: sim_bim_workers
+        transport: stdio
+        command: !!js process.env.SIM_BIM_REPO + '/.venv/Scripts/python.exe'
+        cwd: !!js process.env.SIM_BIM_REPO
+        args: {json.dumps(args)}
         failOnStartupError: true
 """
     return profile

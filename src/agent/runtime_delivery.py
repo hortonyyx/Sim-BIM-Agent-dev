@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 
 from scripts.tool_scripts.bim_agent_budget import fallback_selection
+from scripts.tool_scripts.bim_agent_process_reviews import drawing_handoff_review, orchestrated_drawing
 from scripts.tool_scripts.run_bim_agent import Toolkit
 
 
@@ -21,6 +22,16 @@ def _delivery_scope(manifest: dict, delivery: dict) -> dict:
             "scope_basis": "mesh_model_reported_review",
             "mesh_review": {key: review[key] for key in
                 ("status", "coverage", "fidelity", "review_file", "record_sha256") if key in review},
+        }
+    if orchestrated_drawing(manifest):
+        review = delivery.get("drawing_review", {})
+        return {
+            "complete_building": (review.get("status") == "current"
+                                 and review.get("coverage") == "whole_building"
+                                 and review.get("complete_building") is True),
+            "scope_basis": "drawing_model_reported_review",
+            "drawing_review": {key: review[key] for key in
+                ("status", "coverage", "fidelity", "source_model_sha256", "inputs_sha256") if key in review},
         }
     return {"complete_building": delivery["floor_completeness"]["complete_building"]}
 
@@ -70,10 +81,14 @@ def attest_finished_handoff(run: Path, result: dict, candidate: str) -> dict | N
             from scripts.tool_scripts.bim_agent_mesh_review import mesh_review_status
             if mesh_review_status(Toolkit(run), candidate) != delivery.get("mesh_review"):
                 return None
+        elif orchestrated_drawing(manifest):
+            review = delivery["drawing_review"]
+            declaration = {key: review[key] for key in ("coverage", "summary", "unresolved")}
+            if drawing_handoff_review(Toolkit(run), candidate, declaration) != review:
+                return None
         return {"origin": "domain_tool", "tool_name": "finish_bim", "candidate": candidate,
                 "source_model_sha256": source_hash, "artifact_sha256": expected,
-                **({"scope_basis": scope["scope_basis"], "mesh_review": scope["mesh_review"]}
-                   if manifest.get("mesh_input") else {})}
+                **{key: scope[key] for key in ("scope_basis", "mesh_review", "drawing_review") if key in scope}}
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -151,8 +166,7 @@ def finalize_runtime_building(engine, reason: str) -> dict:
             return {"status": "delivered", "reused_handoff": True, "completion_valid": True, "delivery": {
                 "candidate": verified["candidate"], "selection_origin": "agent_selected",
                 "complete_building": True,
-                **({"scope_basis": verified["scope_basis"], "mesh_review": verified["mesh_review"]}
-                   if "scope_basis" in verified else {}),
+                **{key: verified[key] for key in ("scope_basis", "mesh_review", "drawing_review") if key in verified},
                 "report": "bim/delivery.json", "viewer": "bim/delivery.html"}}
     return finalize_building(engine.tools.run_directory, reason=reason,
         elapsed_seconds=engine.elapsed_seconds())

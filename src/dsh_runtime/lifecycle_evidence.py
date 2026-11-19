@@ -106,6 +106,10 @@ def _native_events(paths):
 def _tool_kind(name):
     if name == "mcp__sim_bim_context__read_context_image":
         return "read_context_image", "read_only"
+    if name in {"mcp__sim_bim_workers__read_worker", "mcp__sim_bim_workers__worker_state"}:
+        return name.split("__")[-1], "read_only"
+    if name == "mcp__sim_bim_workers__delegate_workers":
+        return "delegate_workers", "idempotent_write"
     if not isinstance(name, str):
         raise ValueError("unknown_native_tool")
     bare = name.removeprefix(_BIM_PREFIX)

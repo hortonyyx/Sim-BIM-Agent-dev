@@ -203,8 +203,9 @@ def run_guide(run: Path) -> str:
     manifest = json.loads((run / "inputs.json").read_bytes())
     mesh = bool(manifest.get("mesh_input"))
     kind = manifest.get("image_kind") or (("unknown" if mesh else "drawings") if manifest.get("images") else None)
-    guide = build_guide(images=kind, mesh=mesh)
-    if manifest.get("drawing_review_policy"):
+    orchestrator = manifest.get("orchestrator") is True
+    guide = build_guide(images=kind, mesh=mesh, orchestrator=orchestrator)
+    if manifest.get("drawing_review_policy") and not orchestrator:
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS
     return guide
@@ -280,6 +281,9 @@ def delivery_tool_reply(result: dict) -> dict:
         minimal['mesh_review'] = {key: result['mesh_review'][key] for key in
             ('status', 'complete_building', 'coverage', 'record_sha256', 'fidelity')
             if key in result['mesh_review']}
+    if 'drawing_review' in result:
+        minimal['drawing_review'] = {key: result['drawing_review'][key] for key in
+            ('status', 'complete_building', 'coverage', 'source_model_sha256', 'fidelity')}
     if 'facade_counts' in result:
         counts = result['facade_counts']
         minimal['facade_counts'] = {key: counts[key] for key in ('summary', 'delivery_blocked', 'status', 'reason') if key in counts}
@@ -525,7 +529,7 @@ class Toolkit:
                         "Use supplied relevant elevations to check each floor's opening heights; "
                         "do not transfer a typical height to an unexamined opening family."}
 
-    def delivery(self, candidate, *, selection_origin, generation_status=None):
+    def delivery(self, candidate, *, selection_origin, generation_status=None, drawing_review=None):
         """Build the handoff from saved source/check records, never model prose."""
         from scripts.tool_scripts.bim_agent_saved_result import opening_delivery_summary
         path = self.candidate_path(candidate)
@@ -553,6 +557,8 @@ class Toolkit:
         result["building_precision"] = building_precision(self, candidate, source)
         from scripts.tool_scripts.bim_agent_budget import saved_floor_status
         result["floor_completeness"] = saved_floor_status(self, candidate)
+        if drawing_review is not None:
+            result["drawing_review"] = drawing_review
         if self.manifest.get('mesh_input'):
             from scripts.tool_scripts.bim_agent_mesh_review import mesh_review_status
             result['mesh_review'] = mesh_review_status(self, candidate)
@@ -2739,16 +2745,23 @@ def build_tool_server(run: Path, readonly=False):
             object_refs is a list of {"kind":"space|boundary|opening|floor","id":"..."}.
             These are saved together on this exact source, not additional quality approval.
             """
-            from scripts.tool_scripts.bim_agent_process_reviews import carry_reviews, require_process_reviews
+            from scripts.tool_scripts.bim_agent_process_reviews import (
+                carry_reviews, drawing_handoff_review, orchestrated_drawing, require_process_reviews)
             from scripts.tool_scripts.bim_agent_mesh_review import carry_mesh_review
-            if carry_mesh_review(toolkit, candidate, reviews_json) is None:
+            drawing_review = None
+            if orchestrated_drawing(toolkit.manifest):
+                packet = json.loads(reviews_json) if reviews_json else None
+                if not isinstance(packet, dict) or set(packet) != {"drawing_review"}:
+                    raise ValueError("finish_bim requires a drawing_review with coverage, summary and unresolved")
+                drawing_review = drawing_handoff_review(toolkit, candidate, packet["drawing_review"])
+            elif carry_mesh_review(toolkit, candidate, reviews_json) is None:
                 carry_reviews(toolkit, reviews_json, candidate)
             require_process_reviews(toolkit, candidate)
             inference_batch = None
             if inferences_json:
                 from scripts.tool_scripts.bim_agent_inference import record_inferences
                 inference_batch = record_inferences(toolkit, inferences_json, candidate)
-            result = toolkit.delivery(candidate, selection_origin="agent_selected",
+            result = toolkit.delivery(candidate, selection_origin="agent_selected", drawing_review=drawing_review,
                 generation_status={"state": "in_progress", "handoff_saved": True,
                                    "agent_response_completed": False})
             dump(run / "delivery_selection.json", {

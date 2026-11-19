@@ -467,8 +467,100 @@ Do not ask the user for routine geometry choices.
 """
 
 
-def build_guide(*, images=None, mesh=False):
+ORCHESTRATOR_GUIDE = """You are responsible for a single building model. The task and
+the supplied materials define what to recover, where to infer and which details
+matter. Identify what each material actually depicts, its scale, orientation,
+storeys, and the limits of its evidence. A measured plan can establish room
+boundaries and opening positions; a sketch can describe adjacency without metric
+accuracy. An elevation can establish window heads, sills and floor datums. A
+textured mesh can show the exterior while leaving the interior unknown. Link
+material descriptions to the named originals. Distinguish documented facts,
+user conjecture, your observations and your modelling assumptions.
+
+Read the relevant evidence at a scale where you can distinguish walls, doors,
+windows and passages. A door swing, dimension line, furniture or change of use
+alone does not divide a physical space. Keep the extent of an open room,
+including recesses and higher or stepped portions. Locate openings on the actual
+wall and storey, with the supported width, sill and head. For a door or passage,
+identify the spaces it really joins. Follow circulation from entrances to rooms
+and through the stairs and lift landings on the levels they serve. Preserve
+disconnected or unknown conditions where supported. Use material evidence for
+repeated floors and note which repetitions and exceptions you inferred. When
+detail is missing, choose a plausible simplification within the requested scope
+and record its basis. Do not add subdivisions, doors or windows merely to obtain
+regular geometry or a desired count.
+
+Choose how to answer each building question. Direct inspection can settle a
+clear relationship; crop, measure or trial-build where a dimension, ambiguity
+or conflict matters. Put geometry in one metre-based frame with absolute floor
+levels. Use the drawings' orientation or preserve the mesh-to-BIM transform,
+and relate each auxiliary drawing to that frame. Save stable IDs and the reasons
+for material assumptions. Revisit the affected geometry when new evidence changes
+an earlier judgment.
+
+Use the tools available in this session. view_image takes an exact admitted image
+name and an optional box in original pixels. inspect_mesh, view_mesh and
+view_mesh_section inspect a supplied GLB. A section through the surface mesh
+does not reveal hidden partitions. build_plan_bim and assemble_plan_bim support
+measured plans. build_bim supports explicit geometry and build_parametric_bim
+can reuse repeated geometry. Read get_bim_reference('plan_partition'), 'geometry'
+or 'parametric' for your chosen format. inspect_candidate and local edits can
+answer a specific issue without rebuilding unaffected floors. If a worker is
+available, delegate a bounded question when its answer would help. Give it the
+relevant originals or snapshot, the question and the evidence you need back.
+Resolve contradictions and select the final source yourself.
+
+Compare the selected saved candidate to the evidence that bears on its envelope,
+storeys, spatial organization, opening hosts and circulation. Use a local overlay
+or elevation comparison for an uncertain or revised area. Finish when the requested
+scope is satisfied, consequential contradictions are addressed, and remaining
+uncertainties and simplifications are recorded. Complete intended edits before
+finish_bim. A successful finish can end the run immediately.
+"""
+
+ORCHESTRATOR_DRAWING_FINISH = """For image-only delivery, pass reviews_json to
+finish_bim as {"drawing_review":{"coverage":"whole_building","summary":"<scope checked
+against the actual inputs and saved source>","unresolved":["<remaining uncertainty>"]}}.
+Use an empty list if no uncertainty remains, or coverage="partial" for unfinished
+scope. The system binds the declaration to the current source and admitted
+materials and records its floor IDs. Where the task explicitly names required
+floor-plan files, the candidate also needs their image-to-floor coverage from
+plan construction/assembly or a validated calibrated plan-overlay review.
+If inputs lists an explicit drawing_review_policy, get_bim_reference('drawing_process')
+explains its extra local and building review requirements."""
+
+ORCHESTRATOR_MESH_FINISH = """For native mesh delivery, inspect a current source
+overlay on an original view. view_mesh(candidate=...) can return both, or use
+overlay_mesh_candidate with an existing observation. Pass reviews_json to
+finish_bim as {"mesh_review":{"coverage":"whole_building","summary":"<actual
+coverage and remaining uncertainty>","overlay_ids":["<current overlay ID>"]}}.
+Use coverage="partial" if required scope is unfinished. At least one current
+overlay bound to this candidate is needed; choose views to address the actual
+building questions."""
+
+
+def describe_orchestrator_inputs(manifest: dict) -> str:
+    """Present admitted material identities without guessing content from filenames."""
+    lines = ["Materials supplied for this building:"]
+    if manifest.get("mesh_input"):
+        lines.append("- Original GLB with the building's surface geometry and available texture. "
+                     "Inspect it in its native frame.")
+    for name, image in manifest.get("images", {}).items():
+        width, height = image["size"]
+        lines.append(f"- {name}: supplied PNG, {width} × {height} original pixels.")
+    if manifest.get("building_input"):
+        lines.append("- Building declaration: inputs().building_input.declaration contains "
+                     "the supplied descriptions, their applicability and any stated sources.")
+    if manifest.get("floor_scope_source") == "explicit_input_filenames":
+        lines.append("Explicitly supplied floor-plan names: " + ", ".join(manifest["floor_plan_images"]) + ".")
+    return "\n".join(lines)
+
+
+def build_guide(*, images=None, mesh=False, orchestrator=False):
     """System prompt for one run. images is drawings, mesh_views, photos, unknown or None."""
+    if orchestrator:
+        handoff = ORCHESTRATOR_MESH_FINISH if mesh else ORCHESTRATOR_DRAWING_FINISH
+        return ORCHESTRATOR_GUIDE + "\n" + handoff
     mesh_mode = mesh or images == "mesh_views"
     parts = [MESH_CORE if mesh_mode else CORE]
     if mesh_mode:

@@ -36,6 +36,15 @@ def test_official_context_and_local_output_reservation_are_distinguished(model):
     assert "no enforced service output cap" in profile.reasoning_allowance_source
 
 
+@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.1-terra"])
+def test_new_subscription_profiles_use_the_account_default(model):
+    profile = get_model_profile(model, strict=True)
+    assert profile.context_window_tokens == profile.endpoint_context_window_tokens == 500_000
+    assert profile.native_context_window_tokens == 1_050_000
+    assert profile.context_source == f"https://developers.openai.com/api/docs/models/{model}"
+    assert profile.recommended_min_output_tokens == 32_000
+
+
 @pytest.mark.parametrize(
     ("width", "height", "expected"),
     [(1024, 1024, (1229, 1024, 1024)),
@@ -135,7 +144,7 @@ def test_two_plan_images_fit_local_context_and_smaller_local_limit_is_honored(mo
     )).fits_context is False
 
 
-@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "gpt-6.2-sol", "gpt-6.1-terra"])
 def test_new_model_responses_keep_identity_and_image_bytes_with_a_local_reservation(model):
     from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, provider_parameters
     from src.agent_runtime.responses import build_responses_body, estimate_responses_request

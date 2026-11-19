@@ -26,7 +26,7 @@ def read(path):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def prepare(case):
+def prepare(case, *, material_paths=None):
     """Freeze current domain guidance/schemas after the normal input admission."""
     config = read(case / 'config.json')
     task = (case / 'shared/task.txt').read_text(encoding='utf-8-sig').strip()
@@ -35,19 +35,21 @@ def prepare(case):
     if (work / 'bim').exists():
         raise ValueError('This case already contains admitted inputs')
     limits = config['limits']
-    run, guide, _ = prepare_inputs(
+    inputs = material_paths if material_paths is not None else {
+        'images': case / 'inputs/auxiliary', 'mesh': case / 'inputs/building.glb',
+        'building_input': case / 'inputs/building.json'}
+    run, guide, effective_task = prepare_inputs(
         work,
-        images=case / 'inputs/auxiliary',
-        mesh=case / 'inputs/building.glb',
-        building_input=case / 'inputs/building.json',
+        **inputs,
         scope=task,
-        image_kind='drawings',
+        image_kind=config.get('image_kind', 'drawings'),
         max_candidates=limits['candidates'],
         floor_plan_images=config.get('floor_images'),
         started_epoch=time.time(),
         seconds=limits['wall_seconds'],
+        **({'orchestrator': True} if material_paths is not None else {}),
     )
-    content = [{'type': 'text', 'text': task}]
+    content = [{'type': 'text', 'text': effective_task}]
     manifest = read(run / 'inputs.json')
     admitted = manifest.get('building_input')
     if admitted:
@@ -62,6 +64,9 @@ def prepare(case):
         async with frozen_bim_client(run, readonly=False, repository_root=ROOT) as client:
             return await client.list_tools()
     specs = asyncio.run(catalog())
+    if config.get('worker'):
+        from src.agent.runtime_mesh_workers import observer_tool_specs
+        specs += observer_tool_specs(dsh=True)
     tools = [{
         'type': 'function',
         'function': {'name': t['name'], 'description': t.get('description', ''), 'parameters': t['inputSchema']},
@@ -70,6 +75,11 @@ def prepare(case):
     (shared / 'guide.txt').write_text(guide, encoding='utf-8')
     relay.save(shared / 'limits.json', limits)
     relay.save(shared / 'tools.json', tools)
+    frozen_files = [case / 'config.json', *shared.glob('*.txt'), shared / 'limits.json',
+                    shared / 'tools.json', shared / 'initial-messages.json', *sorted((case / 'inputs').rglob('*'))]
+    if material_paths is not None:
+        frozen_files += [run / 'inputs.json', *sorted((run / 'images').glob('*.png')),
+                         *sorted((run / 'assets').rglob('*')), run / 'building_input.json']
     relay.save(
         shared / 'initial-messages.json',
         [{'role': 'system', 'content': guide}, {'role': 'user', 'content': content}],
@@ -80,7 +90,7 @@ def prepare(case):
         {
             'created': time.time(),
             'domain': agent_version_record(ROOT, verify=True),
-            'files': {str(p.relative_to(case)): digest(p) for p in [case / 'config.json', *shared.glob('*.txt'), shared / 'limits.json', shared / 'tools.json', shared / 'initial-messages.json', *sorted((case / 'inputs').rglob('*'))] if p.is_file()},
+            'files': {str(p.relative_to(case)): digest(p) for p in frozen_files if p.is_file()},
         },
     )
     return run
@@ -145,7 +155,19 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
     patch = out / 'dsh.yml'
     policy = case / 'control/runtime-policy.json'
     images = case / 'control/image-history' if policy.exists() else None
-    patch.write_text(make_patch(url, config['model'], images), encoding='utf-8')
+    worker_args = None
+    if config.get('worker'):
+        worker = config['worker']
+        worker_args = ['--run', str(case / 'private/dsh/work/bim'),
+                       '--store', str(case / 'private/workers'), '--provider', 'chatgpt-subscription',
+                       '--model', worker['model'], '--chatgpt-auth-dir', config['chatgpt_auth_dir'],
+                       '--output-tokens', str(worker['output_tokens']), '--reasoning-effort', worker['reasoning_effort'],
+                       '--max-concurrent', str(worker['max_concurrent']),
+                       '--model-calls', str(worker['model_calls']), '--tool-calls', str(worker['tool_calls'])]
+        if config['limits']['wall_seconds'] is not None:
+            worker_args += ['--seconds', str(config['limits']['wall_seconds'])]
+    patch.write_text(make_patch(url, config['model'], images, worker_args=worker_args,
+                                context_window=config.get('context_window', 1050000)), encoding='utf-8')
     exe = Path(config['dsh_executable'])
     cli = exe.parent / 'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
     command = [
@@ -259,7 +281,9 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     if not policy_file.exists():
         relay.save(policy_file, delivery_policy)
     if credential is None:
-        credential = SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project' else SubscriptionCredentials()
+        credential = (SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project'
+                      else SubscriptionCredentials(Path(config['chatgpt_auth_dir'])) if config.get('chatgpt_auth_dir')
+                      else SubscriptionCredentials())
     server = relay.create_server(
         case,
         control,

@@ -246,6 +246,12 @@ def render_delivery_html(result: dict, source: dict) -> str:
             run_note += " 本稿尚无有效的整栋范围声明，保留为局部或待核查交付。"
         if mesh_review.get('summary'):
             run_note += " " + text_html(mesh_review['summary'])
+    elif result.get("drawing_review"):
+        review = result["drawing_review"]
+        scope_label = "整栋" if review["complete_building"] else "局部"
+        run_note += " 调度员声明的交付范围为" + scope_label + "。" + text_html(review["summary"])
+        if review["unresolved"]:
+            run_note += " 尚存疑问：" + text_html("；".join(review["unresolved"])) + "。"
     elif floor_status["complete_building"] is False:
         run_note += " 本稿不完整：尚缺楼层图 " + text_html(", ".join(floor_status["missing_candidate_images"])) + "。"
     elif floor_status["complete_building"] is True:

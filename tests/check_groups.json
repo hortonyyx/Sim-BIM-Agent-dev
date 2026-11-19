@@ -2,6 +2,14 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_orchestrator_product.py": {
+      "group": "targeted",
+      "reason": "Unified material admission, host choice, worker routing and shared budgets"
+    },
+    "tests/test_orchestrator_observers.py": {
+      "group": "targeted",
+      "reason": "Frozen visual evidence and reusable worker results across both hosts"
+    },
     "tests/test_dsh_runtime.py": {
       "group": "targeted",
       "reason": "Installed DSH integration, exact Responses replay and delivery recovery"

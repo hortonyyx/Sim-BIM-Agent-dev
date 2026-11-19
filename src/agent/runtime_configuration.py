@@ -25,10 +25,88 @@ from src.agent.runtime_roles.config import load_roles
 
 
 ALLOWED_ENTRYPOINTS = {
+    "orchestrator": "src.agent.runtime_entry",
     "single_model": "src.agent.runtime_entry",
     "role_division": "src.agent.runtime_roles.entry",
 }
-PRODUCT_RUN_MODES = ("single_model", "role_division")
+PRODUCT_RUN_MODES = tuple(ALLOWED_ENTRYPOINTS)
+NATIVE_MODES = {"single_model", "orchestrator"}
+
+
+def admit_project_materials(case: dict) -> None:
+    """Translate one material inventory into the existing frozen-input contract."""
+    materials = case.get("materials")
+    if not isinstance(materials, dict) or set(materials) - {"images", "mesh", "building_input", "image_notes"}:
+        raise ValueError("orchestrator materials supports images, mesh, building_input and image_notes")
+    if not (materials.get("images") or materials.get("mesh")):
+        raise ValueError("materials requires a PNG directory or a GLB mesh")
+    if case.keys() & {"input", "input_kind", "auxiliary_images", "building_input", "mesh_workers", "roles"}:
+        raise ValueError("orchestrator cases declare their inputs under materials and delegation under worker")
+    for name in ("images", "mesh", "building_input"):
+        if name in materials and (not isinstance(materials[name], str) or not materials[name].strip()):
+            raise ValueError(f"materials.{name} must be a nonempty path")
+    mesh = materials.get("mesh")
+    case["input_kind"] = "mesh" if mesh else "images"
+    case["input"] = mesh or materials["images"]
+    case.setdefault("image_kind", "unknown" if mesh else "drawings")
+    if mesh and materials.get("images"):
+        case["auxiliary_images"] = materials["images"]
+    if "building_input" in materials:
+        case["building_input"] = materials["building_input"]
+    notes = materials.get("image_notes", {})
+    if not isinstance(notes, dict) or any(not isinstance(note, str) or not note.strip() for note in notes.values()):
+        raise ValueError("materials.image_notes maps admitted PNG names to descriptions")
+    case.setdefault("scope", "Deliver a simulation-ready Sim-BIM for the supplied building. Use the detail supported by the evidence.")
+
+
+def orchestrator_worker(case: dict) -> dict | None:
+    worker = case.get("worker")
+    if worker is None:
+        return None
+    if case.get("mode") != "orchestrator" or not isinstance(worker, dict):
+        raise ValueError("worker requires orchestrator mode and a worker configuration")
+    if set(worker) - {"model", "max_concurrent", "reasoning_effort", "output_tokens"}:
+        raise ValueError("unsupported worker setting")
+    if type(worker.get("max_concurrent", 1)) is not int or worker.get("max_concurrent", 1) < 1:
+        raise ValueError("worker.max_concurrent must be a positive integer")
+    model = worker.get("model", case["model"])
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("worker.model must be a nonempty model ID")
+    validate_provider_model(case["provider"], model)
+    get_model_profile(model, strict=True)
+    output = worker.get("output_tokens", case["output_tokens"])
+    validate_output_limit(model, output, reason=case.get("low_output_limit_reason"))
+    provider_parameters(case["provider"], model=model, output_tokens=output, temperature=case.get("temperature"),
+                        thinking=case.get("thinking", True),
+                        reasoning_effort=worker.get("reasoning_effort", case.get("reasoning_effort")))
+    return worker
+
+
+def validate_host(case: dict) -> None:
+    if case["mode"] != "orchestrator":
+        if "runtime" in case or "dsh_executable" in case:
+            raise ValueError("runtime selection requires orchestrator mode")
+        return
+    host = case.setdefault("runtime", "dsh")
+    if host not in {"dsh", "native"}:
+        raise ValueError("orchestrator runtime must be dsh or native")
+    if host == "native":
+        if "dsh_executable" in case:
+            raise ValueError("dsh_executable requires the dsh runtime")
+        return
+    limits = case["limits"]
+    if case["provider"] != CHATGPT_SUBSCRIPTION or case.get("reasoning_effort", "high") != "high":
+        raise ValueError("the DSH product route currently uses chatgpt-subscription with high reasoning effort")
+    if limits.get("tokens") is not None or limits.get("money_cny") is not None:
+        raise ValueError("DSH supports model call, tool call and wall time budgets; set tokens to null")
+    if any(name in limits for name in ("model_retries", "retry_backoff_seconds", "model_reconnect_seconds",
+                                       "max_total_truncations", "max_consecutive_truncations")):
+        raise ValueError("DSH uses its recorded delivery recovery policy")
+    if (case.get("continuation") or case.get("compact_at_tokens") is not None
+            or limits.get("time_budget_mode", "wall") != "wall"):
+        raise ValueError("DSH uses wall time, native session recovery and its own context policy")
+    if case.get("worker") is not None and min(limits["model_calls"], limits["tool_calls"]) < 2:
+        raise ValueError("DSH needs enough calls for both the coordinator and optional worker pool")
 
 
 def entrypoint_for(mode: str) -> str:
@@ -66,7 +144,7 @@ def context_arguments(case: dict) -> list[str]:
     if image_batches is not None:
         if type(image_batches) is not int or image_batches <= 0:
             raise ValueError("image_history_batches must be a positive integer or null")
-        if case.get("mode") != "single_model":
+        if case.get("mode") not in NATIVE_MODES:
             raise ValueError("image_history_batches currently supports single_model only")
         result += ["--image-history-batches", str(image_batches)]
     return result
@@ -112,13 +190,13 @@ def resolve_supplemental_inputs(case: dict) -> tuple[Path | None, Path | None]:
     """Resolve explicit auxiliary PNGs and a user declaration, without discovery."""
     images = declaration = None
     if case.get("auxiliary_images") is not None:
-        if case.get("mode") != "single_model" or case.get("input_kind") != "mesh":
+        if case.get("mode") not in NATIVE_MODES or case.get("input_kind") != "mesh":
             raise ValueError("auxiliary_images requires single_model mesh input")
         from src.agent.bim_inputs import admitted_png_paths
         images = _resolve_input_path(case, "auxiliary_images")
         admitted_png_paths(images)
     if case.get("building_input") is not None:
-        if case.get("mode") not in {"single_model", "role_division"}:
+        if case.get("mode") not in ALLOWED_ENTRYPOINTS:
             raise ValueError("building_input supports single_model and role_division only")
         from scripts.tool_scripts.bim_agent_inputs import read_building_input
         declaration = _resolve_input_path(case, "building_input")
@@ -147,6 +225,10 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
     for index, case in enumerate(cases):
         if not isinstance(case, dict):
             raise ValueError(f"cases[{index}] must be a JSON object")
+        if case.get("mode") == "orchestrator":
+            admit_project_materials(case)
+        elif "materials" in case:
+            raise ValueError("materials requires orchestrator mode")
         for name in string_fields:
             if not isinstance(case.get(name), str) or not case[name].strip():
                 raise ValueError(f"cases[{index}].{name} must be a nonempty string")
@@ -190,7 +272,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
                 raise ValueError(f"reader_task: {error.message}") from error
         if continuation is not None:
             import re
-            mesh_continuation = mode == "single_model" and case.get("input_kind") == "mesh"
+            mesh_continuation = mode in NATIVE_MODES and case.get("input_kind") == "mesh"
             allowed_fields = {"source_run", "source_events_sha256"}
             if mesh_continuation:
                 allowed_fields.add("allow_recovery_policy_change")
@@ -214,7 +296,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
                 raise ValueError("max_concurrent_readers must be a positive integer")
         if case.get("reasoning_history", "all") not in {"all", "current_tool_chain"}:
             raise ValueError("unsupported reasoning_history")
-        if mode != "single_model" and case.get("reasoning_history", "all") != "all":
+        if mode not in NATIVE_MODES and case.get("reasoning_history", "all") != "all":
             raise ValueError("reasoning_history currently supports single_model only")
         if case.get("provider") not in LIVE_PROVIDERS:
             raise ValueError("live configuration requires a reviewed provider")
@@ -235,6 +317,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         if low_output_limit_reason is not None:
             case["low_output_limit_reason"] = low_output_limit_reason
         validate_output_limit(model, case.get("output_tokens"), reason=case.get("low_output_limit_reason"))
+        orchestrator_worker(case)
         if role_configurations is not None:
             coordinator = role_configurations["coordinator"]
             coordinator_fields = {
@@ -255,7 +338,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         if maximum_seconds is not None and (type(maximum_seconds) not in {int, float} or maximum_seconds <= 0):
             raise ValueError("maximum_seconds_per_case must be positive or null")
         if seconds is None:
-            if mode != "single_model":
+            if mode not in NATIVE_MODES:
                 raise ValueError("null seconds currently supports single_model only")
             if maximum_seconds is not None:
                 raise ValueError("unlimited case exceeds the configuration's time ceiling")
@@ -264,9 +347,10 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         elif maximum_seconds is not None and seconds > maximum_seconds:
             raise ValueError("case exceeds the configuration's time ceiling")
         validate_budget(case)
+        validate_host(case)
         target = resolve_case_input(case)
         auxiliary_images, _ = resolve_supplemental_inputs(case)
-        if case.get("run_root") is not None and mode not in {"single_model", "role_division"}:
+        if case.get("run_root") is not None and mode not in ALLOWED_ENTRYPOINTS:
             raise ValueError("explicit run_root supports single_model and role_division only")
         if case.get("run_root") is not None:
             case["run_root"] = str(Path(case["run_root"]).expanduser())
@@ -275,6 +359,12 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         floors = case.get("floor_plan_images")
         image_directory = target if case["input_kind"] == "images" else auxiliary_images
         admitted_images = {image.name for image in image_directory.glob("*.png")} if image_directory else set()
+        if mode == "orchestrator":
+            notes = case["materials"].get("image_notes", {})
+            if set(notes) - admitted_images:
+                raise ValueError("materials.image_notes names an image outside the admitted PNG inventory")
+            if notes:
+                case["scope"] += "\nUser-supplied image descriptions:\n" + json.dumps(notes, ensure_ascii=False, sort_keys=True)
         if floors is not None and (not isinstance(floors, list) or any(
                 not isinstance(name, str) or Path(name).name != name
                 or name not in admitted_images for name in floors)):
@@ -294,13 +384,13 @@ def validate_budget(case: dict) -> RunLimits:
     limits = case["limits"]
     if "seconds" not in limits:
         raise ValueError("set seconds explicitly; null disables the single_model overall deadline")
-    if limits["seconds"] is None and case.get("mode") != "single_model":
+    if limits["seconds"] is None and case.get("mode") not in NATIVE_MODES:
         raise ValueError("null seconds currently supports single_model only")
     if "tokens" not in limits and limits.get("money_cny") is None:
         raise ValueError("set tokens explicitly (null disables it), or supply a CNY ceiling")
-    if "model_reconnect_seconds" in limits and case.get("mode") != "single_model":
+    if "model_reconnect_seconds" in limits and case.get("mode") not in NATIVE_MODES:
         raise ValueError("model_reconnect_seconds currently supports single_model only")
-    if "time_budget_mode" in limits and case.get("mode") != "single_model":
+    if "time_budget_mode" in limits and case.get("mode") not in NATIVE_MODES:
         raise ValueError("time_budget_mode currently supports single_model only")
     values = {
         name: limits.get(name) for name in
@@ -326,7 +416,15 @@ def selected_case(configuration: dict, case_id: str) -> dict:
     return matches[0]
 
 
-def argv_for(case: dict, *, resume: bool = False) -> list[str]:
+def argv_for(case: dict, *, resume: bool = False, configuration_path: Path | None = None) -> list[str]:
+    if case.get("runtime") == "dsh":
+        if configuration_path is None:
+            raise ValueError("DSH launch needs the source configuration path")
+        command = [sys.executable, "-m", "src.dsh_runtime.product", str(configuration_path.resolve()),
+                   "--case", case["case_id"]]
+        if resume:
+            command.append("--resume")
+        return command
     entrypoint = entrypoint_for(case["mode"])
     context_args = context_arguments(case)
     budget = validate_budget(case)
@@ -337,6 +435,15 @@ def argv_for(case: dict, *, resume: bool = False) -> list[str]:
     argv = [sys.executable, "-m", entrypoint,
             "--out", str(output), "--provider", case["provider"],
             "--model", case["model"]]
+    if case["mode"] == "orchestrator":
+        argv.append("--orchestrator")
+        worker = orchestrator_worker(case)
+        if worker is not None:
+            argv += ["--worker-model", worker.get("model", case["model"]),
+                     "--worker-concurrency", str(worker.get("max_concurrent", 1))]
+            for field in ("reasoning_effort", "output_tokens"):
+                if field in worker:
+                    argv += ["--worker-" + field.replace("_", "-"), str(worker[field])]
     if case.get("credentials_file"):
         argv += ["--credentials-file", str((ROOT / Path(case["credentials_file"]).expanduser()).resolve())]
     argv += ["--scope", case["scope"], "--image-kind", case["image_kind"],
@@ -353,7 +460,7 @@ def argv_for(case: dict, *, resume: bool = False) -> list[str]:
     if case.get("chatgpt_auth_dir"):
         argv += ["--chatgpt-auth-dir", str(Path(case["chatgpt_auth_dir"]).expanduser().resolve())]
     if case.get("run_root") is not None:
-        if case["mode"] not in {"single_model", "role_division"}:
+        if case["mode"] not in ALLOWED_ENTRYPOINTS:
             raise ValueError("explicit run_root supports single_model and role_division only")
         argv += ["--run-root", str(case["run_root"])]
     argv += ["--no-token-limit"] if budget.tokens is None else ["--tokens", str(budget.tokens)]
@@ -373,7 +480,7 @@ def argv_for(case: dict, *, resume: bool = False) -> list[str]:
         argv += ["--building-input", str(building_input)]
     for name in case.get("floor_plan_images", []):
         argv += ["--floor-plan-image", name]
-    if case["mode"] == "single_model":
+    if case["mode"] in NATIVE_MODES:
         argv += ["--reasoning-history", case.get("reasoning_history", "all"),
                  "--max-candidates", str(case["max_candidates"]),
                  "--model-retries", str(limits.get("model_retries", 2)),
@@ -428,7 +535,7 @@ def main() -> None:
         parser.error("--case is required for command or launch")
     try:
         configuration = load_configuration(args.configuration.resolve(), low_output_limit_reason=args.low_output_limit_reason)
-        command = (argv_for(selected_case(configuration, args.case), resume=args.resume)
+        command = (argv_for(selected_case(configuration, args.case), resume=args.resume, configuration_path=args.configuration)
                    if args.action != "check" else None)
     except (OSError, ValueError) as error:
         print(json.dumps({"status": "error", "message": str(error)}, ensure_ascii=False))

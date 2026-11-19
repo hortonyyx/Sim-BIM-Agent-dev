@@ -10,8 +10,11 @@ def attest_local_finish(run, candidate, result, minimum_floors=1):
     proof = attest_finished_handoff(run, result, candidate)
     if not proof:
         return None
-    mesh = proof.get('mesh_review', {})
-    if mesh.get('status') != 'current' or mesh.get('coverage') != 'whole_building':
+    basis = proof.get('scope_basis')
+    field = {'mesh_model_reported_review': 'mesh_review',
+             'drawing_model_reported_review': 'drawing_review'}.get(basis)
+    review = proof.get(field, {})
+    if review.get('status') != 'current' or review.get('coverage') != 'whole_building':
         return None
     source_name = f'{candidate}/source_model.json'
     try:

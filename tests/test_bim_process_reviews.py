@@ -175,6 +175,48 @@ def test_plan_reviews_follow_xy_scope_and_building_judgment_follows_current_sour
     assert (toolkit.candidate_path(original) / "source_model.json").read_bytes() == before
 
 
+def test_orchestrated_handoff_binds_actual_inputs_and_selection_without_filename_assumptions(case):
+    from src.agent.runtime_delivery import attest_finished_handoff
+
+    toolkit, candidate = case
+    manifest = dict(toolkit.manifest, orchestrator=True, floor_plan_images=[], floor_scope_source="not_declared")
+    del manifest["drawing_review_policy"]
+    _write(toolkit.run / "inputs.json", manifest)
+
+    async def scenario():
+        async with _server_session(toolkit.run, readonly=False) as session:
+            async def finish(coverage):
+                review = {"coverage": coverage, "summary": "Compared both storeys and the north elevation.",
+                          "unresolved": ["Unmarked heights on interior doors."]}
+                return _json_result(await session.call_tool("finish_bim", {
+                    "candidate": candidate, "reviews_json": json.dumps({"drawing_review": review})}))
+
+            assert "drawing_review" in _error_text(await session.call_tool("finish_bim", {"candidate": candidate}))
+            partial = await finish("partial")
+            assert attest_finished_handoff(toolkit.run, partial, candidate) is None
+            complete = await finish("whole_building")
+            proof = attest_finished_handoff(toolkit.run, complete, candidate)
+            assert proof["scope_basis"] == "drawing_model_reported_review"
+            assert proof["drawing_review"]["coverage"] == "whole_building"
+            delivery = json.loads((toolkit.run / "delivery.json").read_bytes())
+            assert delivery["drawing_review"]["floor_ids"] == ["F1", "F2"]
+            assert delivery["floor_completeness"]["complete_building"] is None
+            image = toolkit.run / "images/North.png"
+            image.write_bytes(image.read_bytes() + b"changed")
+            assert attest_finished_handoff(toolkit.run, complete, candidate) is None
+
+    asyncio.run(scenario())
+
+
+def test_orchestrator_respects_explicit_floor_plan_coverage(case):
+    from scripts.tool_scripts.bim_agent_process_reviews import drawing_handoff_review
+    toolkit, _ = case
+    toolkit.manifest["orchestrator"] = True
+    review = {"coverage": "whole_building", "summary": "First storey only.", "unresolved": []}
+    with pytest.raises(ValueError, match="Missing declared floor-plan coverage: F2.png"):
+        drawing_handoff_review(toolkit, "candidate_01", review)
+
+
 @pytest.mark.parametrize("enabled", [True, False], ids=["policy-required", "historical-manifest"])
 def test_finish_mcp_rejects_missing_reviews_without_formal_delivery_only_when_enabled(case, enabled):
     toolkit, candidate = case

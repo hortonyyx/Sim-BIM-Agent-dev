@@ -2,7 +2,7 @@ import json
 
 from scripts.tool_scripts.bim_agent_guidance import (
     CORE, DELIVERY, DRAWING_METHOD, FINISHING, IMAGE_KINDS, MESH_CORE, MESH_METHOD, MESH_VIEWS, PHOTOS, REFERENCES, TOOLS,
-    build_guide)
+    build_guide, describe_orchestrator_inputs)
 from scripts.tool_scripts.run_bim_agent import run_guide
 
 
@@ -41,6 +41,24 @@ def test_run_guide_follows_declared_inputs(tmp_path):
     assert guide(images={"a.png": {}}) == build_guide(images="drawings")
     assert guide(images={"a.png": {}}, mesh_input={"sha256": "x"}) == build_guide(images="unknown", mesh=True)
     assert guide(images={}, mesh_input={"sha256": "x"}) == build_guide(mesh=True)
+
+
+def test_orchestrator_keeps_materials_together_and_describes_only_admitted_evidence(tmp_path):
+    manifest = {"orchestrator": True, "images": {"sketch.png": {"size": [260, 80]}},
+                "image_kind": "unknown", "building_input": {"declaration": {}}, "mesh_input": {}}
+    inventory = describe_orchestrator_inputs(manifest)
+    assert "sketch.png" in inventory and "260 × 80" in inventory and "declaration" in inventory
+    assert "GLB" not in inventory and "floor-plan" not in inventory
+    (tmp_path / "inputs.json").write_text(json.dumps(manifest))
+    guide = run_guide(tmp_path)
+    assert guide == build_guide(images="unknown", orchestrator=True)
+    assert "drawing_review" in guide and DRAWING_METHOD not in guide and MESH_METHOD not in guide
+    manifest["mesh_input"] = {"frozen_path": "assets/input.glb"}
+    (tmp_path / "inputs.json").write_text(json.dumps(manifest))
+    assert "GLB" in describe_orchestrator_inputs(manifest)
+    guide = run_guide(tmp_path)
+    assert guide == build_guide(images="drawings", mesh=True, orchestrator=True)
+    assert "mesh_review" in guide and DRAWING_METHOD not in guide and MESH_METHOD not in guide
 
 
 def test_reconstruction_reference_is_the_single_drawing_method():

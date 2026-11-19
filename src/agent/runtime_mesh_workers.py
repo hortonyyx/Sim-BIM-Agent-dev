@@ -76,6 +76,17 @@ _TOKEN_BUDGET_MEANING = (
     "configured output allowance. This is not a per-response output cap. "
     "Null adds no child token limit beyond the shared root budget.")
 
+OBSERVER_GUIDANCE = """You are a read-only building observer. Answer the assigned question using the
+original material available in this task. The packet includes the building scope, per-image descriptions
+when supplied, user declarations and available filenames. Treat these as user statements. Inspect
+relevant PNGs using view_image or the exact prefetched image crops. Cite the admitted filename as
+image evidence and use original-image coordinates for boxes. Report observations, interpretations and
+uncertainties separately, using the supplied answer_schema. For a drawing reading you may include
+structured data such as dimensions, spaces, openings or located geometry, with its coordinate frame
+and claims from that image. The coordinator can then reuse the data. Cite actual tool-call IDs for
+computed mesh measurements. You can return uncertainty alone. You share the coordinator's budget.
+Do not modify the parent BIM or delegate further tasks."""
+
 _BUDGET_SCHEMA = {"type": "object", "additionalProperties": False,
     "properties": {"model_calls": {"type": "integer", "minimum": 1,
         "description": "Total requests including answer/repair. With 3+ calls, the final 2 are answer-only; "
@@ -118,11 +129,35 @@ def mesh_worker_tool_specs():
     return json.loads(json.dumps(EXTRA_TOOLS))
 
 
+def observer_tool_specs(dsh=False):
+    delegate, read, state = mesh_worker_tool_specs()
+    delegate.update(name="delegate_workers", description=(
+        "Optionally assign bounded building questions to read-only workers and wait for this batch. "
+        "Workers can inspect original drawings, other admitted PNGs, user descriptions and the native GLB when supplied. "
+        "Each task needs a unique stable ID, question and model/tool allowance sharing the root budget. "
+        "Reuse a completed task unchanged to read its evidence. Optional candidate freezes a source snapshot; "
+        "observation_ids use mesh/section IDs only when a GLB exists. image_view_ids prefetch parent crops. "
+        "Workers can return structured drawing readings. The coordinator chooses when to delegate and what to use."))
+    read.update(name="read_worker", description=(
+        "Read one worker's bound observations, structured readings, interpretations and uncertainties. "
+        "Optional view_ids retrieve original PNGs, crops, mesh views, sections or overlays. Optional "
+        "measurement_call_ids retrieve up to three full verified mesh measurements."))
+    state.update(name="worker_state", description=(
+        "Inspect configured worker model, concurrency, per-request output allowance, shared remaining budget "
+        "and task status before delegating or reusing a result."))
+    if dsh:
+        # Parent PNG crops require a matching native EventStore image receipt.
+        # DSH observers open and crop the original admitted PNGs themselves.
+        del delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["image_view_ids"]
+        delegate["description"] = delegate["description"].replace(" image_view_ids prefetch parent crops.", "")
+    return [delegate, read, state]
+
+
 def mesh_worker_task_payload(packet, limits):
-    from src.agent.runtime_mesh_evidence import MeshWorkerAnswer
+    from src.agent.runtime_mesh_evidence import answer_type
     return {"packet": packet, "task_limits": limits.model_dump(mode="json"),
             "answer_reserve_calls": min(2, max(1, limits.model_calls - 1)),
-            "answer_schema": MeshWorkerAnswer.model_json_schema()}
+            "answer_schema": answer_type(packet).model_json_schema()}
 
 
 def _envelope(value, *, error=False, blocks=()):
@@ -135,13 +170,13 @@ def _canonical_digest(value):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _project_worker_outcome(value):
+def _project_worker_outcome(value, read_tool="read_mesh_worker"):
     """Project exact source records once; explicit selections need no answer replay."""
     value = copy.deepcopy(value)
     result = value.get("result")
     value["result_reference"] = {"available": isinstance(result, dict),
         "canonical_result_sha256": _canonical_digest(result) if isinstance(result, dict) else None,
-        "read": {"tool": "read_mesh_worker", "arguments": {"task_id": value.get("task_id")}}}
+        "read": {"tool": read_tool, "arguments": {"task_id": value.get("task_id")}}}
     if isinstance(result, dict):
         value["result_reference"]["basis"] = {key: result[key] for key in (
             "packet_sha256", "run_id", "input_manifest_sha256", "mesh_sha256", "source_snapshot",
@@ -174,7 +209,7 @@ def _project_worker_outcome(value):
             detail = computed.pop("result")
             call_id = computed["tool_call_id"]
             measurements.setdefault(call_id, {**computed, "result": _measurement_summary(detail),
-                "full_result_read": {"tool": "read_mesh_worker", "arguments": {
+                "full_result_read": {"tool": read_tool, "arguments": {
                     "task_id": value["task_id"], "measurement_call_ids": [call_id]}}})
         if measurements:
             result["measurement_summaries"] = list(measurements.values())
@@ -184,7 +219,7 @@ def _project_worker_outcome(value):
         "meaning": "Each claim evidence_ref selects one complete evidence_sources record in this answer. "
             "Hashes bind the full source objects, including crop/view provenance; box_pixels stays on its claim. "
             "Measurement call/event/hash bindings remain. Summaries do not add fidelity approval.",
-        "full_measurement_read": {"tool": "read_mesh_worker", "task_id": value.get("task_id"),
+        "full_measurement_read": {"tool": read_tool, "task_id": value.get("task_id"),
             "selector": "measurement_call_ids", "maximum_ids": 3}}
     return value
 
@@ -233,7 +268,7 @@ class MeshWorkerTools:
 
     def __init__(self, frozen, *, store, root, adapter_factory, model, parameters,
                  route, limits, start_epoch, max_concurrent=8,
-                 reasoning_history="all", low_output_limit_reason=None, pricing=None):
+                 reasoning_history="all", low_output_limit_reason=None, pricing=None, multimodal=False):
         if type(max_concurrent) is not int or max_concurrent < 1:
             raise ValueError("max_concurrent must be a positive integer")
         self.frozen, self.store, self.root = frozen, store, Path(root).resolve()
@@ -247,16 +282,19 @@ class MeshWorkerTools:
         self.pricing = pricing
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._locks = {}
-        self._schemas = {tool["name"]: Draft202012Validator(tool["inputSchema"]) for tool in EXTRA_TOOLS}
+        self.multimodal = multimodal
+        self.worker_specs = observer_tool_specs() if multimodal else mesh_worker_tool_specs()
+        self.delegate_name, self.read_name, _ = (tool["name"] for tool in self.worker_specs)
+        self._schemas = {tool["name"]: Draft202012Validator(tool["inputSchema"]) for tool in self.worker_specs}
 
     async def list_tools(self):
-        return [*await self.frozen.list_tools(), *mesh_worker_tool_specs()]
+        return [*await self.frozen.list_tools(), *copy.deepcopy(self.worker_specs)]
 
     def repeatability(self, name):
         return "read_only" if name in self._schemas else self.frozen.repeatability(name)
 
     def recovery_policy(self, name):
-        if name == "delegate_mesh_workers":
+        if name == self.delegate_name:
             return "resume_task"
         if name in self._schemas:
             return "retry_read"
@@ -269,7 +307,7 @@ class MeshWorkerTools:
             errors = list(self._schemas[name].iter_errors(arguments))
             if errors:
                 raise ValueError(errors[0].message)
-            if name == "delegate_mesh_workers":
+            if name == self.delegate_name:
                 tasks = arguments["tasks"]
                 ids = [task["task_id"] for task in tasks]
                 if len(ids) != len(set(ids)) or self.store.task_id in ids or self.store.root_task_id in ids:
@@ -277,7 +315,7 @@ class MeshWorkerTools:
                 results = await asyncio.gather(*(self._dispatch(task) for task in tasks))
                 return _envelope({"status": "completed", "results": results,
                                   "meaning": "batch ended; individual task statuses and evidence determine usefulness"})
-            if name == "read_mesh_worker":
+            if name == self.read_name:
                 value, blocks = self._read(arguments["task_id"], arguments.get("view_ids", ()),
                                            arguments.get("measurement_call_ids", ()))
                 return _envelope(value, blocks=blocks)
@@ -287,16 +325,16 @@ class MeshWorkerTools:
 
     def project_tool_result(self, name, raw):
         """Project model-visible copies only; canonical hydration/storage is unchanged."""
-        if name not in {"delegate_mesh_workers", "read_mesh_worker"}:
+        if name not in {self.delegate_name, self.read_name}:
             projector = getattr(self.frozen, "project_tool_result", None)
             return projector(name, raw) if projector else raw
         if raw.get("isError"):
             return raw
         value = raw["structuredContent"]
-        if name == "delegate_mesh_workers":
-            value = {**value, "results": [_project_worker_outcome(row) for row in value["results"]]}
+        if name == self.delegate_name:
+            value = {**value, "results": [_project_worker_outcome(row, self.read_name) for row in value["results"]]}
         else:
-            value = _project_worker_outcome(value)
+            value = _project_worker_outcome(value, self.read_name)
         # The envelope's first text block mirrors structuredContent. Preserve
         # subsequent PNG/reference blocks exactly, including their image origins.
         return {**raw, "structuredContent": value, "content": [
@@ -410,7 +448,7 @@ class MeshWorkerTools:
             packet = prepare_mesh_worker_packet(self.run_directory, child.task_directory / "bim",
                 task_id=task["task_id"], question=task["question"], notes=task.get("notes", ()),
                 candidate=task.get("candidate"), observation_ids=task.get("observation_ids", ()), timing=timing,
-                image_view_ids=task.get("image_view_ids", ()), parent_store=self.store)
+                image_view_ids=task.get("image_view_ids", ()), parent_store=self.store, multimodal=self.multimodal)
             record = {"task": task, "configuration": self._configuration(), "packet": packet, "timing": timing}
             # Admission belongs to the coordinator's in-flight operation. The
             # child journal stays empty until its own Runtime starts normally.
@@ -461,7 +499,8 @@ class MeshWorkerTools:
                         ToolGrant(tool_name=context_tool["name"], access="read"))})
             specs = [{"type": "function", "function": {"name": t["name"],
                 "description": t.get("description", ""), "parameters": t["inputSchema"]}} for t in catalog]
-            versions = make_versions(child, root=self.root, prompt=WORKER_GUIDANCE, tools=specs,
+            guidance = OBSERVER_GUIDANCE if self.multimodal else WORKER_GUIDANCE
+            versions = make_versions(child, root=self.root, prompt=guidance, tools=specs,
                 parameters=self.parameters, route=self.route,
                 code_paths=("src/agent/runtime_mesh_workers.py", "src/agent/runtime_mesh_evidence.py",
                             "src/agent/input_image_view.py", "src/agent/runtime_mesh_image_views.py",
@@ -504,7 +543,7 @@ class MeshWorkerTools:
                         "url": "data:" + block["mimeType"] + ";base64," + block["data"]}})
                 else:
                     content.append(block)
-            return await engine.run([{"role": "system", "content": WORKER_GUIDANCE},
+            return await engine.run([{"role": "system", "content": guidance},
                 {"role": "user", "content": content}], image_originals=originals, resume=saved is not None)
 
     def _save_outcome(self, child, record, receipt):
@@ -664,7 +703,7 @@ class MeshWorkerTools:
         recovered = []
         for call_id, event in latest.items():
             call = event.payload
-            if call_id in resolved or call.tool_name != "delegate_mesh_workers":
+            if call_id in resolved or call.tool_name != self.delegate_name:
                 continue
             unknown = next((row for row in reversed(self.store.events)
                 if row.payload.event_type == "tool_execution" and row.payload.invocation_event_id == event.event_id

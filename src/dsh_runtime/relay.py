@@ -271,6 +271,8 @@ class Session:
 
 def native_name(name):
     from .image_history import NAME, PREFIX as IMAGE_PREFIX
+    if name in {'delegate_workers', 'read_worker', 'worker_state'}:
+        return 'mcp__sim_bim_workers__' + name
     return (IMAGE_PREFIX if name == NAME else PREFIX) + name
 
 
@@ -457,13 +459,6 @@ class Handler(BaseHTTPRequestHandler):
                     minimum_floors=self.server.minimum_floors,
                 )
                 if check:
-                    review = check.get('mesh_review', {})
-                    if (
-                        check.get('scope_basis') != 'mesh_model_reported_review'
-                        or review.get('status') != 'current'
-                        or review.get('coverage') != 'whole_building'
-                    ):
-                        raise Gate('handoff proof disagrees with whole-building mesh contract')
                     save(CONTROL / 'dsh-relay-finish.json', check)
                     state.stop = True
                     audit(
