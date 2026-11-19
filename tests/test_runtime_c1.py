@@ -145,6 +145,41 @@ def test_image_history_local_read_is_delivered_exactly_with_all_batch_occurrence
         engine.store.validate()
 
 
+@pytest.mark.parametrize("constrained", [None, "tokens", "image_count", "image_bytes"])
+def test_consecutive_exact_reads_form_a_bounded_visual_comparison(tmp_path, constrained):
+    from test_runtime_responses import response as native_response
+
+    tools = ImageHistoryTools(tmp_path / "tools")
+    def call(cid, name, arguments):
+        return {"type": "function_call", "call_id": cid, "name": name,
+                "arguments": json.dumps(arguments), "status": "completed"}
+
+    indices = (1, 2, 3, 4)
+    images = {n: tools.image_bytes(n) for n in (*indices, 5)}
+    reads = []
+    for index, n in enumerate((*indices, 1)):
+        digest = hashlib.sha256(images[n]).hexdigest()
+        reads.append(native_response([call("r" + str(index), "read_context_image",
+            {"view_id": "saved-" + digest, "sha256": digest})]))
+    script = [native_response([call("v" + str(n), "view", {"index": n}) for n in indices]),
+              *reads, native_response([call("next", "view", {"index": 5})]), native_response()]
+    engine = runtime(tmp_path, script, tools=tools,
+        limits=RunLimits(model_calls=10, tool_calls=12, seconds=90, tokens=1_000_000))
+    engine.context_policy = ContextPolicy(image_history_batches=3, append_state_history=True,
+        **({"max_images": 3} if constrained == "image_count" else
+           {"max_image_bytes": sum(map(len, images.values())) // 2} if constrained == "image_bytes" else
+           {"compact_at_tokens": 100} if constrained == "tokens" else {}))
+    engine.versions = engine.versions.model_copy(update={"remote_model": engine.versions.remote_model.model_copy(
+        update={"route_id": "chatgpt-subscription"})})
+    with engine.store:
+        assert asyncio.run(engine.run(MESSAGES))["status"] == "completed"
+        shown = [_wire_images(json.loads(wire)) for wire in engine.adapter.requests]
+        assert shown[5] == [images[n] for n in ((2, 3, 4) if constrained else indices)]
+        assert shown[6] == [images[n] for n in ((3, 4, 1) if constrained else (2, 3, 4, 1))]
+        assert shown[7] == [images[n] for n in (4, 1, 5)]
+        engine.store.validate()
+
+
 @pytest.mark.parametrize("crash_at", ["after_execution", "before_request"])
 def test_image_history_reader_retry_and_resume_preserve_exact_delivery(tmp_path, crash_at):
     class Crash(BaseException):
