@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -14,6 +15,42 @@ from src.agent_runtime.mcp_tools import McpToolClient
 from src.agent_runtime.store import EventStore
 from tests.test_mesh_input_admission import _case
 from tests.test_mesh_worker_entry import _response
+
+
+def test_worker_http_client_accepts_dsh_ipv6_proxy_bypass(monkeypatch):
+    import httpx
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost,::1,[::1],.example.org")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8123")
+    observer_mcp.prepare_worker_network(os.environ)
+    assert os.environ["NO_PROXY"] == "127.0.0.1,localhost,::1,.example.org"
+    assert "HTTP_PROXY" not in os.environ
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:8123"
+    with httpx.Client():
+        pass
+
+
+def test_image_box_must_fit_a_crop_the_observer_actually_saw(tmp_path):
+    from scripts.tool_scripts.run_bim_agent import Toolkit
+    from src.agent.runtime_mesh_evidence import prepare_mesh_worker_packet, hydrate_mesh_worker_answer
+    from tests.test_mesh_worker_evidence import _answer, _record, _store
+
+    inputs = Path(_case(tmp_path)["input_root"])
+    parent, _, _ = runtime_entry.prepare_inputs(tmp_path / "parent", images=inputs / "sketches",
+        mesh=None, building_input=None, scope="Inspect a crop", image_kind="drawings", max_candidates=1,
+        orchestrator=True)
+    child = tmp_path / "child"
+    packet = prepare_mesh_worker_packet(parent, child, task_id="worker-a", question="Locate a mark.", multimodal=True)
+    args = {"name": "1f.png", "box": [2, 2, 8, 7]}
+    image, metadata = Toolkit(child, readonly=True).view(**args)
+    raw = {"content": [image.to_image_content().model_dump(mode="json"), {"type": "text", "text": metadata}]}
+    with _store(child) as store:
+        _record(store, packet, child, "view_image", args, raw)
+        good = _answer(kind="image", identity="1f.png", box_pixels=[3, 3, 7, 7])
+        assert hydrate_mesh_worker_answer(good, packet, store, child)["directly_seen"][0]["box_pixels"] == [3, 3, 7, 7]
+        outside = _answer(kind="image", identity="1f.png", box_pixels=[0, 0, 1, 1])
+        with pytest.raises(ValueError, match="inside a supplied image view"):
+            hydrate_mesh_worker_answer(outside, packet, store, child)
 
 
 @pytest.mark.parametrize("with_mesh", [False, True])

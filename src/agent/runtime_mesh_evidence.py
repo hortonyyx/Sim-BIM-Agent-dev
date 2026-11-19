@@ -625,9 +625,9 @@ def hydrate_mesh_worker_answer(answer, packet, store, child_run):
             resolution = reference["resolution_px"]
             if not (0 <= x0 < x1 <= resolution["width"] and 0 <= y0 < y1 <= resolution["height"]):
                 raise ValueError("worker observation box exceeds its evidence image")
-            if reference.get("prefetched_views"):
+            if row.evidence_kind == "image" and (packet["policy"] == OBSERVER_POLICY or reference.get("prefetched_views")):
                 regions = [view["view"]["box_original_pixels"] for view in
-                           (*reference["prefetched_views"], *reference.get("view_receipts", []))]
+                           (*reference.get("prefetched_views", ()), *reference.get("view_receipts", ()))]
                 if not any(a <= x0 < x1 <= c and b <= y0 < y1 <= d for a, b, c, d in regions):
                     raise ValueError("worker box must use ORIGINAL pixels inside a supplied image view")
         output = {"observation_id": row.observation_id, "statement": row.statement,

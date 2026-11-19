@@ -140,6 +140,11 @@ def project_sources(sources):
             raise ValueError(f"Required product resource is unavailable: {name}")
         payload[name] = sources[name]
         origins[name] = {"source": name, "source_sha256": sha(sources[name]), "transform": "identity"}
+    for name, original in profile.get("resource_copies", {}).items():
+        if name in payload or original not in sources:
+            raise ValueError(f"Invalid product resource copy: {original} -> {name}")
+        payload[name] = sources[original]
+        origins[name] = {"source": original, "source_sha256": sha(sources[original]), "transform": "identity"}
     for name in profile["product_files"]:
         original = "product/" + name
         data = sources[original]
@@ -206,7 +211,7 @@ def register_projection(destination, *, sources, commit, profile):
                   "strategy_sources": {name: sha(sources[name]) for name in strategy_files}}
     # Broad code scopes deliberately detect injected parent packages and new
     # unregistered code too. Runtime ownership is subtracted from domain.
-    scope = {"runtime": ["src/agent_runtime", "src/harness_contracts", "src/__init__.py",
+    scope = {"runtime": ["src/agent_runtime", "src/dsh_runtime", "src/harness_contracts", "src/__init__.py",
                          "src/utils", "pyproject.toml", "uv.lock"],
              "domain": ["src", "scripts", "sim_bim.py", "Start.cmd", "setup.ps1", ".python-version",
                         *[p for p in profile["product_files"] if p.endswith(".json")]]}

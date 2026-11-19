@@ -18,8 +18,9 @@ from . import relay
 from .profile import make_patch
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = Path(__file__).resolve().parent
-OVERLAY = (PACKAGE / 'deepseek_harness.yml' if (ROOT / 'release-manifest.json').is_file()
-           else ROOT / 'AI_agent/workflow/configs/deepseek_harness.yml')
+OVERLAY = PACKAGE / 'deepseek_harness.yml'
+if not OVERLAY.is_file():
+    OVERLAY = ROOT / 'AI_agent/workflow/configs/deepseek_harness.yml'
 
 def read(path):
     return json.loads(path.read_text(encoding='utf-8-sig'))
@@ -92,14 +93,15 @@ def prepare(case, *, material_paths=None):
         shared / 'initial-messages.json',
         [{'role': 'system', 'content': guide}, {'role': 'user', 'content': content}],
     )
-    from src.agent_runtime.agent_registry import release_records
+    from src.agent_runtime.agent_registry import release_records, source_commit
     records = release_records(ROOT)
     relay.save(
         shared / 'freeze.json',
         {
             'created': time.time(),
             'domain': records['domain'],
-            **({'runtime': records['runtime'], 'installed_host': host_identity(config)}
+            **({'runtime': records['runtime'], 'source_commit': source_commit(ROOT),
+                'installed_host': host_identity(config)}
                if material_paths is not None else {}),
             'files': {str(p.relative_to(case)): digest(p) for p in frozen_files if p.is_file()},
         },

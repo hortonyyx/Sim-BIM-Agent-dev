@@ -29,7 +29,7 @@ ALLOWED_ENTRYPOINTS = {
     "single_model": "src.agent.runtime_entry",
     "role_division": "src.agent.runtime_roles.entry",
 }
-PRODUCT_RUN_MODES = tuple(ALLOWED_ENTRYPOINTS)
+PRODUCT_RUN_MODES = ("orchestrator", "single_model", "role_division")
 NATIVE_MODES = {"single_model", "orchestrator"}
 
 
@@ -49,6 +49,8 @@ def admit_project_materials(case: dict) -> None:
     case["input_kind"] = "mesh" if mesh else "images"
     case["input"] = mesh or materials["images"]
     case.setdefault("image_kind", "unknown" if mesh else "drawings")
+    if case["image_kind"] not in {"unknown", "drawings", "mesh_views", "photos"}:
+        raise ValueError("image_kind must be unknown, drawings, mesh_views or photos")
     if mesh and materials.get("images"):
         case["auxiliary_images"] = materials["images"]
     if "building_input" in materials:
@@ -88,7 +90,7 @@ def validate_host(case: dict) -> None:
             raise ValueError("runtime selection requires orchestrator mode")
         return
     host = case.setdefault("runtime", "dsh")
-    if host not in {"dsh", "native"}:
+    if host not in ("dsh", "native"):
         raise ValueError("orchestrator runtime must be dsh or native")
     if host == "native":
         if "dsh_executable" in case:

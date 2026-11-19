@@ -5,7 +5,7 @@ from PIL import Image
 import pytest
 
 from src.agent.runtime_configuration import argv_for, load_configuration
-from src.dsh_runtime.product import host_config
+from src.dsh_runtime.product import host_config, verify_resume_inputs
 from src.dsh_runtime.relay import native_name
 
 
@@ -52,3 +52,15 @@ def test_unbound_material_description_is_rejected(tmp_path):
     path = project(tmp_path, materials={"images": "images", "image_notes": {"missing.png": "standard floor"}})
     with pytest.raises(ValueError, match="outside the admitted"):
         load_configuration(path)
+
+
+def test_dsh_resume_checks_source_bytes_even_when_original_names_match(tmp_path):
+    from src.agent.bim_inputs import digest
+    image = tmp_path / "Ground.png"
+    Image.new("RGB", (8, 8)).save(image)
+    materials = {"images": tmp_path, "mesh": None, "building_input": None}
+    manifest = {"images": {image.name: {"sha256": digest(image)}}}
+    verify_resume_inputs(manifest, materials)
+    Image.new("RGB", (8, 8), color="red").save(image)
+    with pytest.raises(ValueError, match="configured images differ"):
+        verify_resume_inputs(manifest, materials)

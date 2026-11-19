@@ -89,6 +89,19 @@ D:/Sim-BIM-Data/
 
 ## 配置模型
 
+### 统一调度器（开发构建）
+
+含统一调度器的构建附有 [建模任务模板](config.orchestrator.example.json)。将它复制为 `D:/Sim-BIM-Data/config/building-a.json`，在 `materials.images` 填写本次使用的 PNG 目录。有带贴图的 GLB 时，可填写 `materials.mesh`；建筑说明放在 `materials.building_input`。这三个路径均相对于 `input_root`。可在 `materials.image_notes` 中以实际 PNG 文件名为键，记录楼层、立面方向或资料适用范围。
+
+模板选择 `runtime: "dsh"`，需要在 Windows 上安装 DeepSeek Harness，当前适配 ChatGPT 订阅线路。安装后可将其 `dsh.cmd` 放入 PATH，也可在对应 case 的 `dsh_executable` 中填写实际 `DeepSeek Harness.exe` 绝对路径。使用随产品附带的自研运行时可选 `runtime: "native"`，此时删除 `dsh_executable`。
+
+运行 `./Start.cmd auth models` 核对订阅账号可用型号。模板由 GPT-6.2 Sol 主控，需要时可委派 GPT-6.1 Terra 执行只读观察，最多两项并发，主控负责写入最终 BIM。移除 `worker` 可关闭委派。两种宿主都接受这份材料清单和任务说明。
+
+```powershell
+./Start.cmd check D:/Sim-BIM-Data/config/building-a.json
+./Start.cmd run D:/Sim-BIM-Data/config/building-a.json --case building-a
+```
+
 真实建模需要联网，并使用你自己的模型账号或 API 凭据。任务所需的图片和资料会发送到所选模型服务，API 用量由服务商按你的账户计费。
 
 ### DeepSeek Flash

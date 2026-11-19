@@ -22,7 +22,13 @@ def test_payload_keeps_runtime_resources_and_excludes_development_evidence():
     selected, origins, _, _ = project_sources(sources)
     assert {"src/agent/data/room_types.json", "src/agent_runtime/model_profiles.json",
             "scripts/tool_scripts/vendor/three.min.js", "README.md", "config.mesh.example.json",
+            "config.orchestrator.example.json", "src/dsh_runtime/product.py",
+            "src/dsh_runtime/image_history.py", "src/agent/observer_mcp.py",
+            "src/dsh_runtime/host-network.cjs", "src/dsh_runtime/deepseek_harness.yml",
             "Start.cmd", "sim_bim.py"}.issubset(selected)
+    overlay = "src/dsh_runtime/deepseek_harness.yml"
+    assert selected[overlay] == sources["AI_agent/workflow/configs/deepseek_harness.yml"]
+    assert origins[overlay]["source"] == "AI_agent/workflow/configs/deepseek_harness.yml"
     assert not any(name.startswith(("data/", "src/agent/judge/", "src/agent/legacy/", "src/rag/",
                                    "src/mcp/", "src/converters/", "tests/", "AI_agent/")) for name in selected)
     assert "src/agent/sdk.py" not in selected

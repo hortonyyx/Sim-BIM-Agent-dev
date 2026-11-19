@@ -12,6 +12,7 @@ import sys
 from src.agent.runtime_configuration import (
     ROOT, load_configuration, resolve_case_input, resolve_supplemental_inputs, selected_case,
 )
+from src.agent.bim_inputs import admitted_png_paths
 from src.agent_runtime.connections import resolve_connection, validate_connection_model
 from src.agent_runtime.estimation import get_model_profile
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
@@ -57,6 +58,20 @@ def host_config(case, auth_dir):
     return config
 
 
+def verify_resume_inputs(manifest, material_paths):
+    images = material_paths["images"]
+    hashes = {p.name: launcher.digest(p) for p in admitted_png_paths(images)} if images else {}
+    expected = {name: data["sha256"] for name, data in manifest["images"].items()}
+    if hashes != expected:
+        raise ValueError("configured images differ from the admitted DSH run")
+    for field, saved, digest_key in (("mesh", "mesh_input", "sha256"),
+                                     ("building_input", "building_input", "raw_sha256")):
+        path = material_paths[field]
+        actual = launcher.digest(path) if path else None
+        if actual != (manifest.get(saved) or {}).get(digest_key):
+            raise ValueError(f"configured {field} differs from the admitted DSH run")
+
+
 def launch(case, *, resume=False):
     if case.get("mode") != "orchestrator" or case.get("runtime") != "dsh":
         raise ValueError("select an orchestrator case using the dsh runtime")
@@ -65,24 +80,25 @@ def launch(case, *, resume=False):
                                 repository_root=ROOT, run_root=run_root)
     credentials = SubscriptionCredentials(Path(case["chatgpt_auth_dir"]) if case.get("chatgpt_auth_dir") else None)
     config = host_config(case, credentials.directory)
+    primary = resolve_case_input(case)
+    auxiliary, declaration = resolve_supplemental_inputs(case)
+    mesh = primary if case["input_kind"] == "mesh" else None
+    materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
     if resume:
         if launcher.read(output / "config.json") != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
             raise ValueError("requested DSH configuration or task differs from the frozen run")
+        verify_resume_inputs(launcher.read(output / "private/dsh/work/bim/inputs.json"), materials)
     elif output.exists():
         raise ValueError(f"run directory already exists: {output}")
     connection = resolve_connection(case["provider"], None, chatgpt_auth_dir=credentials.directory)
     for model in dict.fromkeys([case["model"], config.get("worker", {}).get("model", case["model"])]):
         asyncio.run(validate_connection_model(connection, model))
     if not resume:
-        primary = resolve_case_input(case)
-        auxiliary, declaration = resolve_supplemental_inputs(case)
-        mesh = primary if case["input_kind"] == "mesh" else None
         output.mkdir(parents=True, exist_ok=False)
         (output / "shared").mkdir()
         (output / "shared/task.txt").write_text(case["scope"], encoding="utf-8")
         (output / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
-        launcher.prepare(output, material_paths={"images": auxiliary if mesh else primary,
-                                                "mesh": mesh, "building_input": declaration})
+        launcher.prepare(output, material_paths=materials)
     return launcher.run(output, resume, credential=credentials,
                         image_history_batches=case.get("image_history_batches"))
 

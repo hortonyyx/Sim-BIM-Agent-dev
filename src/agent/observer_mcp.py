@@ -130,10 +130,20 @@ def parser():
     return p
 
 
-if __name__ == "__main__":
+def prepare_worker_network(environment):
     # DSH applies this sentinel to its own host. Only the worker MCP process
     # uses its explicitly configured model connection, with normal TLS checks.
-    for key in tuple(os.environ):
-        if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} and os.environ[key] == "http://127.0.0.1:1":
-            del os.environ[key]
+    for key, value in tuple(environment.items()):
+        if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} and value == "http://127.0.0.1:1":
+            del environment[key]
+        if key.upper() == "NO_PROXY":
+            # DSH includes both IPv6 loopback spellings. HTTPX wants a bare
+            # address here and adds brackets itself when building its URL mounts.
+            hosts = [host.strip() for host in value.split(",")]
+            if "[::1]" in hosts:
+                environment[key] = ",".join(dict.fromkeys("::1" if host == "[::1]" else host for host in hosts))
+
+
+if __name__ == "__main__":
+    prepare_worker_network(os.environ)
     asyncio.run(serve(parser().parse_args()))
