@@ -95,6 +95,21 @@ def test_missing_review_never_claims_completion(prepared):
     assert not (toolkit.run / candidate / "mesh_review.json").exists()
 
 
+def test_orchestrator_can_bind_scope_to_inputs_without_requesting_an_overlay(prepared):
+    toolkit, candidate = prepared
+    declaration = _review(overlay_ids=[], summary="Compared the supplied dimensions, frame and saved storey heights.")
+    with pytest.raises(ValueError, match="at least one"):
+        carry_mesh_review(toolkit, candidate, declaration)
+    toolkit.manifest["orchestrator"] = True
+    _write(toolkit.run / "inputs.json", toolkit.manifest)
+    result = carry_mesh_review(toolkit, candidate, declaration)
+    assert result["complete_building"] and result["overlay_ids"] == []
+    assert result["fidelity"] == "not_evaluated" and result == mesh_review_status(toolkit, candidate)
+    asset = toolkit.run / "assets/input.glb"
+    asset.write_bytes(asset.read_bytes() + b"changed")
+    assert mesh_review_status(toolkit, candidate)["status"] == "stale"
+
+
 @pytest.mark.parametrize("coverage,complete", [("partial", False), ("whole_building", True)])
 def test_current_declaration_and_every_evidence_hash_round_trip_read_only(prepared, coverage, complete):
     toolkit, candidate = prepared

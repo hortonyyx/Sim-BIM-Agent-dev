@@ -241,7 +241,9 @@ def render_delivery_html(result: dict, source: dict) -> str:
     mesh_review = result.get('mesh_review')
     if mesh_review is not None:
         if mesh_review.get('complete_building'):
-            run_note += " 调度员已声明本稿覆盖整栋建筑，声明与当前模型及回叠证据一致；这不代表独立精度验收通过。"
+            run_note += " 调度员已声明本稿覆盖整栋建筑，声明已绑定到当前模型和输入资料。"
+            if mesh_review.get('overlay_ids'):
+                run_note += " 已核实声明引用的回叠图属于本稿。"
         else:
             run_note += " 本稿尚无有效的整栋范围声明，保留为局部或待核查交付。"
         if mesh_review.get('summary'):

@@ -2737,7 +2737,8 @@ def build_tool_server(run: Path, readonly=False):
             For native mesh, reviews_json may be {"mesh_review":{"coverage":
             "whole_building" or "partial","summary":"what was checked and remains
             uncertain","overlay_ids":["overlay_001"]}}. Cite current source overlays
-            you inspected; no prescribed camera count. This is model-reported scope,
+            you inspected. Unified orchestrators can supply [] when their scope
+            judgment rests on other evidence. This is model-reported scope,
             not independent quality approval. Missing/partial/stale mesh scope does
             not complete the runtime even when a useful candidate is saved.
             Optional inferences_json is a JSON list of final interpretation declarations

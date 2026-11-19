@@ -529,14 +529,15 @@ plan construction/assembly or a validated calibrated plan-overlay review.
 If inputs lists an explicit drawing_review_policy, get_bim_reference('drawing_process')
 explains its extra local and building review requirements."""
 
-ORCHESTRATOR_MESH_FINISH = """For native mesh delivery, inspect a current source
-overlay on an original view. view_mesh(candidate=...) can return both, or use
-overlay_mesh_candidate with an existing observation. Pass reviews_json to
+ORCHESTRATOR_MESH_FINISH = """For native mesh delivery, choose comparisons that
+resolve an actual building question or fulfill the user's requested checks.
+view_mesh(candidate=...) can show the source overlay on an original view,
+or use overlay_mesh_candidate with an existing observation. Pass reviews_json to
 finish_bim as {"mesh_review":{"coverage":"whole_building","summary":"<actual
 coverage and remaining uncertainty>","overlay_ids":["<current overlay ID>"]}}.
-Use coverage="partial" if required scope is unfinished. At least one current
-overlay bound to this candidate is needed; choose views to address the actual
-building questions."""
+List the current overlays actually inspected. Use [] when the handoff rests on
+other evidence and summarize that evidence and its limits. Use coverage="partial"
+if required scope is unfinished."""
 
 
 def describe_orchestrator_inputs(manifest: dict) -> str:
