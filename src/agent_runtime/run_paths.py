@@ -27,7 +27,7 @@ def resolve_run_output(output: Path, *, repository_root: Path, run_root: Path | 
         listed = ""
     elif (repository_root / ".git").exists():
         listed = subprocess.check_output(["git", "worktree", "list", "--porcelain"],
-                                         cwd=repository_root, text=True)
+                                         cwd=repository_root, stdin=subprocess.DEVNULL, text=True)
     else:
         raise ValueError("run storage requires a Git checkout or a release manifest")
     other_trees = [Path(line[9:]).resolve() for line in listed.splitlines()

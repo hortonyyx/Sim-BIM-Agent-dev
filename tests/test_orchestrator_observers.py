@@ -89,7 +89,9 @@ def test_native_coordinator_carries_observer_route_and_rejects_changed_resumptio
     request, = [e.payload for e in events if e.task_id == "inspect" and e.payload.event_type == "adapter_request"]
     assert request.versions.remote_model.remote_alias == "observer-fixture"
     assert result["workers"]["token_budget"]["output_token_limit"] == 32768
-    assert result["whole_run_counts"]["model_requests"] == 3
+    assert result["whole_run_counts"]["by_task"]["inspect"]["model_requests"] == 1
+    assert result["whole_run_counts"]["model_requests"] == sum(
+        event.payload.event_type == "adapter_request" for event in events)
     before = (out / "events.jsonl").read_bytes()
     args.resume = True
     args.worker_model = "different-worker"

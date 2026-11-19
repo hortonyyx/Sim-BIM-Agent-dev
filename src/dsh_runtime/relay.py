@@ -8,6 +8,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -389,8 +390,9 @@ def read_limits():
     limits = json.loads((CASE / 'shared/limits.json').read_bytes())
     for key in ('model_calls', 'tool_calls', 'wall_seconds'):
         value = limits[key]
-        if key == 'wall_seconds' and value is None:
-            continue
+        if key == 'wall_seconds':
+            if value is None or type(value) in (float, int) and math.isfinite(value) and value > 0:
+                continue
         if type(value) is not int or value <= 0:
             raise Gate('invalid frozen budget: ' + key)
     return limits

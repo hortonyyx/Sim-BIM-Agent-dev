@@ -18,13 +18,21 @@ from . import relay
 from .profile import make_patch
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = Path(__file__).resolve().parent
-OVERLAY = ROOT / 'AI_agent/workflow/configs/deepseek_harness.yml'
+OVERLAY = (PACKAGE / 'deepseek_harness.yml' if (ROOT / 'release-manifest.json').is_file()
+           else ROOT / 'AI_agent/workflow/configs/deepseek_harness.yml')
 
 def read(path):
     return json.loads(path.read_text(encoding='utf-8-sig'))
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def host_identity(config):
+    exe = Path(config['dsh_executable'])
+    return {'executable': digest(exe), 'app_asar': digest(exe.parent / 'resources/app.asar'),
+            'overlay': digest(OVERLAY)}
 
 def prepare(case, *, material_paths=None):
     """Freeze current domain guidance/schemas after the normal input admission."""
@@ -84,12 +92,15 @@ def prepare(case, *, material_paths=None):
         shared / 'initial-messages.json',
         [{'role': 'system', 'content': guide}, {'role': 'user', 'content': content}],
     )
-    from src.agent_runtime.agent_registry import agent_version_record
+    from src.agent_runtime.agent_registry import release_records
+    records = release_records(ROOT)
     relay.save(
         shared / 'freeze.json',
         {
             'created': time.time(),
-            'domain': agent_version_record(ROOT, verify=True),
+            'domain': records['domain'],
+            **({'runtime': records['runtime'], 'installed_host': host_identity(config)}
+               if material_paths is not None else {}),
             'files': {str(p.relative_to(case)): digest(p) for p in frozen_files if p.is_file()},
         },
     )
@@ -202,7 +213,12 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
                 stderr=stderr,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
-            proc.communicate(prompt.encode('utf-8'))
+            wall = config['limits']['wall_seconds']
+            epoch = read(case / 'private/start.json')['epoch'] if wall is not None else None
+            timeout = max(0, epoch + wall - time.time()) if wall is not None else None
+            proc.communicate(prompt.encode('utf-8'), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            error = {'type': 'wall_deadline_exceeded'}
         except OSError as exc:
             error = {'type': type(exc).__name__, 'errno': exc.errno}
         finally:
@@ -240,9 +256,12 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     freeze = read(case / 'shared/freeze.json')
     if any((digest(case / name) != value for name, value in freeze['files'].items())):
         raise ValueError('Frozen case inputs or settings changed')
-    from src.agent_runtime.agent_registry import agent_version_record
-    if agent_version_record(ROOT, verify=True) != freeze['domain']:
+    from src.agent_runtime.agent_registry import release_records
+    records = release_records(ROOT)
+    if records['domain'] != freeze['domain']:
         raise ValueError('Domain changed after this case was prepared')
+    if 'runtime' in freeze and (records['runtime'] != freeze['runtime'] or host_identity(config) != freeze['installed_host']):
+        raise ValueError('Runtime or installed DSH changed after this case was prepared')
     control = case / 'control'
     control.mkdir(exist_ok=True)
     from .image_history import ImageHistory, REVISION, native_tool
