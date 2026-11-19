@@ -327,8 +327,9 @@ def test_model_catalog_filters_visibility_and_preserves_server_order(tmp_path: P
     ]
 
 
+@pytest.mark.parametrize("new_account", [False, True])
 def test_dynamic_login_uses_loopback_pkce_validates_jwt_and_saves_issued_client(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, new_account: bool
 ) -> None:
     private_key, public_jwk = _signing_material()
     observed: dict[str, object] = {}
@@ -363,6 +364,8 @@ def test_dynamic_login_uses_loopback_pkce_validates_jwt_and_saves_issued_client(
             ).rstrip(b"=").decode()
             assert auth_query["code_challenge"] == [expected_challenge]
             assert auth_query["client_id"] == [subscription.DYNAMIC_CLIENT_ID]
+            assert "id_token_hint" not in auth_query
+            assert "login_hint" not in auth_query
             assert auth_query["agent_name_hint"] == [subscription.APP_NAME]
             assert auth_query["ext_agent_host_id"][0].startswith("urn:uuid:")
             assert auth_query["redirect_uri"] == [FakeReceiver.redirect_uri]
@@ -376,6 +379,7 @@ def test_dynamic_login_uses_loopback_pkce_validates_jwt_and_saves_issued_client(
                     "id_token": _id_token(
                         private_key,
                         nonce=auth_query["nonce"][0],
+                        subject="new-account-subject" if new_account else "account-subject",
                     ),
                     "token_type": "Bearer",
                     "expires_in": 3600,
@@ -395,13 +399,24 @@ def test_dynamic_login_uses_loopback_pkce_validates_jwt_and_saves_issued_client(
         _protector=_ReversingProtector(),
         _browser_opener=open_browser,
     )
-    result = asyncio.run(credentials.login(timeout=1))
+    if new_account:
+        _seed(credentials)
+        old_state = credentials._store.load()
+        old_host_id = credentials._store.host_id()
+    result = asyncio.run(credentials.login(new_account=new_account, timeout=1))
 
     assert result.client_id == "oaiapp_issued"
     assert result.email == "person@example.test"
     assert REQUIRED_SCOPE in result.scopes
     assert observed["closed"] is True
     assert credentials.status()["signed_in"] is True
+    state = credentials._store.load()
+    assert state["active_client_id"] == "oaiapp_issued"
+    if new_account:
+        assert len(state["registrations"]) == 2
+        assert state["registrations"]["oaiapp_test"] == old_state["registrations"]["oaiapp_test"]
+        assert state["registrations"]["oaiapp_issued"]["subject"] == "new-account-subject"
+        assert state["registrations"]["oaiapp_issued"]["ext_agent_host_id"] == old_host_id
     raw = (tmp_path / "credentials.bin").read_bytes()
     assert b"login-access" not in raw
     assert b"login-refresh" not in raw

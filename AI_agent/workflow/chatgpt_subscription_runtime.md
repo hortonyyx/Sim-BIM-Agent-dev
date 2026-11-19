@@ -28,6 +28,32 @@ provider 名称固定为 `chatgpt-subscription`。这条通道不读取 `OPENAI_
 
 同一主机保留稳定的 `ext_agent_host_id`。再次登录默认复用当前账号已签发的 client ID；`login --new-account` 可注册另一个账号或 workspace，`status` 列出安全的账号标签，再用 `login --client-id <已保存的client_id>` 切换。`logout` 尝试撤销当前 refresh token，然后清除本地 token；若远端撤销未确认，命令会明确报告，不能把本地清除当成远端已成功。
 
+### 更换 ChatGPT 账号
+
+在 ChatGPT 网页或 Codex 中更换账号，不会替换 Sim BIM Agent 的独立授权。使用另一个账号时，从产品目录运行：
+
+```powershell
+.\Start.cmd auth login --new-account
+.\Start.cmd auth status
+.\Start.cmd auth models
+```
+
+在系统浏览器的授权流程中选择要使用的新账号。新账号通过身份和订阅权限校验后才成为当前账号；旧注册保留，不自动导入 Codex 或其他应用的登录信息。要重新授权或切回本应用已保存的账号，运行 `Start.cmd auth login --client-id <auth status 列出的 client_id>`。`--new-account` 和 `--client-id` 互斥，且只允许用于 `login`。
+
+产品入口也支持显式凭据目录，`--directory` 可放在动作前或后。例如：
+
+```powershell
+.\Start.cmd auth --directory "D:/private/sim-bim-chatgpt" login --new-account
+.\Start.cmd auth --directory "D:/private/sim-bim-chatgpt" status
+.\Start.cmd auth --directory "D:/private/sim-bim-chatgpt" models
+```
+
+开发仓库的对应命令是 `.venv/Scripts/python.exe -m src.agent_runtime.openai_subscription --directory "D:/private/sim-bim-chatgpt" login --new-account`；这个底层认证 CLI 的 `--directory` 仍须放在动作前。后续模型运行应将 `chatgpt_auth_dir` 设为同一目录；省略目录则继续使用默认存储。目录参数只选择本应用凭据的位置，不会迁移旧版凭据或转换其加密格式。
+
+`status` 仅检查本地保存状态；`models` 会在线核验当前账号目录，必要时刷新会话，但不发推理请求。目录成功后仍需单独验证 Responses 推理和工具循环，不能据此判定完整建模运行已通过。
+
+2026-11-15，主线已通过新账号独立授权、默认入口账号核对和 `gpt-6.1-sol` 两请求工具循环验收，详见[新账号接入记录](../reports/2026-11-15_chatgpt_account_reconnection.md)。这次未重建桌面发行包；上述产品入口选项随包含本次代码的版本提供。
+
 2026-10-11，用户已在系统浏览器内完成本应用的独立授权。开发入口和桌面独立产品均已读取同一账号模型目录，具有 `chatgpt.tokens.use.direct` 权限；文档不记录账号标识或凭据。此次仅核验授权与目录，真实推理和工具循环未执行；`--live` 仍按用户批准的实测范围使用。详见[本次核验](../reports/2026-10-11_repository_subscription_auth.md)。
 
 ## 模型目录与资格边界

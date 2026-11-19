@@ -554,6 +554,10 @@
       "group": "fast",
       "reason": "Current installable product release and entrypoint contracts"
     },
+    "tests/test_product_auth_cli.py": {
+      "group": "fast",
+      "reason": "Product auth routing, explicit credential directory and mutually exclusive login account selection without credentials or network"
+    },
     "tests/test_product_update.py": {
       "group": "targeted",
       "reason": "Windows fixed-directory update, lightweight backup and rollback safety"

@@ -87,7 +87,16 @@ def main(argv=None):
             command.add_argument("--resume", action="store_true")
     auth = commands.add_parser("auth", help="manage your own ChatGPT subscription sign-in")
     auth.add_argument("auth_action", choices=("status", "login", "models", "logout"))
+    auth.add_argument("--directory", type=Path, help="override the protected ChatGPT subscription store")
+    account = auth.add_mutually_exclusive_group()
+    account.add_argument("--new-account", action="store_true",
+                         help="login only: authorize another ChatGPT account or workspace")
+    account.add_argument("--client-id",
+                         help="login only: reauthorize a saved account listed by auth status")
     args = parser.parse_args(argv)
+    if (args.action == "auth" and args.auth_action != "login"
+            and (args.new_account or args.client_id is not None)):
+        auth.error("--new-account and --client-id are only valid with login")
     if args.action is None:
         parser.print_help()
         return 0
@@ -99,7 +108,13 @@ def main(argv=None):
             result = demo(args.output)
         elif args.action == "auth":
             from src.agent_runtime.openai_subscription import main as subscription_main
-            return subscription_main([args.auth_action])
+            auth_argv = (["--directory", str(args.directory)] if args.directory is not None else [])
+            auth_argv.append(args.auth_action)
+            if args.new_account:
+                auth_argv.append("--new-account")
+            elif args.client_id is not None:
+                auth_argv += ["--client-id", args.client_id]
+            return subscription_main(auth_argv)
         else:
             command = [sys.executable, "-B", "-m", "src.agent.runtime_configuration",
                        "launch" if args.action == "run" else "check", str(args.configuration.resolve())]
