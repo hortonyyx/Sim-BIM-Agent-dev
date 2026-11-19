@@ -490,6 +490,14 @@ detail is missing, choose a plausible simplification within the requested scope
 and record its basis. Do not add subdivisions, doors or windows merely to obtain
 regular geometry or a desired count.
 
+When the interior is uncertain, simplify it while preserving evidence of how
+people enter and move through it. Separate street entrances can establish
+different access to a lobby and shops even when their internal demising walls
+are unmeasured. A landing or common passage serving several doors may belong to
+the shared core. Keep those supported access relationships and mark inferred
+boundaries. Use labels and recognizable furnishings to judge room use, and
+record ambiguity when more than one simulation use is plausible.
+
 Choose how to answer each building question. Direct inspection can settle a
 clear relationship; crop, measure or trial-build where a dimension, ambiguity
 or conflict matters. Put geometry in one metre-based frame with absolute floor

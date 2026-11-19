@@ -2,10 +2,16 @@
 import copy
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from src.agent.runtime_mesh_workers import MeshWorkerTools, WORKER_GUIDANCE, mesh_worker_tool_specs
+
+
+def projection_tools(multimodal=False):
+    return MeshWorkerTools(SimpleNamespace(run_directory="."), store=None, root=".", adapter_factory=None,
+        model="scripted", parameters={}, route={}, limits=None, start_epoch=0, multimodal=multimodal)
 
 
 def canonical_hash(value):
@@ -30,7 +36,7 @@ def outcome():
 def project(value, name='read_mesh_worker', blocks=()):
     raw = {'structuredContent': value, 'content': [{'type': 'text', 'text': json.dumps(value)}, *blocks], 'isError': False}
     before = copy.deepcopy(raw)
-    shown = MeshWorkerTools.project_tool_result(None, name, raw)
+    shown = projection_tools().project_tool_result(name, raw)
     assert raw == before
     assert shown['content'][1:] == raw['content'][1:]
     return shown['structuredContent']
@@ -93,7 +99,19 @@ def test_empty_selector_keeps_answer_and_failed_result_remains_unchanged():
     value['requested_selection'] = {'view_ids': [], 'measurement_call_ids': []}
     assert 'result' in project(value)
     raw = {'structuredContent': value, 'content': [], 'isError': True}
-    assert MeshWorkerTools.project_tool_result(None, 'read_mesh_worker', raw) is raw
+    assert projection_tools().project_tool_result('read_mesh_worker', raw) is raw
+
+
+@pytest.mark.parametrize("multimodal,delegate,read", [
+    (False, "delegate_mesh_workers", "read_mesh_worker"), (True, "delegate_workers", "read_worker")])
+def test_delegation_and_read_reference_match_the_registered_route(multimodal, delegate, read):
+    tools = projection_tools(multimodal)
+    row = outcome()
+    batch = {"structuredContent": {"results": [row]}, "content": [], "isError": False}
+    saved = {"structuredContent": row, "content": [], "isError": False}
+    displayed = tools.project_tool_result(delegate, batch)["structuredContent"]["results"][0]
+    assert displayed == tools.project_tool_result(read, saved)["structuredContent"]
+    assert displayed["result_reference"]["read"] == {"tool": read, "arguments": {"task_id": row["task_id"]}}
 
 
 def test_guidance_matches_optional_coordinates_without_changing_answer_schema():
