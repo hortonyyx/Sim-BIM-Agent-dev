@@ -15,6 +15,7 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from scripts.tool_scripts.bim_agent_feedback import mcp_json_result
 from src.agent.runtime_entry import ROOT, runtime_model_profile
 from src.agent.runtime_mesh_workers import MeshWorkerTools, observer_tool_specs
 from src.agent_runtime.adapter import ScriptedAdapter
@@ -106,7 +107,7 @@ async def serve(args):
             display = workers.project_tool_result(name, raw)
             # JSON + image blocks remain ordinary MCP results for both transports.
             workers.store.write_json("worker_state.json", workers.state())
-            return types.CallToolResult.model_validate(display)
+            return mcp_json_result(types.CallToolResult.model_validate(display))
 
         async with stdio_server() as (reader, writer):
             await server.run(reader, writer, server.create_initialization_options())

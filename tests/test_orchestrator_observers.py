@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -64,7 +65,7 @@ def test_external_observer_evidence_accounting_and_restart(tmp_path, with_mesh):
     answer = {"directly_seen": [{"observation_id": "region", "statement": "This region appears blank.",
         "evidence_kind": "image", "evidence_id": "1f.png", "box_pixels": [1, 1, 6, 6]}],
         "drawing_readings": [{"image": "1f.png", "based_on_observation_ids": ["region"],
-            "coordinate_frame": "original image pixels", "data": {"labels": []}}]}
+            "coordinate_frame": "original image pixels", "data": {"labels": [], "origin_x": -0.0}}]}
     fixture = tmp_path / "observers.json"
     fixture.write_text(json.dumps({"observer": [_response("view", "view_image", {"name": "1f.png"}),
                                                _response("answer", answer=json.dumps(answer))]}))
@@ -84,6 +85,7 @@ def test_external_observer_evidence_accounting_and_restart(tmp_path, with_mesh):
             worker = result["structuredContent"]["results"][0]
             assert worker["status"] == "completed", worker
             assert worker["result"]["drawing_readings"] == answer["drawing_readings"]
+            assert math.copysign(1, worker["result"]["drawing_readings"][0]["data"]["origin_x"]) == 1
             assert worker["result_reference"]["read"]["tool"] == "read_worker"
             view = await client.call_tool("read_worker", {"task_id": "observer", "view_ids": ["1f.png"]})
             assert any(block["type"] == "image" for block in view["content"])

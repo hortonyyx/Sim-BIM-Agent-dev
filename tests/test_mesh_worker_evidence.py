@@ -124,6 +124,25 @@ def test_raw_mesh_packet_does_not_depend_on_any_candidate(prepared):
     assert not list(child.glob("candidate_*"))
 
 
+def test_drawing_reading_error_identifies_mesh_source_and_recovery(prepared):
+    toolkit, _ = prepared
+    _admit_auxiliary_inputs(toolkit)
+    child = toolkit.run.parent / "observer"
+    packet = prepare_mesh_worker_packet(toolkit.run, child, task_id="worker-a",
+        question="Describe the rooftop mesh.", observation_ids=["mesh_001"], multimodal=True)
+    answer = _answer()
+    with _store(child) as store:
+        for filename in ("mesh_observations/mesh_001.png", "sketch.png"):
+            reading = {"image": filename, "based_on_observation_ids": ["seen-1"],
+                       "coordinate_frame": "mesh frame", "data": {"shape": "rectangular"}}
+            with pytest.raises(ValueError) as caught:
+                hydrate_mesh_worker_answer({**answer, "drawing_readings": [reading]}, packet, store, child)
+            error = str(caught.value)
+            assert "drawing_readings[0]" in error and filename in error and "seen-1" in error
+            assert "evidence_kind='image'" in error and "Omit unsupported drawing_readings" in error
+        assert hydrate_mesh_worker_answer(answer, packet, store, child)["directly_seen"][0]["observation_id"] == "seen-1"
+
+
 @pytest.mark.parametrize("where", ["parent", "child"])
 @pytest.mark.parametrize("relative", ["assets/input.glb", "images/sketch.png", "building_input.json",
     "candidate_01/source_model.json", "mesh_observations/mesh_001.json",

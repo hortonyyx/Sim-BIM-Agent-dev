@@ -457,15 +457,18 @@ class MeshWorkerAnswer(_AnswerModel):
 
 
 class DrawingReading(_AnswerModel):
-    """Model-produced geometry or labels that the coordinator can inspect and reuse."""
-    image: str
-    based_on_observation_ids: tuple[str, ...] = Field(min_length=1)
+    """Structured geometry or labels read from one admitted source drawing."""
+    image: str = Field(description="Exact filename in packet.image_names that you viewed as image evidence.")
+    based_on_observation_ids: tuple[str, ...] = Field(min_length=1, description=(
+        "IDs from directly_seen with evidence_kind='image' and evidence_id equal to this filename."))
     coordinate_frame: str = Field(min_length=1)
     data: dict[str, JsonValue] = Field(min_length=1)
 
 
 class ObserverAnswer(MeshWorkerAnswer):
-    drawing_readings: tuple[DrawingReading, ...] = ()
+    drawing_readings: tuple[DrawingReading, ...] = Field(default=(), description=(
+        "Optional for original drawing PNGs. Omit for mesh-only findings, including rendered views "
+        "and section cuts. Report their geometry in directly_seen or interpretations with mesh references."))
 
 
 def answer_type(packet):
@@ -657,11 +660,20 @@ def hydrate_mesh_worker_answer(answer, packet, store, child_run):
         if set(related) - set(seen_ids):
             raise ValueError("mesh interpretation or uncertainty cites an unknown observation")
     readings = getattr(value, "drawing_readings", ())
-    for reading in readings:
+    invalid_readings = []
+    for index, reading in enumerate(readings):
         supported_ids = {row.observation_id for row in value.directly_seen
                          if row.evidence_kind == "image" and row.evidence_id == reading.image}
-        if set(reading.based_on_observation_ids) - supported_ids:
-            raise ValueError("drawing reading requires observations of its admitted image")
+        invalid_ids = sorted(set(reading.based_on_observation_ids) - supported_ids)
+        if invalid_ids:
+            invalid_readings.append(f"drawing_readings[{index}] image={reading.image!r}, "
+                                    f"unsupported observation IDs={invalid_ids!r}")
+    if invalid_readings:
+        raise ValueError("; ".join(invalid_readings) + ". Each drawing reading requires directly_seen "
+            "observations with evidence_kind='image' and evidence_id equal to the viewed original PNG "
+            "filename from packet.image_names. Mesh renders and section cuts are mesh evidence. Omit "
+            "unsupported drawing_readings and retain their supported geometry in directly_seen or "
+            "interpretations with the original mesh references.")
     return {"task_id": packet["request"]["task_id"], "packet_sha256": packet["packet_sha256"],
             "run_id": store.run_id, "input_manifest_sha256": packet["input_manifest_sha256"],
             "mesh_sha256": packet["mesh_sha256"], "source_snapshot": packet["source_snapshot"],
