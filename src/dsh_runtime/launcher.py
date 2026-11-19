@@ -180,7 +180,8 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
         if config['limits']['wall_seconds'] is not None:
             worker_args += ['--seconds', str(config['limits']['wall_seconds'])]
     patch.write_text(make_patch(url, config['model'], images, worker_args=worker_args,
-                                context_window=config.get('context_window', 1050000)), encoding='utf-8')
+                                context_window=config.get('context_window', 1050000),
+                                worker_wall_seconds=config['limits']['wall_seconds']), encoding='utf-8')
     exe = Path(config['dsh_executable'])
     cli = exe.parent / 'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
     command = [

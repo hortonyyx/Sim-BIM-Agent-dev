@@ -9,7 +9,8 @@ DISABLED = [
     'tool-todo', 'tool-goal', 'tool-web', 'mcp-resources', 'session-title-llm',
     'compaction-basic', 'llm-deepseek', 'llm-deepseek-account', 'session-telemetry-otel',
 ]
-def make_patch(base_url, model, image_directory=None, *, worker_args=None, context_window=1050000):
+def make_patch(base_url, model, image_directory=None, *, worker_args=None, context_window=1050000,
+               worker_wall_seconds=None):
     max_tokens=128000
     profile = f"""- id: agent-default-model
   config:
@@ -53,12 +54,18 @@ def make_patch(base_url, model, image_directory=None, *, worker_args=None, conte
 """
     if worker_args is not None:
         args = ['-B', '-X', 'utf8', '-m', 'src.agent.observer_mcp', *worker_args]
+        # DSH defaults MCP calls to 60 seconds. A delegated observation can span
+        # several model turns; the task and case already enforce their deadlines.
+        max_timer_ms = 2147483647
+        timeout_ms = (max_timer_ms if worker_wall_seconds is None else
+                      min(max_timer_ms, max(1, int(worker_wall_seconds * 1000))))
         profile += f"""- insert:
     - id: sim-bim-observers
       name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: sim_bim_workers
         transport: stdio
+        toolCallTimeoutMs: {timeout_ms}
         command: !!js process.env.SIM_BIM_REPO + '/.venv/Scripts/python.exe'
         cwd: !!js process.env.SIM_BIM_REPO
         args: {json.dumps(args)}

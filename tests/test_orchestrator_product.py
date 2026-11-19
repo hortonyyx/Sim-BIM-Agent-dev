@@ -64,3 +64,10 @@ def test_dsh_resume_checks_source_bytes_even_when_original_names_match(tmp_path)
     Image.new("RGB", (8, 8), color="red").save(image)
     with pytest.raises(ValueError, match="configured images differ"):
         verify_resume_inputs(manifest, materials)
+
+
+def test_dsh_worker_call_can_use_assigned_case_wall_time():
+    from src.dsh_runtime.profile import make_patch
+    patch = make_patch("http://127.0.0.1", "gpt-6.1-sol", worker_args=["--model", "gpt-6.1-terra"],
+                       worker_wall_seconds=300)
+    assert "toolCallTimeoutMs: 300000" in patch
