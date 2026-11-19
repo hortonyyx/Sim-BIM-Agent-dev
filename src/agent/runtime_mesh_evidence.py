@@ -28,6 +28,7 @@ from src.agent_runtime.store import json_bytes
 
 POLICY = "mesh_worker_packet_v1"
 OBSERVER_POLICY = "building_observer_packet_v1"
+COMPARISON_REPORT = r"tool_reports/compare_mesh_source_pixels_([0-9a-f]{64})\.json"
 
 
 def _path(root, relative):
@@ -173,6 +174,30 @@ def _parent_inputs(parent_run, candidate, observations, *, multimodal=False):
     return manifest, snapshot, evidence, {name: _sha(_path(parent_run, name)) for name in paths}
 
 
+def _parent_reports(parent_run, report_files, manifest, snapshot, observations):
+    reports = {}
+    for name in report_files:
+        digest = re.fullmatch(COMPARISON_REPORT, name).group(1)
+        path = _path(parent_run, name)
+        if path.stat().st_size > 4 * 1024 * 1024 or _sha(path) != digest:
+            raise ValueError("parent report exceeds 4 MiB or differs from its content-addressed filename")
+        report = _json(path)
+        observation = report.get("observation")
+        if observation not in observations or snapshot is None:
+            raise ValueError("parent report requires its matching candidate and explicit observation_ids")
+        identity = _id(report.get("evidence_id"), r"correspondence_\d+", "mesh comparison ID")
+        _comparison_reference({"source_snapshot": snapshot, "mesh_sha256": manifest["mesh_input"]["sha256"]},
+            parent_run, {"evidence_id": identity, "evidence_file": f"mesh_evidence/{identity}.json",
+                         "evidence_sha256": digest, "details_file": name, "details_sha256": digest,
+                         "observation": observation})
+        reports[name] = {"sha256": digest, "producer": "compare_mesh_source_pixels",
+            "evidence_id": identity, "candidate": snapshot["candidate"], "observation": observation,
+            "sample_count": len(report["samples"]), "read": {"tool": "read_candidate_items",
+                "arguments": {"candidate": "", "collection": "report", "report_file": name,
+                              "json_pointer": "/samples"}}}
+    return reports
+
+
 def _request(task_id, question, notes, candidate, observation_ids, timing, image_view_ids=()):
     _id(task_id, r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", "worker task ID")
     if not isinstance(question, str) or not question.strip():
@@ -208,12 +233,22 @@ def _request(task_id, question, notes, candidate, observation_ids, timing, image
 
 def prepare_mesh_worker_packet(parent_run, child_run, *, task_id, question, notes=(),
                                candidate=None, observation_ids=(), timing=None, image_view_ids=(), parent_store=None,
-                               multimodal=False):
+                               multimodal=False, report_files=()):
     """Copy only admitted assets and one optional source snapshot; resume is immutable."""
     parent_run, child_run = Path(parent_run).resolve(), Path(child_run).resolve()
     if child_run == parent_run or parent_run.is_relative_to(child_run):
         raise ValueError("worker workspace must be separate from its parent")
     request = _request(task_id, question, notes, candidate, observation_ids, timing, image_view_ids)
+    if not isinstance(report_files, (list, tuple)) or len(report_files) > 3:
+        raise ValueError("supply at most 3 parent comparison report files")
+    if report_files:
+        if not multimodal:
+            raise ValueError("parent reports require an orchestrator worker")
+        for name in report_files:
+            _id(name, COMPARISON_REPORT, "content-addressed parent comparison report file")
+        if len(set(report_files)) != len(report_files):
+            raise ValueError("parent report files must be distinct")
+        request["report_files"] = list(report_files)
     packet_path = _path(child_run, "mesh_worker_packet.json")
     if packet_path.exists():
         packet = _json(packet_path)
@@ -225,6 +260,8 @@ def prepare_mesh_worker_packet(parent_run, child_run, *, task_id, question, note
         raise ValueError("new mesh worker workspace must be empty")
     manifest, snapshot, observations, files = _parent_inputs(parent_run, candidate, request["observation_ids"],
                                                             multimodal=multimodal)
+    reports = _parent_reports(parent_run, report_files, manifest, snapshot, observations)
+    files.update({name: report["sha256"] for name, report in reports.items()})
     from src.agent.runtime_mesh_image_views import prepare_image_views, bind_parent_receipts
     view_started = time.perf_counter()
     input_views, view_files, pictures = prepare_image_views(parent_run, image_view_ids, manifest)
@@ -262,6 +299,8 @@ def prepare_mesh_worker_packet(parent_run, child_run, *, task_id, question, note
                   "inputs.json": _sha(_path(child_run, "inputs.json"))},
               "observations": observations, "image_names": sorted(manifest.get("images", {})),
               "fidelity": "not_evaluated"}
+    if reports:
+        packet["parent_reports"] = reports
     if multimodal:
         packet["building_scope"] = manifest["scope"]
         packet["user_declaration"] = manifest.get("building_input", {}).get("declaration")
@@ -297,6 +336,11 @@ def verify_mesh_worker_packet(packet, parent_run, child_run, *, parent_store=Non
     request = packet["request"]
     manifest, snapshot, observations, files = _parent_inputs(parent_run, request["candidate"], request["observation_ids"],
                                                             multimodal=packet["policy"] == OBSERVER_POLICY)
+    if request.get("report_files") or "parent_reports" in packet:
+        reports = _parent_reports(parent_run, request.get("report_files", ()), manifest, snapshot, observations)
+        if reports != packet.get("parent_reports"):
+            raise ValueError("parent report bindings changed")
+        files.update({name: report["sha256"] for name, report in reports.items()})
     if request.get("image_view_ids"):
         from src.agent.runtime_mesh_image_views import prepare_image_views, bind_parent_receipts
         views, view_files, _ = prepare_image_views(parent_run, request["image_view_ids"], manifest)
@@ -606,6 +650,30 @@ def mesh_worker_measurements(call_ids, packet, store, child_run):
     return results
 
 
+def _parent_report_reads(packet, store):
+    """Record the exact delegated pages returned by the ordinary read-only report tool."""
+    pages = []
+    for event in store.events:
+        call = event.payload
+        if (call.event_type != "tool_execution" or call.tool_name != "read_candidate_items"
+                or call.outcome != "succeeded"):
+            continue
+        name = call.full_arguments.get("report_file")
+        reference = packet["parent_reports"].get(name)
+        if reference is None or call.full_arguments.get("collection") != "report":
+            continue
+        raw = store.resolve(call.raw_result)
+        if raw.get("isError"):
+            continue
+        page = result_metadata(raw)
+        if page.get("report_file") != name or page.get("sha256") != reference["sha256"]:
+            raise ValueError("returned parent report page differs from its admitted identity")
+        pages.append({"tool_execution_event_id": event.event_id, "tool_call_id": call.call_id,
+                      "observation": reference["observation"], "sha256": reference["sha256"],
+                      "read_arguments": call.full_arguments})
+    return pages
+
+
 def hydrate_mesh_worker_answer(answer, packet, store, child_run):
     """Attach trusted references; free-text numeric statements remain model statements."""
     _verify_child(packet, child_run)
@@ -680,6 +748,7 @@ def hydrate_mesh_worker_answer(answer, packet, store, child_run):
             "directly_seen": observations, "interpretations": [r.model_dump(mode="json") for r in value.interpretations],
             "uncertain": [r.model_dump(mode="json") for r in value.uncertain],
             **({"drawing_readings": [row.model_dump(mode="json") for row in readings]} if readings else {}),
+            **({"parent_report_reads": _parent_report_reads(packet, store)} if packet.get("parent_reports") else {}),
             "fidelity": "not_evaluated", "candidate_mutation": False}
 
 

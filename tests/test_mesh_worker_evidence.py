@@ -5,6 +5,7 @@ import base64
 import asyncio
 import hashlib
 import json
+import shutil
 
 import numpy as np
 from PIL import Image
@@ -122,6 +123,57 @@ def test_raw_mesh_packet_does_not_depend_on_any_candidate(prepared):
     verify_mesh_worker_packet(packet, parent, child)
     assert packet["source_snapshot"] is None
     assert not list(child.glob("candidate_*"))
+
+
+def test_delegated_report_only_shares_matching_hash_bound_parent_samples(prepared):
+    from tests.test_bim_agent_tools import _server_session
+    from scripts.tool_scripts.bim_agent_saved_result import result_metadata
+    parent = prepared[0].run
+
+    async def invoke(directory, name, args):
+        async with _server_session(directory, readonly=True) as session:
+            return (await session.call_tool(name, args)).model_dump(mode="json", exclude_none=True)
+
+    args = {"candidate": "candidate_01", "observation": "mesh_001", "grid": [3, 3]}
+    original = asyncio.run(invoke(parent, "compare_mesh_source_pixels", args))
+    assert not original["isError"], original["content"][0]
+    comparison = result_metadata(original)
+    name = comparison["details_file"]
+    source = (parent / name).read_bytes()
+    options = dict(task_id="worker-a", question="Attribute the residuals in " + name,
+                   candidate="candidate_01", observation_ids=["mesh_001"], multimodal=True)
+    independent = parent.parent / "independent"
+    legacy = prepare_mesh_worker_packet(parent, independent, **options)
+    assert "parent_reports" not in legacy and "report_files" not in legacy["request"]
+    page = {"candidate": "", "collection": "report", "report_file": name, "json_pointer": "/samples/3"}
+    assert asyncio.run(invoke(independent, "read_candidate_items", page))["isError"]
+
+    delegated = parent.parent / "delegated"
+    packet = prepare_mesh_worker_packet(parent, delegated, report_files=[name], **options)
+    assert packet["parent_reports"][name]["sha256"] == comparison["details_sha256"]
+    assert (delegated / name).read_bytes() == source
+    raw = asyncio.run(invoke(delegated, "read_candidate_items", page))
+    assert not raw["isError"] and result_metadata(raw)["value"] == json.loads(source)["samples"][3]
+    with _store(delegated) as store:
+        _record(store, packet, delegated, "read_candidate_items", page, raw, call_id="page-3")
+        read, = hydrate_mesh_worker_answer(_answer(), packet, store, delegated)["parent_report_reads"]
+        assert read["sha256"] == comparison["details_sha256"] and read["read_arguments"] == page
+    assert prepare_mesh_worker_packet(parent, delegated, report_files=[name], **options) == packet
+    with pytest.raises(ValueError, match="changed on resume"):
+        prepare_mesh_worker_packet(parent, delegated, **options)
+    shutil.copytree(parent / "candidate_01", parent / "candidate_02")
+    for changes in ({"candidate": "candidate_02"}, {"observation_ids": []}):
+        with pytest.raises(ValueError, match="binds its source|matching candidate"):
+            prepare_mesh_worker_packet(parent, parent.parent / "mismatch", report_files=[name], **(options | changes))
+    with pytest.raises(ValueError, match="content-addressed"):
+        prepare_mesh_worker_packet(parent, parent.parent / "unsafe", report_files=["../" + name], **options)
+    (parent / name).write_bytes(source + b" ")
+    with pytest.raises(ValueError, match="content-addressed"):
+        verify_mesh_worker_packet(packet, parent, delegated)
+    (parent / name).write_bytes(source)
+    (delegated / name).write_bytes(source + b" ")
+    with pytest.raises(ValueError, match="frozen mesh worker input changed"):
+        verify_mesh_worker_packet(packet, parent, delegated)
 
 
 def test_drawing_reading_error_identifies_mesh_source_and_recovery(prepared):

@@ -131,13 +131,21 @@ def mesh_worker_tool_specs():
 
 def observer_tool_specs(dsh=False):
     delegate, read, state = mesh_worker_tool_specs()
+    from src.agent.runtime_mesh_evidence import COMPARISON_REPORT
+    delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["report_files"] = {
+        "type": "array", "maxItems": 3, "uniqueItems": True,
+        "items": {"type": "string", "pattern": "^" + COMPARISON_REPORT + "$"},
+        "description": "To share existing compare_mesh_source_pixels samples, pass its exact details_file "
+            "here together with its candidate and observation_ids. At most 4 MiB per report. A path in "
+            "the question or notes alone does not transfer the report."}
     delegate.update(name="delegate_workers", description=(
         "Optionally assign bounded building questions to read-only workers and wait for this batch. "
         "Workers can inspect original drawings, other admitted PNGs, user descriptions and the native GLB when supplied. "
         "Each task needs a unique stable ID, question and model/tool allowance sharing the root budget. "
         "Reuse a completed task unchanged to read its evidence. Optional candidate freezes a source snapshot; "
         "observation_ids use mesh/section IDs only when a GLB exists. image_view_ids prefetch parent crops. "
-        "Workers can return structured drawing readings. The coordinator chooses when to delegate and what to use."))
+        "report_files explicitly shares existing source/mesh comparison reports for paging. Workers can "
+        "return structured drawing readings. The coordinator chooses when to delegate and what to use."))
     read.update(name="read_worker", description=(
         "Read one worker's bound observations, structured readings, interpretations and uncertainties. "
         "Optional view_ids retrieve original PNGs, crops, mesh views, sections or overlays. Optional "
@@ -157,7 +165,12 @@ def mesh_worker_task_payload(packet, limits):
     from src.agent.runtime_mesh_evidence import answer_type
     return {"packet": packet, "task_limits": limits.model_dump(mode="json"),
             "answer_reserve_calls": min(2, max(1, limits.model_calls - 1)),
-            "answer_schema": answer_type(packet).model_json_schema()}
+            "answer_schema": answer_type(packet).model_json_schema(),
+            **({"parent_report_reading": "Open packet.parent_reports entries using their read arguments; follow "
+                "next for later pages or read a single /samples/N (zero-based). Cite the sample indices and "
+                "their observation in your answer. Report pages are existing parent measurements; keep your "
+                "interpretation separate and do not claim a child measurement_call_id for them."}
+               if packet.get("parent_reports") else {})}
 
 
 def _envelope(value, *, error=False, blocks=()):
@@ -448,7 +461,8 @@ class MeshWorkerTools:
             packet = prepare_mesh_worker_packet(self.run_directory, child.task_directory / "bim",
                 task_id=task["task_id"], question=task["question"], notes=task.get("notes", ()),
                 candidate=task.get("candidate"), observation_ids=task.get("observation_ids", ()), timing=timing,
-                image_view_ids=task.get("image_view_ids", ()), parent_store=self.store, multimodal=self.multimodal)
+                image_view_ids=task.get("image_view_ids", ()), parent_store=self.store, multimodal=self.multimodal,
+                report_files=task.get("report_files", ()))
             record = {"task": task, "configuration": self._configuration(), "packet": packet, "timing": timing}
             # Admission belongs to the coordinator's in-flight operation. The
             # child journal stays empty until its own Runtime starts normally.
