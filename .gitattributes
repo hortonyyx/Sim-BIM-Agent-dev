@@ -35,3 +35,5 @@ Dockerfile text eol=lf
 *.sql    binary
 *.so     binary
 *.zip    binary
+
+src/dsh_runtime/*.cjs text eol=lf
