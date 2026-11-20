@@ -129,7 +129,7 @@ def mesh_worker_tool_specs():
     return json.loads(json.dumps(EXTRA_TOOLS))
 
 
-def observer_tool_specs(dsh=False):
+def observer_tool_specs(dsh=False, *, background=False):
     delegate, read, state = mesh_worker_tool_specs()
     from src.agent.runtime_mesh_evidence import COMPARISON_REPORT
     delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["report_files"] = {
@@ -158,6 +158,13 @@ def observer_tool_specs(dsh=False):
         # DSH observers open and crop the original admitted PNGs themselves.
         del delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["image_view_ids"]
         delegate["description"] = delegate["description"].replace(" image_view_ids prefetch parent crops.", "")
+        if background:
+            delegate["description"] += (
+                " Set wait=false to freeze and start tasks, then continue independent work. "
+                "The default waits for the results. Use read_worker with wait=true once the answer is needed.")
+            delegate["inputSchema"]["properties"]["wait"] = {"type": "boolean", "default": True}
+            read["description"] += " On an in-flight task, wait=true joins it; otherwise return its status immediately."
+            read["inputSchema"]["properties"]["wait"] = {"type": "boolean", "default": False}
     return [delegate, read, state]
 
 
@@ -420,11 +427,13 @@ class MeshWorkerTools:
                                   parent_store=self.store)
         return record
 
-    async def _dispatch(self, task):
+    async def _dispatch(self, task, *, admission=None):
         task_id = task["task_id"]
         async with self._locks.setdefault(task_id, asyncio.Lock()):
             async with self._semaphore:
                 try:
+                    if admission is not None:
+                        return await self._run_admitted_task(*admission)
                     return await self._run_task(task)
                 except (ValueError, FileNotFoundError) as exc:
                     return {"task_id": task_id, "status": "rejected", "reason": str(exc)}
@@ -435,8 +444,15 @@ class MeshWorkerTools:
                             "recovery": "reuse the exact task ID to inspect or resume its journal"}
 
     async def _run_task(self, task):
-        from src.agent.runtime_mesh_evidence import prepare_mesh_worker_packet
         child = self._child(task["task_id"])
+        record = self._admit_task(child, task)
+        if "packet" not in record:
+            return record
+        return await self._run_admitted_task(child, record)
+
+    def _admit_task(self, child, task):
+        """Bind immutable inputs before either executing or acknowledging a task."""
+        from src.agent.runtime_mesh_evidence import prepare_mesh_worker_packet
         record = self._anchored(child, "mesh-worker-admission")
         if record is not None:
             if record["task"] != task:
@@ -469,6 +485,10 @@ class MeshWorkerTools:
             self.store.append(RunLifecyclePayload(action="start", reason="mesh worker scope admitted: " + child.task_id),
                               source_refs=(self.store.source("mesh-worker-admission", record),))
             child.write_json("mesh_worker.json", record)
+        return record
+
+    async def _run_admitted_task(self, child, record):
+        task = record["task"]
         outcome = self._anchored(child, "mesh-worker-outcome")
         if outcome is not None:
             return self._read(task["task_id"])[0]

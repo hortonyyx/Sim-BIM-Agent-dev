@@ -106,6 +106,136 @@ def test_external_observer_evidence_accounting_and_restart(tmp_path, with_mesh):
         pass
 
 
+def test_background_observer_allows_independent_bim_work_and_joins_on_read(tmp_path):
+    from src.agent.runtime_tools import frozen_bim_client
+    from src.dsh_runtime.observer_closeout import observer_closeout
+
+    inputs = Path(_case(tmp_path)["input_root"])
+    run, _, _ = runtime_entry.prepare_inputs(tmp_path / "parent", images=inputs / "sketches",
+        mesh=None, building_input=None, image_kind="drawings", scope="Read the drawings.",
+        max_candidates=2, started_epoch=time.time(), seconds=120, orchestrator=True)
+    answer = {"uncertain": [{"uncertainty_id": "scale", "statement": "Scale is unverified.",
+                              "related_observation_ids": []}]}
+    fixture = tmp_path / "replies.json"
+    fixture.write_text(json.dumps({"scale": [_response("answer", answer=json.dumps(answer))]}))
+    store = tmp_path / "private/workers"
+    argv = ["--run", str(run), "--store", str(store), "--provider", "scripted", "--model", "scripted-model",
+            "--script", str(fixture), "--max-concurrent", "1", "--model-calls", "1", "--tool-calls", "1",
+            "--background"]
+    # The real MCP transport and observer runtime run in a separate process.
+    # Keep its offline model response outstanding until the parent finishes a BIM tool.
+    script = """
+import asyncio, os
+from pathlib import Path
+from src.agent import observer_mcp as m
+original = m.ScriptedAdapter.send
+async def delayed(self, request, *, timeout):
+    async with asyncio.timeout(45):
+        while not Path(os.environ['OBSERVER_TEST_RELEASE']).exists():
+            await asyncio.sleep(0.05)
+    return await original(self, request, timeout=timeout)
+m.ScriptedAdapter.send = delayed
+asyncio.run(m.serve(m.parser().parse_args()))
+"""
+    gate = tmp_path / "release"
+    task = {"task_id": "scale", "question": "Can the scale be established from available evidence?",
+            "budget": {"model_calls": 1, "tool_calls": 0}}
+    async def query():
+        async with McpToolClient(command=sys.executable, args=["-c", script, *argv], cwd=runtime_entry.ROOT,
+                                 run_directory=run, env={"OBSERVER_TEST_RELEASE": str(gate)}) as obs:
+            assert await obs.list_tools() == observer_tool_specs(dsh=True, background=True)
+            dispatch = {"wait": False, "tasks": [task]}
+            try:
+                submitted = await obs.call_tool("delegate_workers", dispatch)
+                assert submitted["structuredContent"]["results"][0]["status"] == "in_flight"
+                again = await obs.call_tool("delegate_workers", dispatch)
+                assert again["structuredContent"]["results"][0]["status"] == "in_flight"
+                conflict = await obs.call_tool("delegate_workers", {**dispatch, "tasks": [{**task, "question": "changed"}]})
+                assert conflict["structuredContent"]["results"][0]["status"] == "rejected"
+                wait_at_finish = asyncio.create_task(asyncio.to_thread(observer_closeout, tmp_path, time.time()+45))
+                async with frozen_bim_client(run) as parent:
+                    result = await parent.call_tool("inputs", {})
+                    assert not result.get("isError")
+                state = (await obs.call_tool("worker_state", {}))["structuredContent"]
+                assert state["background_in_flight"] == ["scale"] and not wait_at_finish.done()
+                pending = await obs.call_tool("read_worker", {"task_id": "scale"})
+                assert pending["structuredContent"]["status"] == "in_flight"
+            finally:
+                gate.touch()
+            result = await obs.call_tool("read_worker", {"task_id": "scale", "wait": True})
+            assert result["structuredContent"]["result"]["uncertain"] == answer["uncertain"]
+            assert (await wait_at_finish)["tasks"] == {"scale": "completed"}
+        async with McpToolClient(command=sys.executable, args=["-m", "src.agent.observer_mcp", *argv],
+                                 cwd=runtime_entry.ROOT, run_directory=run) as restarted:
+            reused = await restarted.call_tool("delegate_workers", dispatch)
+            assert reused["structuredContent"]["results"][0]["status"] == "completed"
+    asyncio.run(query())
+    assert sum(e.payload.event_type == "adapter_request" for e in EventStore.read_events(store / "events.jsonl")) == 1
+
+
+def test_admitted_background_task_reports_interruption_without_silent_resubmission(tmp_path):
+    import subprocess
+    from src.dsh_runtime.observer_closeout import observer_closeout
+
+    inputs = Path(_case(tmp_path)["input_root"])
+    run, _, _ = runtime_entry.prepare_inputs(tmp_path / "parent", images=inputs / "sketches",
+        mesh=None, building_input=None, image_kind="drawings", scope="Inspect original evidence.",
+        max_candidates=2, started_epoch=time.time(), seconds=120, orchestrator=True)
+    store = tmp_path / "private/workers"
+    fixture = tmp_path / "replies.json"
+    fixture.write_text(json.dumps({"scope": [_response("answer", answer=json.dumps({
+        "uncertain": [{"uncertainty_id": "u", "statement": "Dimensions are unknown."}]}))]}))
+    task = {"tasks": [{"task_id": "scope", "question": "Inspect dimensions.",
+                       "budget": {"model_calls": 1, "tool_calls": 0}}], "wait": False}
+    argv = ["--run", str(run), "--store", str(store), "--provider", "scripted", "--model", "scripted-model",
+            "--script", str(fixture), "--max-concurrent", "1", "--model-calls", "1", "--tool-calls", "1",
+            "--background"]
+    # Exit after the durable admission and acknowledgment but before the first provider send.
+    crash = """
+import asyncio, json, os, sys
+from src.agent import observer_mcp as m
+from src.agent.background_observers import BackgroundObservers
+async def crash():
+    args = m.parser().parse_args(sys.argv[2:])
+    with m.open_observers(args) as workers:
+        pending = await BackgroundObservers(workers).call_tool('delegate_workers', json.loads(sys.argv[1]))
+        assert pending['structuredContent']['results'][0]['status'] == 'in_flight'
+        os._exit(17)
+asyncio.run(crash())
+"""
+    assert subprocess.run([sys.executable, "-c", crash, json.dumps(task), *argv],
+                          cwd=runtime_entry.ROOT, timeout=35).returncode == 17
+    assert observer_closeout(tmp_path, None) == {"status": "interrupted", "in_flight": ["scope"]}
+    async def resume():
+        async with McpToolClient(command=sys.executable, args=["-m", "src.agent.observer_mcp", *argv],
+                                 cwd=runtime_entry.ROOT, run_directory=run) as client:
+            existing = (await client.call_tool("read_worker", {"task_id": "scope"}))["structuredContent"]
+            assert existing["status"] == "incomplete" and existing["result"] is None
+            assert not any(e.payload.event_type == "adapter_request" for e in EventStore.read_events(store/"events.jsonl"))
+            resumed = await client.call_tool("delegate_workers", {**task, "wait": True})
+            assert resumed["structuredContent"]["results"][0]["status"] == "completed"
+    asyncio.run(resume())
+
+    # A worker setup exception has no validated answer. Expose its class and
+    # stable ID, while preserving the normal explicit retry/recovery contract.
+    from src.agent.background_observers import BackgroundObservers
+    async def setup_failure():
+        args = observer_mcp.parser().parse_args(argv)
+        with observer_mcp.open_observers(args) as workers:
+            async def fail(*_):
+                raise RuntimeError("offline setup failure")
+            workers._execute_child = fail
+            background = BackgroundObservers(workers)
+            damaged = {**task["tasks"][0], "task_id": "setup"}
+            await background.call_tool("delegate_workers", {"tasks": [damaged], "wait": False})
+            result = await background.call_tool("read_worker", {"task_id": "setup", "wait": True})
+            value = result["structuredContent"]
+            assert value["status"] == "incomplete" and value["result"] is None
+            assert value["last_background_attempt"]["error_type"] == "RuntimeError"
+            assert not background.snapshot()["background_in_flight"]
+    asyncio.run(setup_failure())
+
+
 def test_native_coordinator_carries_observer_route_and_rejects_changed_resumption(tmp_path):
     inputs = Path(_case(tmp_path)["input_root"])
     parent_script, worker_script = tmp_path / "parent.json", tmp_path / "child.json"

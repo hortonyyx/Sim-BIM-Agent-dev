@@ -67,6 +67,8 @@ def open_observers(args):
             return connection.create_adapter()
 
     route["host"] = "dsh_observer_pool"
+    if args.background:
+        route["background"] = True
     store_path = args.store.resolve()
     with EventStore(store_path, run_id=store_path.name, task_id="observer_pool",
                     budget_limit=limits.ledger_limit()) as store:
@@ -92,8 +94,12 @@ async def serve(args):
         # the Windows CRT lock also needed by their Fortran initialization.
         import scipy.signal
     with open_observers(args) as workers:
+        from src.agent.background_observers import BackgroundObservers
+        background = BackgroundObservers(workers) if args.background else None
+        if background:
+            background.publish()
         server = Server("sim-bim-workers")
-        specs = {tool["name"]: types.Tool(**tool) for tool in observer_tool_specs(dsh=True)}
+        specs = {tool["name"]: types.Tool(**tool) for tool in observer_tool_specs(dsh=True, background=args.background)}
 
         @server.list_tools()
         async def list_tools():
@@ -103,14 +109,21 @@ async def serve(args):
         async def call_tool(name, arguments):
             if name not in specs:
                 raise ValueError("unknown observer tool")
-            raw = await workers.call_tool(name, arguments)
+            raw = await (background or workers).call_tool(name, arguments)
             display = workers.project_tool_result(name, raw)
             # JSON + image blocks remain ordinary MCP results for both transports.
-            workers.store.write_json("worker_state.json", workers.state())
+            if background and name == "delegate_workers" and arguments.get("wait", True):
+                background.publish()
+            elif not background:
+                workers.store.write_json("worker_state.json", workers.state())
             return mcp_json_result(types.CallToolResult.model_validate(display))
 
-        async with stdio_server() as (reader, writer):
-            await server.run(reader, writer, server.create_initialization_options())
+        try:
+            async with stdio_server() as (reader, writer):
+                await server.run(reader, writer, server.create_initialization_options())
+        finally:
+            if background:
+                await background.drain()
 
 
 def parser():
@@ -123,6 +136,7 @@ def parser():
     p.add_argument("--output-tokens", type=int, default=32000)
     p.add_argument("--reasoning-effort")
     p.add_argument("--max-concurrent", type=int, required=True)
+    p.add_argument("--background", action="store_true", help="allow the coordinator to start bounded tasks without waiting")
     p.add_argument("--model-calls", type=int, required=True)
     p.add_argument("--tool-calls", type=int, required=True)
     p.add_argument("--seconds", type=float)

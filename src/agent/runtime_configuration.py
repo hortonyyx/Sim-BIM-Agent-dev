@@ -67,8 +67,10 @@ def orchestrator_worker(case: dict) -> dict | None:
         return None
     if case.get("mode") != "orchestrator" or not isinstance(worker, dict):
         raise ValueError("worker requires orchestrator mode and a worker configuration")
-    if set(worker) - {"model", "max_concurrent", "reasoning_effort", "output_tokens"}:
+    if set(worker) - {"model", "max_concurrent", "reasoning_effort", "output_tokens", "background"}:
         raise ValueError("unsupported worker setting")
+    if "background" in worker and (type(worker["background"]) is not bool or case.get("runtime", "dsh") != "dsh"):
+        raise ValueError("worker.background must be a boolean on the DSH runtime")
     if type(worker.get("max_concurrent", 1)) is not int or worker.get("max_concurrent", 1) < 1:
         raise ValueError("worker.max_concurrent must be a positive integer")
     model = worker.get("model", case["model"])

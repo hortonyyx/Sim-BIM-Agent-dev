@@ -71,3 +71,16 @@ def test_dsh_worker_call_can_use_assigned_case_wall_time():
     patch = make_patch("http://127.0.0.1", "gpt-6.1-sol", worker_args=["--model", "gpt-6.1-terra"],
                        worker_wall_seconds=300)
     assert "toolCallTimeoutMs: 300000" in patch
+
+
+def test_background_worker_configuration_is_dsh_only(tmp_path, monkeypatch):
+    worker = {"model": "gpt-6.1-terra", "background": True}
+    path = project(tmp_path, worker=worker)
+    case = load_configuration(path)["cases"][0]
+    monkeypatch.setattr("src.dsh_runtime.product.installed_executable", lambda _: Path("dsh"))
+    assert host_config(case, tmp_path)["worker"]["background"]
+    raw = json.loads(path.read_bytes())
+    raw["cases"][0]["runtime"] = "native"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="worker.background"):
+        load_configuration(path)

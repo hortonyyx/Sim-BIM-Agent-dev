@@ -51,6 +51,8 @@ def host_config(case, auth_dir):
                 "output_tokens": worker.get("output_tokens", case["output_tokens"]),
                 "reasoning_effort": worker.get("reasoning_effort", "high"),
                 "max_concurrent": worker.get("max_concurrent", 1)}
+        if worker.get("background"):
+            pool["background"] = True
         for key in ("model_calls", "tool_calls"):
             pool[key] = max(1, limits[key] // 4)
             coordinator_limits[key] -= pool[key]

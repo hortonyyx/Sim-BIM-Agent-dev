@@ -104,6 +104,8 @@ D:/Sim-BIM-Data/
 ./Start.cmd run D:/Sim-BIM-Data/config/building-a.json --case building-a
 ```
 
+如要在 DSH 试用后台观察，可在本案的 `worker` 内加 `"background": true`。默认派工仍等待整批。主控选择 `delegate_workers(wait=false)` 后能继续处理独立材料，需要观察结论时再用 `read_worker(wait=true)` 等待，或用 `worker_state` 查看状态。正常交付会等候仍在执行的观察任务，受原有墙钟与预算限制。意外中断的任务可用原任务 ID 和相同参数重新委派，由既有日志核对能否安全恢复。
+
 真实建模需要联网，并使用你自己的模型账号或 API 凭据。任务所需的图片和资料会发送到所选模型服务，API 用量由服务商按你的账户计费。
 
 ### DeepSeek Flash

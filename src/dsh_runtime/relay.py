@@ -476,6 +476,9 @@ class Handler(BaseHTTPRequestHandler):
                     minimum_floors=self.server.minimum_floors,
                 )
                 if check:
+                    if getattr(self.server, 'background_workers', False):
+                        from .observer_closeout import observer_closeout
+                        audit('background_worker_closeout', **observer_closeout(CASE, deadline))
                     save(CONTROL / 'dsh-relay-finish.json', check)
                     state.stop = True
                     audit(

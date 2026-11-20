@@ -166,5 +166,11 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
                 'pending': bool(state.pending), 'automatic_recoveries': recoveries,
                 'delivery_continuations': continuations, 'host_attempts_this_launch': host_attempts,
                 'delivery_loop_revision': REVISION}
+    if config.get("worker", {}).get("background"):
+        from .observer_closeout import observer_closeout
+        wall = state.limits["wall_seconds"]
+        deadline = relay.read_json(case / "private/start.json")["epoch"] + wall if wall is not None else None
+        terminal["background_workers"] = observer_closeout(case, deadline)
+        terminal["ended"] = time.time()
     relay.save(control / 'terminal.json', terminal)
     return terminal

@@ -75,7 +75,7 @@ def prepare(case, *, material_paths=None):
     specs = asyncio.run(catalog())
     if config.get('worker'):
         from src.agent.runtime_mesh_workers import observer_tool_specs
-        specs += observer_tool_specs(dsh=True)
+        specs += observer_tool_specs(dsh=True, background=config["worker"].get("background", False))
     tools = [{
         'type': 'function',
         'function': {'name': t['name'], 'description': t.get('description', ''), 'parameters': t['inputSchema']},
@@ -179,9 +179,11 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
                        '--model-calls', str(worker['model_calls']), '--tool-calls', str(worker['tool_calls'])]
         if config['limits']['wall_seconds'] is not None:
             worker_args += ['--seconds', str(config['limits']['wall_seconds'])]
+        if worker.get('background'):
+            worker_args.append('--background')
     patch.write_text(make_patch(url, config['model'], images, worker_args=worker_args,
                                 context_window=config.get('context_window', 1050000),
-                                worker_wall_seconds=config['limits']['wall_seconds']), encoding='utf-8')
+                                worker_wall_seconds=config['limits']['wall_seconds'] if worker_args else None), encoding='utf-8')
     exe = Path(config['dsh_executable'])
     cli = exe.parent / 'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
     command = [
@@ -316,6 +318,7 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     )
     serving = False
     try:
+        server.background_workers = config.get('worker', {}).get('background', False)
         if resume:
             from .continuation import restore_delivery, restore_pending
             if (control / 'pending.json').exists():
