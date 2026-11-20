@@ -87,11 +87,13 @@ def _drive(context, host, *, first=1, resume=False):
 
 @pytest.mark.parametrize("wall,expected", [(600, True), (120, False)])
 def test_overload_in_successful_http_stream_respects_retry_after(context, monkeypatch, wall, expected):
-    now = time.time()
+    now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now)
     context.state.limits["wall_seconds"] = wall
-    failure = relay.provider_failure(200, {"type": "service_unavailable_error", "code": "server_is_overloaded"},
-                                     {"retry-after": "324", "retry-after-ms": "324000"})
+    from email.utils import formatdate
+    failure = relay.provider_failure(200, {"type": "service_unavailable_error", "code": "server_is_overloaded",
+                                           "headers": {"Retry-After-Ms": "323000"}},
+                                     {"Retry-After": formatdate(now + 324, usegmt=True)})
     assert failure["external"] and failure["http_status"] == 200 and failure["retryable"]
     assert not relay.provider_failure(200, {"code": "invalid_parameter"})["retryable"]
     _controlled_attestation(monkeypatch)
@@ -109,9 +111,24 @@ def test_overload_in_successful_http_stream_respects_retry_after(context, monkey
         return 0
     terminal = _drive(context, host)
     assert terminal["delivered"] is expected
+    assert terminal["automatic_recoveries"] == int(expected)
     assert context.waits == ([324] if expected else [])
     if not expected:
         assert terminal["failure"]["retry_exceeds_wall_budget"]
+
+
+def test_expired_manual_resume_of_prior_overload_makes_no_request(context, monkeypatch):
+    body = context.state.request(context.raw)
+    _pending(context, context.raw, body)
+    _events(context.session, 1, [_end(error=True)])
+    context.state.limits["wall_seconds"] = 400
+    epoch = relay.read_json(context.case / "private/start.json")["epoch"]
+    context.state.pending["failure"].update(retry_not_before=epoch + 324)
+    monkeypatch.setattr(time, "time", lambda: epoch + 450)
+    terminal = _drive(context, lambda *args: pytest.fail("expired host started"), first=2, resume=True)
+    assert terminal["failure"]["code"] == "wall_budget_reached"
+    assert not terminal["allowed_external_failure"] and not context.waits
+    assert terminal["automatic_recoveries"] == terminal["host_attempts_this_launch"] == 0
 
 
 def _controlled_attestation(monkeypatch):

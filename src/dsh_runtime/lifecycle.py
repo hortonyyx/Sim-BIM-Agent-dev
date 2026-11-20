@@ -60,13 +60,24 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
                 break
         if mode is True and state.pending:
             service_failure = state.pending.get('failure') or {}
+            failure = _budget_failure(state, case)
+            if failure:
+                break
             delay = max(retry_backoff, service_failure.get('retry_not_before', 0) - time.time())
             wall = state.limits['wall_seconds']
             if wall is not None and time.time() + delay >= relay.read_json(case / 'private/start.json')['epoch'] + wall:
                 failure = {**service_failure, 'retry_exceeds_wall_budget': True}
                 break
+            if attempt != first:
+                relay.audit('automatic_request_recovery', attempt=attempt - 1, prior_turn=state.pending['turn'],
+                            failure=service_failure, backoff_seconds=delay, repeated_tool_calls=0)
             if delay > 0:
                 wait(delay)
+                failure = _budget_failure(state, case)
+                if failure:
+                    break
+            if attempt != first:
+                recoveries += 1
             retry_backoff = 0
         out = attempt_directory(session, attempt)
         events = out / 'events.jsonl'
@@ -122,10 +133,6 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
                            'consecutive_failures': consecutive_external}
                 break
             retry_backoff = min(2 ** max(consecutive_external - 1, 0), 8) if external else 0
-            delay = max(retry_backoff, failure.get('retry_not_before', 0) - time.time())
-            relay.audit('automatic_request_recovery', attempt=attempt, prior_turn=pending['turn'],
-                        failure=failure, backoff_seconds=delay, repeated_tool_calls=0)
-            recoveries += 1
             mode = True
         elif state.failure:
             failure = state.failure

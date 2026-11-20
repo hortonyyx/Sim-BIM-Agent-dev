@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import copy
+from email.utils import parsedate_to_datetime
 import gzip
 import hashlib
 import hmac
@@ -95,6 +96,25 @@ class ProviderInterruption(Exception):
         self.failure = failure
 
 
+def _retry_seconds(headers, now):
+    if not hasattr(headers, 'items'):
+        return
+    for key, value in headers.items():
+        name = str(key).lower()
+        if name not in ('retry-after', 'retry-after-ms') or not isinstance(value, str):
+            continue
+        value = value.strip()
+        if re.fullmatch(r'[0-9]{1,12}(?:\.[0-9]{1,3})?', value):
+            yield float(value) / (1000 if name == 'retry-after-ms' else 1)
+        elif name == 'retry-after' and len(value) <= 128:
+            try:
+                date = parsedate_to_datetime(value)
+                if date.tzinfo is not None:
+                    yield max(0, date.timestamp() - now)
+            except (TypeError, ValueError, OverflowError, OSError):
+                continue
+
+
 def provider_failure(status, problem, headers=None):
     """Separate service/access failures from rejected adapter requests."""
     fields = public_provider_fields(problem)
@@ -109,15 +129,13 @@ def provider_failure(status, problem, headers=None):
             'code': code or f'HTTP_{status}', 'http_status': status,
             'message': 'The upstream service rejected the request; inspect the recorded status and error code.',
             'external': external, 'retryable': retryable}
-    if retryable and hasattr(headers, 'get'):
-        delays = []
-        for name, divisor in (('retry-after', 1), ('retry-after-ms', 1000)):
-            value = headers.get(name)
-            if isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}(?:\.[0-9]{1,3})?', value):
-                delays.append(float(value) / divisor)
+    if retryable:
+        now = time.time()
+        nested = problem.get('headers') if isinstance(problem, dict) else None
+        delays = [*_retry_seconds(headers, now), *_retry_seconds(nested, now)]
         if delays:
             failure['retry_after_seconds'] = max(delays)
-            failure['retry_not_before'] = time.time() + max(delays)
+            failure['retry_not_before'] = now + max(delays)
     return failure
 
 
@@ -557,7 +575,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     }
                     save(WIRE / f'{turn:02}-reply.json', public)
-                    state.failure = provider_failure(r.status_code, public['error'], r.headers)
+                    state.failure = provider_failure(r.status_code, problem, r.headers)
                     audit('provider_error', turn=turn, status=r.status_code, error=public['error'],
                           failure=state.failure, request_ids=response_ids(r))
                     state.stop = True
@@ -644,8 +662,7 @@ class Handler(BaseHTTPRequestHandler):
                                     }
                                 elif kind == 'response.failed':
                                     error = rep.get('error') or {}
-                                    failure = provider_failure(r.status_code, error,
-                                                               error.get('headers') if isinstance(error, dict) else None)
+                                    failure = provider_failure(r.status_code, error, r.headers)
                                 else:
                                     failure = {'category': 'external_policy' if reason == 'content_filter' else 'internal_response',
                                                'code': reason or 'unclassified_incomplete_response',
