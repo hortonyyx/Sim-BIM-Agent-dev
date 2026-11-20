@@ -4,6 +4,8 @@
 
 ## 当前任务
 
+2026-11-20，DeepSeek Harness 开发版已迭代到 domain-v182、runtime-v56。统一入口支持主控自主选择后台只读观察。SM25 修订版与认可图纸参照逐项核对通过，整案 24 分 13 秒，历史 R7 为 16 分 26 秒。普通看图仍会轮换挤出第四张立面，利园也暴露了首稿的轮廓和屋顶几何返工。交付源、质量复核、回放与计时见[本轮迭代](reports/2026-11-20_first_build_iteration.md)。该版本位于开发分支 `codex/unified-orchestrator`。
+
 2026-11-20，后续主迭代统一使用 DeepSeek Harness，暂停自研 runtime 的开发与常规对照。房间用途只有明显的大类错误才严格扣分。推断室内分界要解释实体隔墙为何可能沿该位置和方向布置，保留有依据的外门也可以合并内部空间。利园六期 R7 首层斜墙为用户指出的反例。当前架构边界、耗时及下一轮建议见[人工评阅与生产耗时](reports/2026-11-20_partition_feedback_and_runtime.md)。
 
 2026-11-19，开发线已接入统一主控。新任务使用一份材料清单，DeepSeek Harness 为默认宿主，自研 runtime 用于对照，主控可直接建模或按需委派只读观察。开发分支为 `codex/unified-orchestrator`。改动前版本、订阅整案轨迹、质量对照和交付边界见[统一主控验证记录](reports/2026-11-19_unified_orchestrator.md)。本轮交付位置为开发仓库。
