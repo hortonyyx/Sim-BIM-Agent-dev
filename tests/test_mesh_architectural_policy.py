@@ -72,3 +72,42 @@ def test_historical_mesh_manifest_keeps_its_recorded_policy(tmp_path, monkeypatc
     assert result['source_geometry_ready'], result
     assert 'architectural_regularization' not in result
     assert json.loads((run/result['candidate']/'proposal.json').read_bytes()) == raw
+
+
+@pytest.mark.parametrize("reference_lines", [False, True])
+def test_unified_draft_reuses_frozen_mesh_and_explicit_opening_heights(tmp_path, monkeypatch, reference_lines):
+    from scripts.tool_scripts.bim_agent_source_precision import REFERENCE_LINES_POLICY
+    _, run, _ = _prepare(tmp_path, monkeypatch)
+    manifest = json.loads((run / "inputs.json").read_bytes())
+    manifest["orchestrator"] = True
+    if reference_lines:
+        manifest["source_precision_policy"] = REFERENCE_LINES_POLICY
+    (run / "inputs.json").write_text(json.dumps(manifest), encoding="utf-8")
+    toolkit = Toolkit(run)
+    value = plan()
+    value["mesh_frame"] = dict(yaw_degrees=17, translation_m=[1, 2, 3],
+        reason="Explicit test frame", source_refs=["original mesh measurement"])
+    value["connections"] = [dict(id="east", kind="door", space_id="F1:office", other_space_id=None,
+        p1=[6, .2], p2=[6, 1.2], z_min=0, z_max=2.1, source_refs=["synthetic elevation reading"])]
+    raw = json.dumps(value)
+    result = build_parametric(toolkit, raw)
+    assert result["source_geometry_ready"], result
+    folder = run / result["candidate"]
+    assert (run / result["draft"]).read_text(encoding="utf-8") == raw
+    assert json.loads((folder / "parametric_plan.json").read_bytes()) == value
+    assert inspect_parametric(toolkit, candidate=result["candidate"])["exact_plan"]
+    source = json.loads((folder / "source_model.json").read_bytes())
+    assert source["mesh_frame"] == {**value["mesh_frame"], "mesh_sha256": manifest["mesh_input"]["sha256"]}
+    assert {p[2] for o in source["openings"] if o["id"] == "east" for p in o["vertices"]} == {0.0, 2.1}
+
+
+def test_unified_shorthands_do_not_infer_heights_or_replace_a_foreign_mesh():
+    from scripts.tool_scripts.bim_agent_architectural import effective_parametric_plan
+    manifest = {"orchestrator": True, "mesh_input": {"sha256": "a" * 64}}
+    for connection in ({"z_min": 1}, {"z_min": 1, "z_max": 3, "z": [0, 2]}, {}):
+        with pytest.raises(ValueError, match=r"/connections/0"):
+            effective_parametric_plan({"connections": [connection]}, manifest)
+    with pytest.raises(ValueError, match="frozen original GLB"):
+        effective_parametric_plan({"mesh_frame": {"mesh_sha256": "b" * 64}}, manifest)
+    legacy = {"connections": [{"z_min": 1, "z_max": 3}], "mesh_frame": {}}
+    assert effective_parametric_plan(legacy, {"mesh_input": manifest["mesh_input"]}) is legacy

@@ -490,13 +490,14 @@ detail is missing, choose a plausible simplification within the requested scope
 and record its basis. Do not add subdivisions, doors or windows merely to obtain
 regular geometry or a desired count.
 
-When the interior is uncertain, simplify it while preserving evidence of how
-people enter and move through it. Separate street entrances can establish
-different access to a lobby and shops even when their internal demising walls
-are unmeasured. A landing or common passage serving several doors may belong to
-the shared core. Keep those supported access relationships and mark inferred
-boundaries. Use labels and recognizable furnishings to judge room use, and
-record ambiguity when more than one simulation use is plausible.
+Keep evidenced entrances, cores and shared passages when simplifying an interior.
+Different entrances or uses can share an open space. For an inferred partition,
+consider what supports the wall's direction, where it would meet the facade or
+core, and whether the spaces on both sides are usable. An unexplained wedge
+calls that wall into question. If its course is unknown, keep the area open.
+Follow drawn partitions through genuine oblique turns and retain their openings.
+Use labels and furnishings to identify a plausible broad use. Record ambiguity
+between similar uses without changing the geometry to fit a label.
 
 Choose how to answer each building question. Direct inspection can settle a
 clear relationship; crop, measure or trial-build where a dimension, ambiguity

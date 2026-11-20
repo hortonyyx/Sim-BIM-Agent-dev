@@ -2262,6 +2262,12 @@ def build_tool_server(run: Path, readonly=False):
                      "trigger_action": "mcp_result_packaging"})
         from scripts.tool_scripts.bim_agent_replies import compact_reply
         result = compact_reply(toolkit.run, "build_bim", result)
+        if result.get("status") == "error" and result.get("draft"):
+            # DSH may retain only the first part of a long MCP error. Show the
+            # exact editable base and actionable diagnostics before audit history.
+            first = ("status", "error", "error_stage", "draft", "plan_sha256",
+                     "saved_candidate", "details_file", "error_details")
+            result = {**{key: result[key] for key in first if key in result}, **result}
         content.append(TextContent(type="text", text=json.dumps(result, ensure_ascii=False, separators=(",", ":"))))
         return CallToolResult(content=content, structuredContent=result,
                               isError=result.get("status") in {"error", "rejected"})
@@ -2896,6 +2902,8 @@ def build_tool_server(run: Path, readonly=False):
                                  inferences_json: str = "") -> CallToolResult:
             """Expand model-declared floor templates and window rows, then build source BIM.
             Read get_bim_reference('parametric') first. Never infers or trims geometry.
+            In orchestrator mode mesh_frame may omit the frozen GLB hash, and global
+            connections may give absolute z=[bottom,top] metres or z_min and z_max.
             Explicit repeats and core service sets expand in code. Failed drafts are patchable.
             mesh_observations optionally returns current overlays of your selected
             saved cameras. inferences_json is a list of record_inference declarations

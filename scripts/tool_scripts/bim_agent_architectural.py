@@ -48,14 +48,44 @@ def _policy(toolkit):
     return getattr(toolkit, "manifest", {}).get("architectural_modelling_policy")
 
 
+def effective_parametric_plan(plan, manifest):
+    """Resolve explicit input shorthands without changing the editable draft."""
+    if not manifest.get("orchestrator") or not isinstance(plan, dict):
+        return plan
+    effective = plan.copy()
+    frame = plan.get("mesh_frame")
+    frozen_sha = (manifest.get("mesh_input") or {}).get("sha256")
+    if isinstance(frame, dict) and frozen_sha:
+        if frame.get("mesh_sha256", frozen_sha) != frozen_sha:
+            raise ValueError("mesh_frame.mesh_sha256 differs from the frozen original GLB")
+        effective["mesh_frame"] = {**frame, "mesh_sha256": frozen_sha}
+    connections = plan.get("connections")
+    if isinstance(connections, list):
+        effective["connections"] = connections.copy()
+        for i, opening in enumerate(connections):
+            if not isinstance(opening, dict):
+                continue
+            endpoints = {"z_min", "z_max"} & opening.keys()
+            if not endpoints and "z" in opening:
+                continue
+            if len(endpoints) != 2 or "z" in opening:
+                raise ValueError(f"/connections/{i}: declare absolute z=[bottom,top] in metres "
+                                 "or both z_min and z_max, using only one form")
+            row = opening.copy()
+            row["z"] = [row.pop("z_min"), row.pop("z_max")]
+            effective["connections"][i] = row
+    return effective
+
+
 def prepare_parametric_plan(toolkit, plan, *, draft_path):
+    effective = effective_parametric_plan(plan, getattr(toolkit, "manifest", {}))
     policy = _policy(toolkit)
     if policy is None:
-        return plan, None
+        return effective, None
     from src.agent.geometry.architectural_regularization import regularize_architectural_plan
     from src.agent.geometry.parametric_proposal import expand_parametric_proposal
     try:
-        adopted, audit = regularize_architectural_plan(plan, policy=policy)
+        adopted, audit = regularize_architectural_plan(effective, policy=policy)
     except ValueError as error:
         if hasattr(error, "audit"):
             error.audit_reference = _save(toolkit,
@@ -74,7 +104,8 @@ def prepare_parametric_plan(toolkit, plan, *, draft_path):
     if reference_line_policy(toolkit.manifest):
         original = {"file": _path(toolkit, draft_path).relative_to(Path(toolkit.run).resolve()).as_posix(),
                     "sha256": _sha(_path(toolkit, draft_path))}
-        reference.update(original=original, effective=copy.deepcopy(original))
+        reference.update(original=original, effective=original if effective == plan else
+            _save(toolkit, draft_path.with_suffix(".effective.json"), effective))
     return adopted, reference
 
 
