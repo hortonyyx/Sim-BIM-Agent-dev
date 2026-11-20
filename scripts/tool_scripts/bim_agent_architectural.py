@@ -126,6 +126,12 @@ def validate_parametric_regularization(toolkit, state):
     plan = json.loads((folder / "parametric_plan.json").read_bytes())
     if reference.get("kind") != "parametric" or _hash(plan) != reference["original_sha256"]:
         raise ValueError("architectural original declaration binding changed")
+    # A normalized declaration can now have its own artifact. Exact patching
+    # must still refer to the admitted input and the same frozen mesh frame.
+    effective = reference.get("effective")
+    if effective is not None and effective != reference.get("original"):
+        if _read(toolkit, effective) != effective_parametric_plan(plan, toolkit.manifest):
+            raise ValueError("architectural effective declaration binding changed")
     proposal = json.loads((folder / "proposal.json").read_bytes())
     validate_build_regularization(toolkit, proposal, reference)
 

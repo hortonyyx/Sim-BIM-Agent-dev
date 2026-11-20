@@ -45,6 +45,7 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
     proof = failure = None
     host_exit = None
     host_attempts = 0
+    retry_backoff = 0
     while True:
         if attempt == first and mode:
             previous = _logs(session)
@@ -57,6 +58,16 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
                            'message': 'The saved session must be reconciled before resuming.',
                            'external': False, 'retryable': False, 'inspection': inspection}
                 break
+        if mode is True and state.pending:
+            service_failure = state.pending.get('failure') or {}
+            delay = max(retry_backoff, service_failure.get('retry_not_before', 0) - time.time())
+            wall = state.limits['wall_seconds']
+            if wall is not None and time.time() + delay >= relay.read_json(case / 'private/start.json')['epoch'] + wall:
+                failure = {**service_failure, 'retry_exceeds_wall_budget': True}
+                break
+            if delay > 0:
+                wait(delay)
+            retry_backoff = 0
         out = attempt_directory(session, attempt)
         events = out / 'events.jsonl'
         state.host_events = events
@@ -110,11 +121,10 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
                 failure = {**failure, 'retries_exhausted': True,
                            'consecutive_failures': consecutive_external}
                 break
-            delay = min(2 ** max(consecutive_external - 1, 0), 8) if external else 0
+            retry_backoff = min(2 ** max(consecutive_external - 1, 0), 8) if external else 0
+            delay = max(retry_backoff, failure.get('retry_not_before', 0) - time.time())
             relay.audit('automatic_request_recovery', attempt=attempt, prior_turn=pending['turn'],
                         failure=failure, backoff_seconds=delay, repeated_tool_calls=0)
-            if delay:
-                wait(delay)
             recoveries += 1
             mode = True
         elif state.failure:

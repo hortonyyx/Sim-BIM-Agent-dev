@@ -2265,7 +2265,7 @@ def build_tool_server(run: Path, readonly=False):
         if result.get("status") == "error" and result.get("draft"):
             # DSH may retain only the first part of a long MCP error. Show the
             # exact editable base and actionable diagnostics before audit history.
-            first = ("status", "error", "error_stage", "draft", "plan_sha256",
+            first = ("status", "error", "error_stage", "draft", "plan_sha256", "draft_sha256",
                      "saved_candidate", "details_file", "error_details")
             result = {**{key: result[key] for key in first if key in result}, **result}
         content.append(TextContent(type="text", text=json.dumps(result, ensure_ascii=False, separators=(",", ":"))))

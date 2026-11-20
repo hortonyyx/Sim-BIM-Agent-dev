@@ -45,7 +45,8 @@ def test_mcp_signed_zero_preserves_json_types_images_and_error():
     assert math.copysign(1, original.structuredContent["zeros"][1]) < 0
 
 
-def test_candidate_domain_failure_keeps_structured_diagnostics_through_mcp(tmp_path):
+@pytest.mark.parametrize("digest_key", ["plan_sha256", "draft_sha256"])
+def test_candidate_domain_failure_keeps_structured_diagnostics_through_mcp(tmp_path, digest_key):
     async def scenario():
         run = _run_with_one_image(tmp_path)
         servers = []
@@ -53,7 +54,7 @@ def test_candidate_domain_failure_keeps_structured_diagnostics_through_mcp(tmp_p
             serve(run)
         failure = {"status": "error", "error": "ring_adoption: 2 independent problem(s)",
                    "draft": "parametric_drafts/draft_020.json",
-                   "plan_sha256": "a" * 64, "parametric": {"adoption_history": "x" * 9000},
+                   "parametric": {"adoption_history": "x" * 9000}, digest_key: "a" * 64,
                    "error_details": {"regularization": {"rejections": [
                        {"path": "templates.typical.footprint", "worst_vertex": {
                            "before": [14.1, -9.1], "after": [14.1, -8.986752082251],
@@ -68,7 +69,7 @@ def test_candidate_domain_failure_keeps_structured_diagnostics_through_mcp(tmp_p
         assert math.copysign(1, value["supports"][0]["normal"][1]) > 0
         wire = next(b.text for b in result.content if b.type == "text" and b.text.startswith("{"))
         assert json.loads(wire)["error_details"] == details
-        assert "templates.typical.footprint" in wire[:8192] and failure["plan_sha256"] in wire[:8192]
+        assert "templates.typical.footprint" in wire[:8192] and failure[digest_key] in wire[:8192]
     asyncio.run(scenario())
 
 

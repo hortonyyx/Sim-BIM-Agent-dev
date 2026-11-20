@@ -99,6 +99,14 @@ def test_unified_draft_reuses_frozen_mesh_and_explicit_opening_heights(tmp_path,
     source = json.loads((folder / "source_model.json").read_bytes())
     assert source["mesh_frame"] == {**value["mesh_frame"], "mesh_sha256": manifest["mesh_input"]["sha256"]}
     assert {p[2] for o in source["openings"] if o["id"] == "east" for p in o["vertices"]} == {0.0, 2.1}
+    if reference_lines:
+        effective_path = run / result["architectural_regularization"]["effective"]["file"]
+        effective_path.write_text("{}", encoding="utf-8")
+        damaged = inspect_parametric(toolkit, candidate=result["candidate"])
+        assert not damaged["exact_plan"] and not damaged["patch_allowed"]
+        effective_path.unlink()
+        missing = inspect_parametric(toolkit, candidate=result["candidate"])
+        assert not missing["exact_plan"] and not missing["patch_allowed"]
 
 
 def test_unified_shorthands_do_not_infer_heights_or_replace_a_foreign_mesh():

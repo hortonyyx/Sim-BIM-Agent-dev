@@ -85,6 +85,35 @@ def _drive(context, host, *, first=1, resume=False):
                            wait=context.waits.append)
 
 
+@pytest.mark.parametrize("wall,expected", [(600, True), (120, False)])
+def test_overload_in_successful_http_stream_respects_retry_after(context, monkeypatch, wall, expected):
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
+    context.state.limits["wall_seconds"] = wall
+    failure = relay.provider_failure(200, {"type": "service_unavailable_error", "code": "server_is_overloaded"},
+                                     {"retry-after": "324", "retry-after-ms": "324000"})
+    assert failure["external"] and failure["http_status"] == 200 and failure["retryable"]
+    assert not relay.provider_failure(200, {"code": "invalid_parameter"})["retryable"]
+    _controlled_attestation(monkeypatch)
+    def host(case, session, config, url, nonce, attempt, mode):
+        if attempt == 1:
+            body = context.state.request(context.raw)
+            _pending(context, context.raw, body)
+            context.state.pending["failure"] = context.state.failure = failure
+            _events(session, attempt, [_end(error=True)])
+            return 1
+        assert mode is True
+        context.state.request(_resume_raw(context))
+        context.state.requests += 1
+        _events(session, attempt, _tool_pair("finish_bim", "finish_1") + [_end()])
+        return 0
+    terminal = _drive(context, host)
+    assert terminal["delivered"] is expected
+    assert context.waits == ([324] if expected else [])
+    if not expected:
+        assert terminal["failure"]["retry_exceeds_wall_budget"]
+
+
 def _controlled_attestation(monkeypatch):
     """Only fake the separately tested domain attestation, not driver decisions."""
     inspected = []

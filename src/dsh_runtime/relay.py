@@ -95,15 +95,30 @@ class ProviderInterruption(Exception):
         self.failure = failure
 
 
-def provider_failure(status, problem):
+def provider_failure(status, problem, headers=None):
     """Separate service/access failures from rejected adapter requests."""
-    code = public_provider_fields(problem)['code']
-    external = status in {401, 403, 408, 429} or status >= 500
-    return {'category': ('external_auth' if status in {401, 403} else
+    fields = public_provider_fields(problem)
+    code = fields['code']
+    stream_service_error = status == 200 and (
+        fields['type'] == 'service_unavailable_error' or
+        code in {'server_error', 'server_is_overloaded', 'rate_limit_exceeded', 'overloaded', 'temporarily_unavailable'})
+    retryable = stream_service_error or status in {408, 429} or status >= 500
+    external = status in {401, 403} or retryable
+    failure = {'category': ('external_auth' if status in {401, 403} else
                          'external_service' if external else 'internal_request'),
             'code': code or f'HTTP_{status}', 'http_status': status,
             'message': 'The upstream service rejected the request; inspect the recorded status and error code.',
-            'external': external, 'retryable': status in {408, 429} or status >= 500}
+            'external': external, 'retryable': retryable}
+    if retryable and hasattr(headers, 'get'):
+        delays = []
+        for name, divisor in (('retry-after', 1), ('retry-after-ms', 1000)):
+            value = headers.get(name)
+            if isinstance(value, str) and re.fullmatch(r'[0-9]{1,12}(?:\.[0-9]{1,3})?', value):
+                delays.append(float(value) / divisor)
+        if delays:
+            failure['retry_after_seconds'] = max(delays)
+            failure['retry_not_before'] = time.time() + max(delays)
+    return failure
 
 
 def public_provider_fields(problem):
@@ -539,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     }
                     save(WIRE / f'{turn:02}-reply.json', public)
-                    state.failure = provider_failure(r.status_code, public['error'])
+                    state.failure = provider_failure(r.status_code, public['error'], r.headers)
                     audit('provider_error', turn=turn, status=r.status_code, error=public['error'],
                           failure=state.failure, request_ids=response_ids(r))
                     state.stop = True
@@ -625,9 +640,9 @@ class Handler(BaseHTTPRequestHandler):
                                         'continuation_instruction': 'The previous output exceeded the response limit and was not executed. Continue the same BIM task using one smaller tool action at a time; inspect saved state and avoid repeating completed writes.',
                                     }
                                 elif kind == 'response.failed':
-                                    error = public_provider_fields(rep.get('error'))
-                                    external = error.get('code') in {'server_error', 'rate_limit_exceeded', 'overloaded', 'temporarily_unavailable'}
-                                    failure = provider_failure(503 if external else 400, error)
+                                    error = rep.get('error') or {}
+                                    failure = provider_failure(r.status_code, error,
+                                                               error.get('headers') if isinstance(error, dict) else None)
                                 else:
                                     failure = {'category': 'external_policy' if reason == 'content_filter' else 'internal_response',
                                                'code': reason or 'unclassified_incomplete_response',
