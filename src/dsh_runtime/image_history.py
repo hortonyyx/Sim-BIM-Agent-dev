@@ -19,7 +19,9 @@ from src.agent_runtime.context import ContextPolicy, context_image_tool_spec
 
 NAME = 'read_context_image'
 PREFIX = 'mcp__sim_bim_context__'
+# Persisted archive/index protocol, including old recoverable references and resume manifests.
 REVISION = 'dsh-image-history-v1'
+PROJECTION_REVISION = 'dsh-image-history-v2'
 
 
 def encoded(value):
@@ -51,9 +53,12 @@ def native_tool():
 
 
 class ImageHistory:
-    def __init__(self, directory: Path, batches: int = 3):
+    def __init__(self, directory: Path, batches: int = 3, *, max_images: int = 16):
         self.directory = Path(directory)
-        self.batches = ContextPolicy(image_history_batches=batches).image_history_batches
+        policy = ContextPolicy(image_history_batches=batches, max_images=max_images)
+        self.batches = policy.image_history_batches
+        self.max_images = policy.max_images
+        self.max_image_bytes = policy.max_image_bytes
 
     def records(self):
         path = self.directory / 'index.json'
@@ -102,16 +107,53 @@ class ImageHistory:
         known[view_id] = record
         return record
 
+    def _comparison(self, body, recent, reads):
+        """Keep the newest occurrence of each exact read across a consecutive comparison."""
+        kept = dict(recent)
+        latest = {}
+        for record in reversed(reads):
+            if record['sha256'] in latest:
+                kept.pop(record['view_id'], None)
+            else:
+                latest[record['sha256']] = record
+        extra = [r for r in latest.values() if r['view_id'] not in kept]
+        if not extra:
+            return kept
+        count, size = len(kept), sum(r['bytes'] for r in kept.values())
+        for item in body['input']:
+            content = item.get('content')
+            for block in content if isinstance(content, list) else ():
+                if block.get('type') != 'input_image':
+                    continue
+                count += 1
+                url = block.get('image_url', '')
+                if not isinstance(url, str) or not url.startswith('data:') or ';base64,' not in url:
+                    return kept  # Its size is unknown; leave the ordinary retention unchanged.
+                length = len(url) - url.index(',') - 1
+                size += length // 4 * 3 - int(url.endswith('=')) - int(url.endswith('=='))
+        for record in extra:
+            if count >= self.max_images or size + record['bytes'] > self.max_image_bytes:
+                break
+            kept[record['view_id']] = record
+            count += 1
+            size += record['bytes']
+        return kept
+
     def project(self, body):
-        """Keep the last N image-bearing model/tool batches, including the whole newest batch."""
+        """Keep recent batches and bounded, consecutive exact reads presented for comparison."""
         projected = copy.deepcopy(body)
         records = self.records()
         known = {r['view_id']: r for r in records}
-        calls, images = {}, []
+        calls, images, reads = {}, [], []
+        solo_read = None
         batch = -1
         outputs_seen = True
         for item_index, item in enumerate(body['input']):
             if item.get('type') == 'function_call':
+                solo_read = (item['call_id'] if outputs_seen and item['name'] in (NAME, PREFIX + NAME)
+                             else None)
+                if solo_read is None:
+                    reads.clear()
                 if outputs_seen:
                     batch += 1
                     outputs_seen = False
@@ -121,6 +163,7 @@ class ImageHistory:
                 output = item.get('output')
                 if not isinstance(output, list):
                     continue
+                returned = []
                 for block_index, block in enumerate(output):
                     if block.get('type') != 'input_image':
                         continue
@@ -129,21 +172,43 @@ class ImageHistory:
                     group, call = calls[item['call_id']]
                     record = self._register(records, known, block, call, block_index)
                     images.append((group, item_index, block_index, record))
+                    returned.append(record)
+                if item['call_id'] == solo_read and returned:
+                    arguments = calls[solo_read][1]['arguments']
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except ValueError:
+                            arguments = None
+                    view_id = arguments.get('view_id') if isinstance(arguments, dict) else None
+                    source = known.get(view_id) if isinstance(view_id, str) else None
+                    if (len(returned) == 1 and source and arguments.get('action', 'read') == 'read'
+                            and arguments.get('sha256') == source['sha256'] == returned[0]['sha256']):
+                        reads.append(returned[0])
+                    else:
+                        reads.clear()
+            elif item.get('role') in ('user', 'assistant', 'developer', 'system'):
+                reads.clear()
+                solo_read = None
         write_json(self.directory / 'index.json', records)
         groups = sorted({group for group, *_ in images})
-        keep = set(groups[-self.batches:])
+        recent_groups = set(groups[-self.batches:])
+        recent = {r['view_id']: r for group, _, _, r in images if group in recent_groups}
+        kept = self._comparison(body, recent, reads)
         removed = []
         for group, item_index, block_index, record in images:
-            if group not in keep:
+            if record['view_id'] not in kept:
                 projected['input'][item_index]['output'][block_index] = self.reference(record)
                 removed.append(record['view_id'])
         evidence = {
-            'revision': REVISION, 'image_history_batches': self.batches,
+            'revision': PROJECTION_REVISION, 'archive_revision': REVISION, 'image_history_batches': self.batches,
             'full_body_sha256': sha(encoded(body)), 'full_body_bytes': len(encoded(body)),
             'projected_body_sha256': sha(encoded(projected)),
             'projected_body_bytes': len(encoded(projected)),
             'tool_images_before': len(images), 'tool_images_after': len(images) - len(removed),
-            'retained_image_batches': sorted(keep), 'archived_view_ids': removed,
+            'retained_image_batches': sorted({g for g, _, _, r in images if r['view_id'] in kept}),
+            'comparison_sha256': sorted({r['sha256'] for r in reads if r['view_id'] in kept}),
+            'archived_view_ids': removed,
             'initial_user_images': 'unchanged', 'non_image_content': 'unchanged',
         }
         return projected, evidence

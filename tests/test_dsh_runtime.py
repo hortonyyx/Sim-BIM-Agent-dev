@@ -300,6 +300,57 @@ def test_image_projection_keeps_initial_and_three_complete_batches_and_exact_ret
     assert history.restore_full(next_projected) == body
 
 
+def test_consecutive_exact_image_reads_keep_distinct_bytes_until_other_work(tmp_path):
+    from src.dsh_runtime.image_history import ImageHistory, NAME, PREFIX
+    history = ImageHistory(tmp_path / 'images', 3)
+    body = image_body()
+    history.project(body)
+    originals = history.records()[:4]
+    sha_values = {r['sha256'] for r in originals}
+
+    def read(call_id, source, *, name=NAME, output_source=None):
+        arguments = {'view_id': source['view_id'], 'sha256': source['sha256']}
+        block_hash = (output_source or source)['block_sha256']
+        block = json.loads((history.directory / 'blocks' / block_hash).read_bytes())
+        body['input'].extend([
+            {'type': 'function_call', 'name': name, 'call_id': call_id, 'arguments': json.dumps(arguments)},
+            {'type': 'function_call_output', 'call_id': call_id, 'output': [block]}])
+
+    for i, source in enumerate(originals):
+        read(f'read_{i}', source, name=PREFIX + NAME)
+    # A list has no pixels; reading a prior retrieval uses a new view ID for the same bytes.
+    projected, audit = history.project(body)
+    assert set(audit['comparison_sha256']) == sha_values and audit['tool_images_after'] == 4
+    body['input'].extend([
+        {'type': 'function_call', 'name': NAME, 'call_id': 'list', 'arguments': '{"action":"list"}'},
+        {'type': 'function_call_output', 'call_id': 'list', 'output': 'directory'}])
+    read('reread', history.records()[-1])
+    projected, audit = history.project(body)
+    assert audit['tool_images_after'] == 4 and set(audit['comparison_sha256']) == sha_values
+    assert next(i for i in projected['input'] if i.get('call_id') == 'read_3' and 'output' in i)['output'][0]['type'] == 'input_text'
+    assert projected['input'][-1] == body['input'][-1]
+    assert history.restore_full(projected) == body
+
+    # The untouched initial user image counts towards comparison expansion limits.
+    limited = ImageHistory(history.directory, 3, max_images=4)
+    _, audit = limited.project(body)
+    assert audit['tool_images_after'] == 3
+    history.max_image_bytes = len(b'user-image') + 3 * originals[0]['bytes']
+    _, audit = history.project(body)
+    assert audit['tool_images_after'] == 3
+    # An unverified return never extends a previous comparison through it.
+    read('wrong_bytes', originals[0], output_source=originals[2])
+    _, audit = history.project(body)
+    assert not audit['comparison_sha256']
+    body['input'] = body['input'][:-2]
+    body['input'].extend([
+        {'type': 'function_call', 'call_id': 'next', 'name': 'inspect_plan', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'next', 'output': 'done'}])
+    projected, audit = history.project(body)
+    assert not audit['comparison_sha256'] and audit['tool_images_after'] == 3
+    assert history.restore_full(projected) == body
+
+
 def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_history(tmp_path, monkeypatch):
     from src.dsh_runtime.image_history import ImageHistory, native_tool
     monkeypatch.setattr(relay, 'CONTROL', tmp_path)
