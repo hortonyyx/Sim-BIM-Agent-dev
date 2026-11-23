@@ -4,6 +4,10 @@
 
 **v185 / v59 可作为前端联调的后端基线。** 最终两案都从原始材料自动完成交付，各启动一次宿主；交付文件摘要与独立重编译均通过。SM25 的平面、开口及连通关系可与图纸对应。利园在多次运行中仍会遗漏入口或误判顶层立面，建筑质量需要逐案复核。
 
+**用户复看利园后，C04 的空间划分未达到本案要求。** 原评阅着重看闭合构件、门和宿主，漏判了两个影响整栋用途的分区。主控把 7.0–8.4 米的深色立面带转成约 314 平方米的贯通夹层，底面和顶面均标为物理边界。外部网格支持带高，缺少这两道贯通楼板的证据。屋顶又为表达冠部屏墙，加入 75.6–82.4 米、约 125 平方米的开放检修空间，并在两次修订中增加八个设备空间。正置 23/F 原图右侧东梯在 C04 中是矩形；斜翼楼梯的修改将平台和前室门口附近画成五边形后沿整栋重复，新增折边缺乏对应实墙。首层商铺内部缺少原平面，应优先表达可辨的门、可能的物理围合和未知范围。水平与竖向的 zone 边界均按这一原则评阅。[23/F 最终回叠](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/private/dsh/work/bim/image_overlays/overlay_005.png) · [主控修改](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/private/dsh/work/bim/parametric_patches/patch_003.json) · [源模型](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/private/dsh/work/bim/candidate_04/source_model.json)
+
+利园的 v185 主控为 GPT-6.1 Sol / high，两个 GPT-6.1 Terra / high 工作者只读。08:26 开始输出首个完整建模调用，12:48 提交，13:56 出现首个有效整栋，28:55 形成最终几何，32:12 交付。10 月同楼同主控的串行运行在 7:41 生成机器有效整栋，20:41 正式交付，终稿通过当时的轻量建筑评阅。SM25 历史 Astra 两次在 5:33 和 5:44 已装配出双层；v185 的表中 11:11 仅为一层，双层为 16:29，最后几何为 22:53，之后还有 8:44。历史运行的宿主或主模型配置存在差异，无法将耗时差直接归到单项改动。[利园历史阶段计时](2026-10-21_mesh_closeout_speed_and_flash_retest.md) · [SM25 历史首稿审计](2026-10-14_harness_refinement/README.md)
+
 | 冻结构建 | SM25 首个有效候选 / 整案 | 利园首个有效候选 / 整案 | SM25 / 利园建模退回次数 |
 |---|---|---|---|
 | 历史 R7 | 5:23 / 16:26 | 10:43 / 29:13 | 0 / 5 |
@@ -15,6 +19,12 @@
 时间为分:秒，整案包含服务退避。建模退回按所有原生宿主执行段计数，包含对应工具的超时或拒绝。v185 的利园比 v182 快 18 分 18 秒，SM25 慢 7 分 24 秒；每个版本、每案均为单次运行。[历史阶段计时](D:/Sim-BIM-Agent/runs/build-iteration-20261120/baseline.json) · [最终批计时](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/metrics.json) · [最终交付验签及重编译](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/delivery-verified.json)
 
 本轮共启动六次真实整案，均使用项目授权的 ChatGPT 订阅；离线验证单独运行。新加坡时间 22:28 读得账户周额度剩余 63%。[订阅额度读数](D:/Sim-BIM-Agent/runs/backend-stability-20261123/usage-observations.jsonl)
+
+## 开发目录占用
+
+11 月 23 日晚逐目录只读扫描 `D:/Sim-BIM-Agent`。文件逻辑总大小为 161.14 GiB，约 247 万个文件名；NTFS 按文件 ID 去重后的文件分配量约 160.35 GiB，扫描时 D 盘可用 21.91 GiB。扫描不跟随目录联接，分配量不包含目录索引等卷级开销。按逻辑大小，`runs` 为 74.55 GiB，`cache` 为 49.38 GiB，`repo` 为 16.91 GiB，`cases` 为 16.90 GiB。工作源码目录中的 `AI_agent/archive` 和 `AI_agent/logs` 分别占 7.76 和 4.45 GiB，实际 Git 目录为 2.42 GiB。
+
+本轮的三个运行目录、13 个专用缓存和当晚 8 个 pytest 临时目录合计 20.64 GiB 逻辑大小。其中两份回放用源码克隆共享主仓库的 Git 对象，多计了 4.83 GiB；本轮独有文件逻辑大小约 15.82 GiB。两次节点测试的缓存合计 4.89 GiB，六次真实整案的完整输入及出站等主要请求存档约 3.99 GiB。这次盘点未删除文件。
 
 ## 跨工具读图
 
