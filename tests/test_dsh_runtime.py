@@ -300,6 +300,28 @@ def test_image_projection_keeps_initial_and_three_complete_batches_and_exact_ret
     assert history.restore_full(next_projected) == body
 
 
+def test_mistyped_sha_rejects_read_and_identifies_only_the_requested_saved_view(tmp_path):
+    import base64
+    from src.dsh_runtime.image_history import ImageHistory, NAME, sha
+    history = ImageHistory(tmp_path)
+    body = image_body()
+    call = next(i for i in body['input'] if i.get('type') == 'function_call')
+    call.update(name='view_image', arguments=json.dumps({'name': 'north.png', 'box': [1, 2, 8, 9]}))
+    history.project(body)
+    record = history.records()[0]
+    with pytest.raises(ValueError) as wrong:
+        history.call({'view_id': record['view_id'], 'sha256': '0' * 64})
+    hint = json.loads(str(wrong.value).split(': ', 1)[1])
+    assert hint['source'] == {'tool': 'view_image', 'call_id': call['call_id'], 'name': 'north.png', 'box': [1, 2, 8, 9]}
+    assert hint['read'] == {'tool': NAME, 'arguments': {'view_id': record['view_id'], 'sha256': record['sha256']}}
+    with pytest.raises(ValueError) as unknown:
+        history.call({'view_id': 'unknown', 'sha256': record['sha256']})
+    assert str(unknown.value) == 'Exact registered view_id and sha256 are required'
+    assert not (tmp_path / 'reads.jsonl').exists()
+    recovered = history.call(hint['read']['arguments'])
+    assert sha(base64.b64decode(recovered[1].data)) == record['sha256']
+
+
 def test_consecutive_exact_image_reads_keep_distinct_bytes_until_other_work(tmp_path):
     from src.dsh_runtime.image_history import ImageHistory, NAME, PREFIX
     history = ImageHistory(tmp_path / 'images', 3)
@@ -515,6 +537,17 @@ def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_histo
     ({'status': 'completed', 'output': []}, 'model_output_incomplete', True, False, False),
     ({'status': 'failed', 'output': [], 'error': {'code': 'server_error'}},
      'external_service', True, True, False),
+    ({'type': 'error', 'error': {'code': 'server_is_overloaded',
+                                 'headers': {'retry-after': '304'}}},
+     'external_service', True, True, False),
+    ({'type': 'error', 'error': {'code': 'server_is_overloaded',
+                                 'headers': {'retry-after': '304'}}},
+     'external_service', True, True, True),
+    ({'type': 'error', 'error': {'code': 'unknown_vendor_error'}},
+     'internal_request', False, False, False),
+    ({'preceding_error': {'code': 'unknown_vendor_error'}, 'status': 'failed', 'output': [],
+      'error': {'code': 'server_is_overloaded', 'headers': {'retry-after': '304'}}},
+     'external_service', True, True, False),
     ({'status': 'incomplete', 'output': [], 'incomplete_details': {'reason': 'content_filter'}},
      'external_policy', False, True, False),
     ({'status': 'completed', 'output': [{'id': 'fc_partial', 'type': 'function_call',
@@ -551,7 +584,12 @@ def test_stream_interruptions_never_forward_an_executable_terminal(
               {'type': 'response.output_item.added', 'output_index': 0,
                'item': {'id': 'fc_partial', 'type': 'function_call', 'call_id': 'call_partial',
                         'name': 'build_bim', 'arguments': '', 'namespace': 'runtime'}}]
-    if terminal is not None:
+    if terminal is not None and terminal.get('type') == 'error':
+        events.append(terminal)
+    elif terminal is not None:
+        terminal = dict(terminal)
+        if preceding := terminal.pop('preceding_error', None):
+            events.append({'type': 'error', 'error': preceding})
         if category is None:
             events.append({'type': 'response.output_item.done', 'output_index': 0,
                            'item': terminal['output'][0]})
@@ -585,6 +623,12 @@ def test_stream_interruptions_never_forward_an_executable_terminal(
         assert server.state.failure['category'] == category
         assert server.state.failure['external'] is external
         assert (server.state.pending is not None) is retryable
+        if terminal and (terminal.get('error') or {}).get('code') == 'server_is_overloaded':
+            failure = json.loads((tmp_path / 'control/pending.json').read_bytes())['failure']
+            assert failure['code'] == 'server_is_overloaded' and failure['retry_after_seconds'] == 304
+        if terminal and terminal.get('type') == 'error':
+            assert terminal['error']['code'] in response.text
+            assert json.loads((relay.WIRE / '01-stream-error.json').read_bytes())['failure'] == server.state.failure
         assert server.state.last_calls == [] and server.state.tool_calls == 0
         if retryable:
             from src.dsh_runtime.lifecycle_evidence import work_snapshot

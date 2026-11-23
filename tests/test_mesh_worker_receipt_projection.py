@@ -107,11 +107,15 @@ def test_empty_selector_keeps_answer_and_failed_result_remains_unchanged():
 def test_delegation_and_read_reference_match_the_registered_route(multimodal, delegate, read):
     tools = projection_tools(multimodal)
     row = outcome()
+    canonical = "Use read_mesh_worker(view_ids) to recover these actual PNGs."
+    row["evidence_catalog"]["meaning"] = canonical
     batch = {"structuredContent": {"results": [row]}, "content": [], "isError": False}
     saved = {"structuredContent": row, "content": [], "isError": False}
     displayed = tools.project_tool_result(delegate, batch)["structuredContent"]["results"][0]
     assert displayed == tools.project_tool_result(read, saved)["structuredContent"]
     assert displayed["result_reference"]["read"] == {"tool": read, "arguments": {"task_id": row["task_id"]}}
+    assert displayed["evidence_catalog"]["meaning"] == f"Use {read}(view_ids) to recover these actual PNGs."
+    assert row["evidence_catalog"]["meaning"] == canonical
 
 
 def test_guidance_matches_optional_coordinates_without_changing_answer_schema():

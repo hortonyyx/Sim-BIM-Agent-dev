@@ -85,8 +85,12 @@ def drive(case, session, config, server, url, nonce, first, resume, host, *, wai
         before_requests = state.requests
         host_exit = host(case, session, config, url, nonce, attempt, mode)
         host_attempts += 1
-        recorded = relay.read_json(control / 'dsh-relay-finish.json') if (control / 'dsh-relay-finish.json').is_file() else None
-        proof = attest_host_finish(run, _logs(session), server.minimum_floors, recorded_proof=recorded)
+        # The native process can exit on a streaming error while the relay is
+        # still recording that request. Inspect only the settled attempt.
+        with server.mutex:
+            finish_file = control / 'dsh-relay-finish.json'
+            recorded = relay.read_json(finish_file) if finish_file.is_file() else None
+            proof = attest_host_finish(run, _logs(session), server.minimum_floors, recorded_proof=recorded)
         if proof:
             relay.save(control / 'dsh-relay-finish.json', proof)
             state.pending = None

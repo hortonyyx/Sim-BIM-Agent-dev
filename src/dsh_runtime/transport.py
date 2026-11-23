@@ -172,8 +172,10 @@ class PooledTransport:
                     request_ids=response_ids(response),
                 )
                 break
+        body_finished = False
         try:
             yield response
+            body_finished = True
         except httpx.HTTPError as exc:
             diagnostic = self.record_failure(exc, phase='response_body', attempt=attempt,
                                              trace=trace, response=response)
@@ -187,4 +189,10 @@ class PooledTransport:
             )
             raise
         finally:
-            response.close()
+            try:
+                response.close()
+            except httpx.TransportError as cleanup_error:
+                if body_finished:
+                    raise
+                # Preserve the active failure, including an upstream Retry-After.
+                self.audit('response_cleanup_after_failure', turn=self.turn, causes=public_error(cleanup_error))

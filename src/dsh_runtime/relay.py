@@ -91,9 +91,10 @@ class Gate(Exception):
 
 
 class ProviderInterruption(Exception):
-    def __init__(self, failure):
+    def __init__(self, failure, *, native_error_frame=None):
         super().__init__(failure['code'])
         self.failure = failure
+        self.native_error_frame = native_error_frame
 
 
 def _retry_seconds(headers, now):
@@ -468,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(409, 'another request is active')
         opened = False
         accepted_terminal = False
+        stream_error = None
         try:
             state = self.server.state
             if state.stop and state.pending is None:
@@ -606,6 +608,19 @@ class Handler(BaseHTTPRequestHandler):
                             encoded({'time': time.time(), 'event': evidence_event(obj)}) + b'\n',
                         )
                         kind = obj.get('type')
+                        if kind == 'error':
+                            problem = obj.get('error') if isinstance(obj.get('error'), dict) else obj
+                            fields = public_provider_fields(problem)
+                            if fields['code'] or fields['type'] not in (None, 'error'):
+                                failure = provider_failure(r.status_code, problem, r.headers)
+                                save(WIRE / f'{turn:02}-stream-error.json', {
+                                    'event': kind, 'error': fields, 'failure': failure})
+                                stream_error = ProviderInterruption(failure, native_error_frame=wire_frame(name, downstream(obj)))
+                                # DSH exits on this frame. Commit a recognized service failure
+                                # first; a later formal terminal can clarify an unknown code.
+                                if failure['retryable']:
+                                    raise stream_error
+                                continue
                         if kind == 'response.output_item.done':
                             collect_item(done, obj)
                         if (
@@ -678,6 +693,8 @@ class Handler(BaseHTTPRequestHandler):
                             accepted_terminal = True
                             return
                 if not (WIRE / f'{turn:02}-reply.json').exists():
+                    if stream_error is not None:
+                        raise stream_error
                     raise httpx.RemoteProtocolError('stream ended before terminal response')
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             self.server.state.stop = True
@@ -690,6 +707,8 @@ class Handler(BaseHTTPRequestHandler):
                 audit('completed_stream_cleanup_error', turn=turn, causes=public_error(exc),
                       completed_response_preserved=True)
                 return
+            if stream_error is not None and isinstance(exc, httpx.TransportError):
+                exc = stream_error
             self.server.state.stop = True
             reason = str(exc) if isinstance(exc, Gate) else type(exc).__name__
             audit('relay_error', reason=reason)
@@ -713,6 +732,12 @@ class Handler(BaseHTTPRequestHandler):
                              failure=failure)
             if not opened:
                 self.error(502 if failure['external'] else 409, reason)
+            elif isinstance(exc, ProviderInterruption) and exc.native_error_frame is not None:
+                try:
+                    self.wfile.write(exc.native_error_frame)
+                    self.wfile.flush()
+                except ConnectionError:
+                    audit('host_disconnected_after_provider_error', turn=turn)
         finally:
             self.close_connection = True
             self.server.mutex.release()

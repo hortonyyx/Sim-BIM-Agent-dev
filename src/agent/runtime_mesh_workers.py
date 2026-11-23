@@ -212,6 +212,10 @@ def _project_worker_outcome(value, read_tool="read_mesh_worker"):
                        "Completed means the worker ended, not fidelity approval or applicability to the current candidate. "
                        "Check the frozen source basis; full measurements are not summarized."}
         return value
+    catalog = value.get("evidence_catalog")
+    if isinstance(catalog, dict) and isinstance(catalog.get("meaning"), str):
+        # The saved catalog uses the original mesh-tool name. Show this route's registered name.
+        catalog["meaning"] = catalog["meaning"].replace("read_mesh_worker(view_ids)", f"{read_tool}(view_ids)")
     if isinstance(result, dict):
         measurements, sources, source_ids = {}, [], {}
         for observation in result.get("directly_seen", ()):

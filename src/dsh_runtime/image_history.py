@@ -283,10 +283,27 @@ class ImageHistory:
             }).decode())]
             receipt = {'action': 'list', 'returned': len(page)}
         else:
-            record = next((r for r in records if r['view_id'] == arguments.get('view_id')
-                           and r['sha256'] == arguments.get('sha256')), None)
+            record = next((r for r in records if r['view_id'] == arguments.get('view_id')), None)
             if record is None:
                 raise ValueError('Exact registered view_id and sha256 are required')
+            if arguments.get('sha256') != record['sha256']:
+                source = {'tool': record['source_tool'], 'call_id': record['call_id']}
+                if record['source_tool'] in DIRECT_READS:
+                    try:
+                        producer = record['source_arguments']
+                        producer = json.loads(producer) if isinstance(producer, str) else producer
+                    except ValueError:
+                        producer = None
+                    if isinstance(producer, dict):
+                        if isinstance(producer.get('name'), str):
+                            source['name'] = producer['name'][:160]
+                        box = producer.get('box')
+                        if isinstance(box, list) and len(box) == 4 and all(type(v) is int for v in box):
+                            source['box'] = box
+                hint = {'source': source, 'read': {'tool': NAME, 'arguments': {
+                    'view_id': record['view_id'], 'sha256': record['sha256']}}}
+                raise ValueError('Exact registered view_id and sha256 are required. '
+                                 'Check the source before requesting this saved image: ' + encoded(hint).decode())
             data = (self.directory / 'media' / record['sha256']).read_bytes()
             if sha(data) != record['sha256']:
                 raise ValueError('Archived image bytes do not match the registered digest')

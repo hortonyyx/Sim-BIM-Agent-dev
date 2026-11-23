@@ -1,6 +1,7 @@
 """Behavioral offline checks of the native-host delivery/recovery driver."""
 import copy
 import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -54,7 +55,7 @@ def context(tmp_path, monkeypatch):
     monkeypatch.setattr(relay, 'CONTROL', control)
     monkeypatch.setattr(relay, 'audit', lambda event, **fields: records.append({'event': event, **fields}))
     return SimpleNamespace(case=case, run=run, control=control, session=session, raw=raw,
-                           state=state, server=SimpleNamespace(state=state, minimum_floors=2),
+                           state=state, server=SimpleNamespace(state=state, minimum_floors=2, mutex=threading.Lock()),
                            records=records, waits=[])
 
 
@@ -129,6 +130,58 @@ def test_expired_manual_resume_of_prior_overload_makes_no_request(context, monke
     assert terminal["failure"]["code"] == "wall_budget_reached"
     assert not terminal["allowed_external_failure"] and not context.waits
     assert terminal["automatic_recoveries"] == terminal["host_attempts_this_launch"] == 0
+
+
+def test_host_exit_waits_for_the_active_relay_checkpoint(context, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _controlled_attestation(monkeypatch)
+    reading_attempt = threading.Event()
+    request_in_flight = threading.Event()
+    mutex = context.server.mutex
+
+    class ObservedMutex:
+        def __enter__(self):
+            reading_attempt.set()
+            return mutex.__enter__()
+
+        def __exit__(self, *args):
+            return mutex.__exit__(*args)
+
+    context.server.mutex = ObservedMutex()
+
+    def delayed_failure():
+        with mutex:
+            request_in_flight.set()
+            assert reading_attempt.wait(5)
+            _pending(context, context.raw, context.state.initial)
+            failure = relay.provider_failure(200, {'code': 'server_is_overloaded',
+                                                   'headers': {'retry-after': '304'}})
+            context.state.pending['failure'] = context.state.failure = failure
+
+    with ThreadPoolExecutor(1) as pool:
+        def host(case, session, config, url, nonce, attempt, mode):
+            if attempt == 1:
+                # A successful older tool call is not a reason to continue an
+                # unfinished provider request with the delivery prompt.
+                context.state.last_calls = [{'type': 'function_call', 'name': 'view_image'}]
+                pool.submit(delayed_failure)
+                assert request_in_flight.wait(5)
+                _events(session, attempt, [_end(error=True)])
+                return 1
+            assert attempt == 2 and mode is True
+            context.state.request(_resume_raw(context))
+            context.state.requests += 1
+            _events(session, attempt, _tool_pair('finish_bim', 'finish_once') + [_end()])
+            return 0
+
+        try:
+            terminal = _drive(context, host)
+        finally:
+            reading_attempt.set()
+    assert terminal['delivered'] and terminal['automatic_recoveries'] == 1
+    assert terminal['delivery_continuations'] == 0
+    assert len(context.waits) == 1 and 300 <= context.waits[0] <= 304
 
 
 def _controlled_attestation(monkeypatch):
