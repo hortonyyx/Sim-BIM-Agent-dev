@@ -545,6 +545,10 @@ def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_histo
      'external_service', True, True, True),
     ({'type': 'error', 'error': {'code': 'unknown_vendor_error'}},
      'internal_request', False, False, False),
+    ({'type': 'error', 'error': {'message': 'unclassified fixture'}},
+     'unclassified', False, False, False),
+    ({'type': 'error', 'message': 'unclassified flat fixture'},
+     'unclassified', False, False, False),
     ({'preceding_error': {'code': 'unknown_vendor_error'}, 'status': 'failed', 'output': [],
       'error': {'code': 'server_is_overloaded', 'headers': {'retry-after': '304'}}},
      'external_service', True, True, False),
@@ -598,7 +602,8 @@ def test_stream_interruptions_never_forward_an_executable_terminal(
     class TrailingDisconnect(httpx.SyncByteStream):
         def __iter__(self):
             yield content
-            raise httpx.RemoteProtocolError('peer closed incomplete body after completed terminal')
+            if category != 'unclassified':
+                raise httpx.RemoteProtocolError('peer closed incomplete body after completed terminal')
         def close(self):
             if cleanup_error:
                 raise httpx.CloseError('fixture close failed')
@@ -627,7 +632,8 @@ def test_stream_interruptions_never_forward_an_executable_terminal(
             failure = json.loads((tmp_path / 'control/pending.json').read_bytes())['failure']
             assert failure['code'] == 'server_is_overloaded' and failure['retry_after_seconds'] == 304
         if terminal and terminal.get('type') == 'error':
-            assert terminal['error']['code'] in response.text
+            problem = terminal.get('error', terminal)
+            assert (problem.get('code') or problem['message']) in response.text
             assert json.loads((relay.WIRE / '01-stream-error.json').read_bytes())['failure'] == server.state.failure
         assert server.state.last_calls == [] and server.state.tool_calls == 0
         if retryable:

@@ -611,16 +611,18 @@ class Handler(BaseHTTPRequestHandler):
                         if kind == 'error':
                             problem = obj.get('error') if isinstance(obj.get('error'), dict) else obj
                             fields = public_provider_fields(problem)
-                            if fields['code'] or fields['type'] not in (None, 'error'):
-                                failure = provider_failure(r.status_code, problem, r.headers)
-                                save(WIRE / f'{turn:02}-stream-error.json', {
-                                    'event': kind, 'error': fields, 'failure': failure})
-                                stream_error = ProviderInterruption(failure, native_error_frame=wire_frame(name, downstream(obj)))
-                                # DSH exits on this frame. Commit a recognized service failure
-                                # first; a later formal terminal can clarify an unknown code.
-                                if failure['retryable']:
-                                    raise stream_error
-                                continue
+                            failure = provider_failure(r.status_code, problem, r.headers)
+                            if not fields['code'] and fields['type'] in (None, 'error'):
+                                failure.update(category='unclassified', code='unclassified_stream_error',
+                                               message='The upstream stream reported an error without a classification.')
+                            save(WIRE / f'{turn:02}-stream-error.json', {
+                                'event': kind, 'error': fields, 'failure': failure})
+                            stream_error = ProviderInterruption(failure, native_error_frame=wire_frame(name, downstream(obj)))
+                            # DSH exits on this frame. Commit a recognized service failure
+                            # first; a later formal terminal can clarify an unknown error.
+                            if failure['retryable']:
+                                raise stream_error
+                            continue
                         if kind == 'response.output_item.done':
                             collect_item(done, obj)
                         if (
