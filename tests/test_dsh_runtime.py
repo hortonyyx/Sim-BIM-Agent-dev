@@ -351,6 +351,53 @@ def test_consecutive_exact_image_reads_keep_distinct_bytes_until_other_work(tmp_
     assert history.restore_full(projected) == body
 
 
+def test_direct_and_archived_comparison_keeps_each_actual_crop_once(tmp_path):
+    from src.dsh_runtime.image_history import ImageHistory, PREFIX, NAME
+    history = ImageHistory(tmp_path, 3)
+    body = image_body()
+    history.project(body)
+    north, east, south, west = history.records()[:4]
+    expected = {r['sha256'] for r in (north, east, south, west)}
+
+    def read(call_id, tool, arguments, record):
+        block = json.loads((tmp_path / 'blocks' / record['block_sha256']).read_bytes())
+        body['input'].extend([
+            {'type': 'function_call', 'call_id': call_id, 'name': tool, 'arguments': json.dumps(arguments)},
+            {'type': 'function_call_output', 'call_id': call_id, 'output': [block]}])
+
+    def archived(record):
+        return {'view_id': record['view_id'], 'sha256': record['sha256']}
+
+    # Different crops of one source are distinct; equal returned bytes across tools are one view.
+    read('north', 'view_image', {'name': 'sheet.png', 'box': [0, 0, 10, 10]}, north)
+    read('east', PREFIX + NAME, archived(east), east)
+    read('south', 'mcp__sim_bim__view_image', {'name': 'sheet.png', 'box': [10, 0, 20, 10]}, south)
+    read('west', 'view_image', {'name': 'west.png'}, west)
+    read('east-again', 'view_image', {'name': 'east.png'}, east)
+    read('south-again', NAME, archived(south), south)
+    read('west-again', 'view_image', {'name': 'west.png', 'display_scale': 1}, west)
+    projected, audit = history.project(body)
+    assert audit['tool_images_after'] == 4 and set(audit['comparison_sha256']) == expected
+    kept = {i['call_id'] for i in projected['input'] if i.get('type') == 'function_call_output'
+            and any(b['type'] == 'input_image' for b in i['output'])}
+    assert kept == {'north', 'east-again', 'south-again', 'west-again'}
+    assert history.restore_full(projected) == body
+
+    limited = ImageHistory(tmp_path, 3, max_images=4)
+    projected, audit = limited.project(body)
+    assert audit['tool_images_after'] == 3  # initial user image occupies the fourth slot
+    assert limited.restore_full(projected) == body
+    # A failed original read and a new user task both release the extended comparison.
+    for boundary in ([
+        {'type': 'function_call', 'call_id': 'missing', 'name': 'view_image', 'arguments': '{"name":"missing"}'},
+        {'type': 'function_call_output', 'call_id': 'missing', 'output': 'not found'},
+    ], [{'role': 'user', 'content': 'start another task'}]):
+        switched = {**body, 'input': body['input'] + boundary}
+        projected, audit = history.project(switched)
+        assert audit['tool_images_after'] == 3 and not audit['comparison_sha256']
+        assert history.restore_full(projected) == switched
+
+
 def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_history(tmp_path, monkeypatch):
     from src.dsh_runtime.image_history import ImageHistory, native_tool
     monkeypatch.setattr(relay, 'CONTROL', tmp_path)

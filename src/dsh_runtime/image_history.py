@@ -19,9 +19,11 @@ from src.agent_runtime.context import ContextPolicy, context_image_tool_spec
 
 NAME = 'read_context_image'
 PREFIX = 'mcp__sim_bim_context__'
+DIRECT_READS = {'view_image', 'mcp__sim_bim__view_image'}
+COMPARISON_READS = DIRECT_READS | {NAME, PREFIX + NAME}
 # Persisted archive/index protocol, including old recoverable references and resume manifests.
 REVISION = 'dsh-image-history-v1'
-PROJECTION_REVISION = 'dsh-image-history-v2'
+PROJECTION_REVISION = 'dsh-image-history-v3'
 
 
 def encoded(value):
@@ -139,6 +141,33 @@ class ImageHistory:
             size += record['bytes']
         return kept
 
+    @staticmethod
+    def _record_read(call, returned, known, reads):
+        if call['name'] in DIRECT_READS:
+            if len(returned) == 1:
+                # A crop or normalized preview is identified by its actual returned bytes.
+                reads.append(returned[0])
+            else:
+                reads.clear()
+            return
+        arguments = call['arguments']
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = None
+        if isinstance(arguments, dict):
+            action = arguments.get('action', 'read')
+            if action == 'list' and not returned:
+                return
+            view_id = arguments.get('view_id')
+            source = known.get(view_id) if isinstance(view_id, str) else None
+            if (action == 'read' and len(returned) == 1 and source
+                    and arguments.get('sha256') == source['sha256'] == returned[0]['sha256']):
+                reads.append(returned[0])
+                return
+        reads.clear()
+
     def project(self, body):
         """Keep recent batches and bounded, consecutive exact reads presented for comparison."""
         projected = copy.deepcopy(body)
@@ -150,7 +179,7 @@ class ImageHistory:
         outputs_seen = True
         for item_index, item in enumerate(body['input']):
             if item.get('type') == 'function_call':
-                solo_read = (item['call_id'] if outputs_seen and item['name'] in (NAME, PREFIX + NAME)
+                solo_read = (item['call_id'] if outputs_seen and item['name'] in COMPARISON_READS
                              else None)
                 if solo_read is None:
                     reads.clear()
@@ -161,10 +190,8 @@ class ImageHistory:
             elif item.get('type') == 'function_call_output':
                 outputs_seen = True
                 output = item.get('output')
-                if not isinstance(output, list):
-                    continue
                 returned = []
-                for block_index, block in enumerate(output):
+                for block_index, block in enumerate(output if isinstance(output, list) else ()):
                     if block.get('type') != 'input_image':
                         continue
                     if item['call_id'] not in calls:
@@ -173,20 +200,8 @@ class ImageHistory:
                     record = self._register(records, known, block, call, block_index)
                     images.append((group, item_index, block_index, record))
                     returned.append(record)
-                if item['call_id'] == solo_read and returned:
-                    arguments = calls[solo_read][1]['arguments']
-                    if isinstance(arguments, str):
-                        try:
-                            arguments = json.loads(arguments)
-                        except ValueError:
-                            arguments = None
-                    view_id = arguments.get('view_id') if isinstance(arguments, dict) else None
-                    source = known.get(view_id) if isinstance(view_id, str) else None
-                    if (len(returned) == 1 and source and arguments.get('action', 'read') == 'read'
-                            and arguments.get('sha256') == source['sha256'] == returned[0]['sha256']):
-                        reads.append(returned[0])
-                    else:
-                        reads.clear()
+                if item['call_id'] == solo_read:
+                    self._record_read(calls[solo_read][1], returned, known, reads)
             elif item.get('role') in ('user', 'assistant', 'developer', 'system'):
                 reads.clear()
                 solo_read = None
