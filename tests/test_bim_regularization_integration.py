@@ -82,8 +82,9 @@ def test_assembly_regularization_reference_reads_full_immutable_report(tmp_path,
                                z_floor=index * 3, evidence='synthetic cross-storey constraint'))
         sources = {path: path.read_bytes() for path in run.glob('candidate_*/source_model.json')}
         async with _server_session(run, readonly=False) as session:
-            result = _json_result(await session.call_tool('assemble_plan_bim', {
-                'floors_json': json.dumps(floors)}))
+            reply = await session.call_tool('assemble_plan_bim', {'floors_json': json.dumps(floors)})
+            assert reply.isError is rejected
+            result = reply.structuredContent
             assert result['source_geometry_ready'] is not rejected
             assert (result['saved_candidate'] is None) is rejected
             reference = result['regularization']

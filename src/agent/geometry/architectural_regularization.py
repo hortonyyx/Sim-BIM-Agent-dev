@@ -310,7 +310,7 @@ def _protect_shared_vertices(records, templates, originals, frames, record_rejec
             frame_declaration='modelling.frames (templates, origin, yaw_degrees); changing it affects all selected template supports')
 
 
-def regularize_architectural_plan(plan, *, policy=None):
+def regularize_architectural_plan(plan, *, policy=None, _retain_rings=False):
     audit = dict(schema_version='architectural_regularization_v1', status='pending',
                  changes=[], diagnostics=[], not_assessed=[], rejections=[],
                  model_calls=0, geometry_fitted=False,
@@ -465,6 +465,12 @@ def regularize_architectural_plan(plan, *, policy=None):
                 if tangent[0] < -EPS or (abs(tangent[0]) <= EPS and tangent[1] < 0):
                     tangent = [-tangent[0], -tangent[1]]
                 group['tangent'] = tangent
+                if _retain_rings:
+                    # Offsets and along-line origins belong to a verified, already
+                    # adopted shell. Apertures still use both physical host checks.
+                    group['mapping'] = {d: d for d in group['offsets']}
+                    group['tangent_shifts'] = dict.fromkeys(group['offsets'], 0.0)
+                    continue
                 for cluster in _cluster(group['offsets']):
                     anchor = cluster[0]
                     target = _snap(anchor, grid)
@@ -508,8 +514,9 @@ def regularize_architectural_plan(plan, *, policy=None):
                 group['tangent_shifts'] = tangent_shifts
                 group['representatives'] = representatives
         from src.agent.geometry.architectural_incidence import adopt_shared_incidence
-        adopt_shared_incidence(records, adopted['templates'], frames, audit, epsilon=EPS)
-        for name, path, ring, points, edges in records:
+        rings_to_adopt = [] if _retain_rings else records
+        adopt_shared_incidence(rings_to_adopt, adopted['templates'], frames, audit, epsilon=EPS)
+        for name, path, ring, points, edges in rings_to_adopt:
             rebuilt = []
             for i, point in enumerate(points):
                 previous, dp = edges[i-1]
@@ -744,7 +751,12 @@ def regularize_architectural_plan(plan, *, policy=None):
                                 if f"{repeat['id_prefix']}{repeat['start']+i:0{repeat.get('id_padding',0)}d}" not in repeat.get('exclude_ids', []))
             global_pair(row, [row['core_space_id'], *[f"{fid}:{row['space']}" for fid in sorted(selected)]], f"core_connections[{row['id']}]")
 
-        _vertical(original, adopted, policy.get('vertical', {}), grid, simplification, audit, reject, by_id)
+        if _retain_rings:
+            # These floor/section elevations are bound to the parent's adoption.
+            # Check new apertures against those exact levels without moving them.
+            _adopt_connection_heights(original, adopted, by_id, lambda level: level, reject)
+        else:
+            _vertical(original, adopted, policy.get('vertical', {}), grid, simplification, audit, reject, by_id)
         _protect_volume_contacts(original, adopted, audit, reject)
         restore_straight_paths(original, adopted, line_bindings, audit, reject)
         if adopted.get('mesh_frame') != original.get('mesh_frame'):
@@ -889,6 +901,18 @@ def _vertical(original, adopted, policy, grid, simplification, audit, reject, by
                                                owner['z'], owner['height'])
                 except ValueError as exc:
                     reject('adopted_vertical_sections_invalid', f"templates.{name}.spaces[{space['id']}]", str(exc))
+    _adopt_connection_heights(original, adopted, by_id, z, reject)
+    # Relative aperture heights stay relative to adopted storeys; never clip.
+    from src.agent.geometry.parametric_proposal import expand_parametric_instances
+    for inst in expand_parametric_instances(adopted):
+        template = adopted['templates'][inst['template']]
+        for collection in ('doors','opening_rows','window_rows'):
+            for row in template.get(collection,[]):
+                if row['z'][0]<0 or row['z'][1]>inst['height']+EPS:
+                    reject('aperture_height_conflict', f"{inst['id']}:{row['id']}", 'adopted main height would clip an existing opening')
+
+
+def _adopt_connection_heights(original, adopted, by_id, z, reject):
     for row in adopted.get('connections',[]):
         host_ids = [s for s in (row['space_id'],row.get('other_space_id')) if s]
         hosts = [by_id[s.split(':',1)[0]] for s in host_ids]
@@ -908,14 +932,6 @@ def _vertical(original, adopted, policy, grid, simplification, audit, reject, by
         for host in hosts:
             if row['z'][0] < z(host['z'])-EPS or row['z'][1] > z(host['z']+host['height'])+EPS:
                 reject('aperture_height_conflict', f"connections[{row['id']}]", 'adopted opening exceeds a declared host height')
-    # Relative aperture heights stay relative to adopted storeys; never clip.
-    from src.agent.geometry.parametric_proposal import expand_parametric_instances
-    for inst in expand_parametric_instances(adopted):
-        template = adopted['templates'][inst['template']]
-        for collection in ('doors','opening_rows','window_rows'):
-            for row in template.get(collection,[]):
-                if row['z'][0]<0 or row['z'][1]>inst['height']+EPS:
-                    reject('aperture_height_conflict', f"{inst['id']}:{row['id']}", 'adopted main height would clip an existing opening')
 
 
 def _protect_volume_contacts(original, adopted, audit, reject):
@@ -980,7 +996,7 @@ def _protect_volume_contacts(original, adopted, audit, reject):
         excluded='curved templates; caller must validate all source geometry')
 
 
-def regularize_architectural_proposal(proposal, *, policy=None):
+def regularize_architectural_proposal(proposal, *, policy=None, _parent_geometry=None):
     """Adopt explicit generic floor/cell geometry through the same plan rules.
 
     IDs and all metadata are copied verbatim; the adapter writes back only
@@ -1048,14 +1064,22 @@ def regularize_architectural_proposal(proposal, *, policy=None):
                 instance['spanning_space_ids'] = copy.deepcopy(floor['spanning_space_ids'])
             plan['instances'].append(instance)
 
-        for row in geometry.get('openings', []):
+        def changed_rows(collection):
+            # The host supplied the previously verified geometry. Keep identical
+            # declarations, including all endpoint digits, in the output copy.
+            previous = {row['id']: _hash(row) for row in (_parent_geometry or {}).get(collection, [])}
+            for index, row in enumerate(geometry.get(collection, [])):
+                if row['id'] not in previous or _hash(row) != previous[row['id']]:
+                    yield index, row
+
+        for index, row in changed_rows('openings'):
             item = copy.deepcopy(row)
             for key in ('space_id', 'other_space_id'):
                 if item.get(key) is not None:
                     item[key] = cell_ids[item[key]]
             plan['connections'].append(item)
-            openings.append(len(plan['connections'])-1)
-        for row in geometry.get('windows', []):
+            openings.append((index, len(plan['connections'])-1))
+        for index, row in changed_rows('windows'):
             floor_id = floor_names[row['floor']]
             declared = row.get('room')
             if declared is not None and cell_rows[declared][0] != floor_id:
@@ -1112,7 +1136,7 @@ def regularize_architectural_proposal(proposal, *, policy=None):
                       else [[v, plane] for v in row['span']])
             plan['connections'].append(dict(id=row['id'], space_id=cell_ids[cid], other_space_id=None,
                                             p1=p1, p2=p2, z=copy.deepcopy(row['z'])))
-            windows.append((len(plan['connections'])-1, axis))
+            windows.append((index, len(plan['connections'])-1, axis))
         if 'mesh_frame' in original:
             plan['mesh_frame'] = copy.deepcopy(original['mesh_frame'])
         if 'boundary_curves' in geometry:
@@ -1138,7 +1162,8 @@ def regularize_architectural_proposal(proposal, *, policy=None):
         if 'modelling' in original:
             plan['modelling'] = adapt_policy(original['modelling'])
         try:
-            adopted, audit = regularize_architectural_plan(plan, policy=adapt_policy(policy))
+            adopted, audit = regularize_architectural_plan(plan, policy=adapt_policy(policy),
+                                                         _retain_rings=_parent_geometry is not None)
         except ArchitecturalRegularizationError as error:
             # Map adapter identities back onto the caller's actual floor and cell rows.
             originals = {cell_ids[cell['id']]: dict(space_id=cell['id'], floor_id=floor['name'],
@@ -1159,7 +1184,9 @@ def regularize_architectural_proposal(proposal, *, policy=None):
             if adopted['boundary_curves'] != geometry.get('boundary_curves'):
                 result['geometry'].pop('curve_discretization', None)
         points, curve_samples = [], None
-        for index, floor in enumerate(result['geometry']['floors']):
+        # The existing shell is already adopted, including its bounds, Z and
+        # analytic metadata. Only fresh shells need the adapter's writeback.
+        for index, floor in enumerate(result['geometry']['floors'] if _parent_geometry is None else []):
             fid = f'F{index}'
             template, instance = adopted['templates'][fid], adopted['instances'][index]
             floor['footprint'] = copy.deepcopy(template['footprint'])
@@ -1185,13 +1212,16 @@ def regularize_architectural_proposal(proposal, *, policy=None):
                         cell['vertical_sections'] = copy.deepcopy(space['vertical_sections'])
                     cell['x'] = [min(p[0] for p in cell['polygon']), max(p[0] for p in cell['polygon'])]
                     cell['y'] = [min(p[1] for p in cell['polygon']), max(p[1] for p in cell['polygon'])]
-        result['geometry']['footprint_x'] = [min(p[0] for p in points), max(p[0] for p in points)]
-        result['geometry']['footprint_y'] = [min(p[1] for p in points), max(p[1] for p in points)]
-        for row, index in zip(result['geometry'].get('openings', []), openings):
+        if _parent_geometry is None:
+            result['geometry']['footprint_x'] = [min(p[0] for p in points), max(p[0] for p in points)]
+            result['geometry']['footprint_y'] = [min(p[1] for p in points), max(p[1] for p in points)]
+        for row_index, index in openings:
+            row = result['geometry']['openings'][row_index]
             for key in ('p1', 'p2', 'z', 'curve_segment'):
                 if key in adopted['connections'][index]:
                     row[key] = copy.deepcopy(adopted['connections'][index][key])
-        for row, (index, axis) in zip(result['geometry'].get('windows', []), windows):
+        for row_index, index, axis in windows:
+            row = result['geometry']['windows'][row_index]
             connection = adopted['connections'][index]
             if abs(connection['p1'][axis]-connection['p2'][axis]) > EPS:
                 reject('window_direction_changed', f"windows[{row['id']}]", 'cardinal window host no longer cardinal')

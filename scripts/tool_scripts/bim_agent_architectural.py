@@ -39,9 +39,13 @@ def _save(toolkit, path, value):
 
 def _read(toolkit, reference):
     path = _path(toolkit, reference["file"])
-    if _sha(path) != reference["sha256"]:
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError as error:
+        raise ValueError(f"architectural regularization artifact unavailable: {reference['file']}") from error
+    if hashlib.sha256(data).hexdigest() != reference["sha256"]:
         raise ValueError("architectural regularization artifact changed")
-    return json.loads(path.read_bytes())
+    return json.loads(data)
 
 
 def _policy(toolkit):
@@ -113,11 +117,21 @@ def validate_build_regularization(toolkit, proposal, reference):
     if reference.get("policy") != _policy(toolkit):
         raise ValueError("architectural regularization policy changed")
     adopted = _read(toolkit, reference["adopted"])
-    _read(toolkit, reference["audit"])
+    audit = _read(toolkit, reference["audit"])
     if _hash(adopted) != reference["adopted_sha256"]:
         raise ValueError("architectural adopted declaration binding changed")
     if _hash(proposal) != reference["proposal_sha256"]:
         raise ValueError("proposal does not match architectural adoption")
+    inherited = audit.get('retained_parent_rings')
+    if inherited:
+        parent = _parent_adoption(toolkit, inherited['candidate'])
+        source, original, parent_ref, _, _ = parent
+        if (not parent_ref or inherited['source_model_sha256'] != source['source_model_sha256']
+                or inherited['proposal_sha256'] != parent_ref['proposal_sha256']
+                or not _same_parent_structure(original, proposal)):
+            raise ValueError("architectural retained parent geometry binding changed")
+        _verify_retained_declaration(toolkit, inherited['candidate'], parent)
+    return adopted, audit
 
 
 def validate_parametric_regularization(toolkit, state):
@@ -136,19 +150,75 @@ def validate_parametric_regularization(toolkit, state):
     validate_build_regularization(toolkit, proposal, reference)
 
 
-def _inherited_modelling(toolkit, parent, proposal):
-    """Carry adopted local frames through source edits without replaying old plans."""
+def _parent_adoption(toolkit, parent):
     if parent is None:
-        return {}
+        return None, None, None, None, None
     from src.agent.geometry.source_image_overlay import _source_hash
     folder = toolkit.candidate_path(parent)
     source = json.loads((folder/'source_model.json').read_bytes())
     _source_hash(source)
     reference = source.get('generation', {}).get('provenance', {}).get('architectural_regularization')
     if not reference:
-        return {}
+        return source, None, None, None, None
     original = json.loads((folder/'proposal.json').read_bytes())
-    validate_build_regularization(toolkit, original, reference)
+    adopted, audit = validate_build_regularization(toolkit, original, reference)
+    return source, original, reference, adopted, audit
+
+
+def _same_parent_structure(original, proposal):
+    """Compare everything except editable apertures, notes and their correction log."""
+    def structure(value, geometry):
+        return ({k: v for k, v in value.items() if k not in {'geometry', 'assumptions', 'unresolved'}},
+                {k: v for k, v in geometry.items() if k not in {'openings', 'windows', 'corrections'}})
+
+    before, after = original['geometry'], proposal['geometry']
+    # Analytic curves have a separate adoption contract and keep their ordinary route.
+    if before.get('boundary_curves') or after.get('boundary_curves'):
+        return False
+    submitted = _hash(structure(proposal, after))
+    if _hash(structure(original, before)) == submitted:
+        return True
+    # Local edits hydrate polygon defaults in the already accepted proposal.
+    if before.get('schema_version') == 'source_polygon_v1':
+        from src.agent.geometry.source_curves import expand_source_polygon_geometry
+        return _hash(structure(original, expand_source_polygon_geometry(before))) == submitted
+    return False
+
+
+def _verify_retained_declaration(toolkit, parent, admission):
+    from src.agent.geometry.architectural_regularization import _hash as audit_hash
+    _, original, reference, adopted, audit = admission
+    if (audit.get('status') != 'adopted' or audit.get('rejections')
+            or audit.get('adopted_sha256') != audit_hash(adopted)):
+        raise ValueError("architectural retained parent adoption changed")
+    if reference['kind'] == 'parametric':
+        raw_plan = toolkit.candidate_path(parent) / 'parametric_plan.json'
+        if not raw_plan.is_file() and 'original' not in reference:
+            # Older archives bind the adopted plan and its expansion. They can
+            # verify the formal geometry even without a separate editable draft.
+            from src.agent.geometry.parametric_proposal import expand_parametric_proposal
+            if _hash(expand_parametric_proposal(adopted)) != _hash(original):
+                raise ValueError("architectural retained parent expansion changed")
+            return
+        declaration = json.loads(raw_plan.read_bytes()) if raw_plan.is_file() else _read(toolkit, reference['original'])
+        effective = effective_parametric_plan(declaration, toolkit.manifest)
+    else:
+        declaration = _read(toolkit, reference['original'])
+        effective = declaration.copy()
+        if reference['modelling']:
+            effective['modelling'] = reference['modelling']
+    if (_hash(declaration) != reference['original_sha256']
+            or (reference['kind'] == 'parametric' and 'original' in reference and _read(toolkit, reference['original']) != declaration)
+            or ('effective' in reference and _read(toolkit, reference['effective']) != effective)
+            or audit.get('input_sha256') != audit_hash(effective)):
+        raise ValueError("architectural retained parent declaration or adoption changed")
+
+
+def _inherited_modelling(toolkit, parent, proposal, *, parent_adoption=None):
+    """Carry adopted local frames through source edits without replaying old plans."""
+    _, _, reference, adopted, _ = parent_adoption or _parent_adoption(toolkit, parent)
+    if not reference:
+        return {}
     context = copy.deepcopy(reference.get('modelling', {}))
     # Merge groups describe the adoption already performed. They do not grant
     # permission to keep re-merging levels after a later explicit source edit.
@@ -158,7 +228,6 @@ def _inherited_modelling(toolkit, parent, proposal):
     names = {row['name'] for row in proposal['geometry']['floors']}
     if reference['kind'] == 'parametric':
         from src.agent.geometry.parametric_proposal import expand_parametric_instances
-        adopted = _read(toolkit, reference['adopted'])
         instances = expand_parametric_instances(adopted)
         # Continuous groups compile into separate source floors. They must
         # inherit the same ruler as their members, or a later legal source edit
@@ -204,7 +273,7 @@ def _inherited_modelling(toolkit, parent, proposal):
     return context
 
 
-def prepare_source_proposal(toolkit, proposal, *, parent=None):
+def prepare_source_proposal(toolkit, proposal, *, parent=None, revise=False):
     policy = _policy(toolkit)
     if policy is None:
         return proposal, None
@@ -216,12 +285,22 @@ def prepare_source_proposal(toolkit, proposal, *, parent=None):
     path = folder / f"draft_{number:03d}.json"
     original_ref = _save(toolkit, path, proposal)
     effective = copy.deepcopy(proposal)
-    context = _inherited_modelling(toolkit, parent, proposal)
+    parent_adoption = _parent_adoption(toolkit, parent)
+    source, previous, parent_ref, _, _ = parent_adoption
+    context = _inherited_modelling(toolkit, parent, proposal, parent_adoption=parent_adoption)
     context.update(copy.deepcopy(proposal.get('modelling', {})))
     if context:
         effective['modelling'] = context
     try:
-        adopted, audit = regularize_architectural_proposal(effective, policy=policy)
+        retained = (revise and parent_ref is not None and source['validation']['status'] in {'pass', 'warning'}
+                    and _same_parent_structure(previous, proposal))
+        if retained:
+            _verify_retained_declaration(toolkit, parent, parent_adoption)
+        adopted, audit = regularize_architectural_proposal(effective, policy=policy,
+            _parent_geometry=previous['geometry'] if retained else None)
+        if retained:
+            audit['retained_parent_rings'] = {'candidate': parent,
+                'source_model_sha256': source['source_model_sha256'], 'proposal_sha256': parent_ref['proposal_sha256']}
     except ValueError as error:
         if hasattr(error, "audit"):
             error.audit['submitted_proposal'] = original_ref

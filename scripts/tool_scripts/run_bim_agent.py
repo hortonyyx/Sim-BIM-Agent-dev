@@ -1040,7 +1040,8 @@ class Toolkit:
             if architectural_regularization is not None:
                 validate_build_regularization(self, proposal, architectural_regularization)
             elif not pixel_construction:
-                proposal, architectural_regularization = prepare_source_proposal(self, proposal, parent=parent)
+                proposal, architectural_regularization = prepare_source_proposal(
+                    self, proposal, parent=parent, revise=action == 'revise_bim')
         except ValueError as error:
             rejection = {"source_geometry_ready": False, "status": "rejected",
                          "error": str(error), "stage": "architectural_regularization"}

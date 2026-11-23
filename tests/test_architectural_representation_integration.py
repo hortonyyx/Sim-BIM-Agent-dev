@@ -283,6 +283,68 @@ def test_toolkit_primitive_parametric_to_generic_revisions_keep_axis_and_hash_bi
         prior = revised
 
 
+def test_revise_on_adopted_rings_checks_changed_apertures_and_keeps_the_parent_binding(tmp_path, monkeypatch):
+    from scripts.tool_scripts.bim_agent_architectural import validate_build_regularization
+    from tests.test_architectural_regularization import single
+
+    _, run, _ = _prepare(tmp_path, monkeypatch)
+    toolkit = Toolkit(run)
+    # The two oblique supports meet at a shallow angle. The original declaration
+    # adopts successfully, but snapping its derived intersection again exceeds 3 m.
+    raw = single([[0, 0], [6, 0], [6, 3.5], [3, 2.8], [0, 2.06]])
+    raw['templates']['main']['doors'] = [dict(id='door', space='room', other_space=None, p1=[1, 0], p2=[2, 0],
+                                               z=[0, 2], source_refs=['fixture'])]
+    raw['templates']['main']['window_rows'] = [dict(id='west', facade='West', plane=0,
+        spans=[[.4, 1.2]], z=[.8, 2], source_refs=['fixture'])]
+    first = build_parametric(toolkit, json.dumps(raw))
+    assert first['source_geometry_ready'], first
+    baseline = json.loads((run / first['candidate'] / 'proposal.json').read_bytes())
+    fresh = toolkit.build(baseline)
+    assert fresh['architectural_diagnostics']['rejections'][0]['code'] == 'outline_displacement_exceeded'
+    opening = baseline['geometry']['openings'][0]
+    window = baseline['geometry']['windows'][0]
+    def edit(candidate, *operations):
+        return toolkit.revise(candidate, json.dumps(operations))
+
+    notes = dict(op='set_notes', assumptions=baseline['assumptions'], unresolved=baseline['unresolved'])
+    valid = dict(op='update_opening', id=opening['id'], changes={'p2': [2.4, 0]},
+                 source_refs=['fixture'], reason='wider door')
+    changed = edit(first['candidate'], valid)
+    assert changed['source_geometry_ready'], changed
+    next_edit = edit(changed['candidate'], notes)
+    assert next_edit['source_geometry_ready'], next_edit
+    new = json.loads((run / next_edit['candidate'] / 'proposal.json').read_bytes())
+    assert new['geometry']['openings'][0]['p2'] == [2.4, 0]
+    assert new['geometry']['windows'] == baseline['geometry']['windows']
+    assert new['geometry']['floors'] == expand_source_polygon_geometry(baseline['geometry'])['floors']
+    ref = next_edit['architectural_regularization']
+    validate_build_regularization(toolkit, new, ref)
+    assert json.loads((run / ref['audit']['file']).read_bytes())['retained_parent_rings']['candidate'] == changed['candidate']
+
+    for changes, expected in [({'p2': [12, 0]}, 'ambiguous_aperture_host'),
+                              ({'z': [0, 10]}, 'aperture_height_conflict')]:
+        failed = edit(first['candidate'], notes, {**valid, 'changes': changes})
+        assert expected in str(failed['architectural_diagnostics']['rejections'])
+    bad_window = edit(first['candidate'], dict(op='update_window', id=window['id'], changes={'span': [.4, 20]},
+                                               reason='invalid span', source_refs=['fixture']))
+    assert 'ambiguous_window_host' in str(bad_window['architectural_diagnostics']['rejections'])
+    mixed = edit(first['candidate'], valid, dict(op='reshape_spaces', spaces=[
+        dict(id='F1:room', polygon=[[0, 0], [5, 0], [5, 2], [0, 2]])],
+        reason='change the room outline', source_refs=['fixture']))
+    assert 'outline_displacement_exceeded' in str(mixed['architectural_diagnostics']['rejections'])
+
+    # A descendant's saved proof continues to check the declaration reused by its parent.
+    raw_plan = run / first['candidate'] / 'parametric_plan.json'
+    raw_plan.write_text('{}', encoding='utf-8')
+    with pytest.raises(ValueError, match='parent declaration'):
+        validate_build_regularization(toolkit, new, ref)
+    raw_plan.unlink()
+    validate_build_regularization(toolkit, new, ref)
+    (run / first['architectural_regularization']['adopted']['file']).unlink()
+    with pytest.raises(ValueError, match='artifact unavailable'):
+        validate_build_regularization(toolkit, new, ref)
+
+
 @pytest.mark.parametrize('artifact', ['original', 'adopted', 'audit', 'proposal'])
 def test_toolkit_parametric_binding_rejects_tampered_declaration_or_adoption(tmp_path, monkeypatch, artifact):
     _, run, _ = _prepare(tmp_path, monkeypatch)
