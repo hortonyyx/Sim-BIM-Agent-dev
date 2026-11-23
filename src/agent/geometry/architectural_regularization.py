@@ -71,24 +71,65 @@ def _rings(template):
     """Return mutable straight rings, converting rect declarations on a copy."""
     footprint = template['footprint']
     if isinstance(footprint, list):
-        yield 'footprint', footprint
+        yield 'footprint', footprint, ('footprint',)
     else:
-        yield 'footprint.vertices', footprint['vertices']
+        yield 'footprint.vertices', footprint['vertices'], ('footprint', 'vertices')
         for i, ring in enumerate(footprint.get('holes', [])):
-            yield f'footprint.holes[{i}]', ring
-    for space in template['spaces']:
+            yield f'footprint.holes[{i}]', ring, ('footprint', 'holes', i)
+    for idx, space in enumerate(template['spaces']):
+        owner = ('spaces', idx)
         if 'rect' in space:
             x0, y0, x1, y1 = map(_number, space.pop('rect'))
             if x0 >= x1 or y0 >= y1:
                 raise ValueError('rect must have positive dimensions')
             space['polygon'] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-        yield f"spaces[{space['id']}].polygon", space['polygon']
+        yield f"spaces[{space['id']}].polygon", space['polygon'], (*owner, 'polygon')
         for i, ring in enumerate(space.get('holes', [])):
-            yield f"spaces[{space['id']}].holes[{i}]", ring
+            yield f"spaces[{space['id']}].holes[{i}]", ring, (*owner, 'holes', i)
         for i, section in enumerate(space.get('vertical_sections', [])):
-            yield f"spaces[{space['id']}].vertical_sections[{i}].polygon", section['polygon']
+            layer = (*owner, 'vertical_sections', i)
+            yield f"spaces[{space['id']}].vertical_sections[{i}].polygon", section['polygon'], (*layer, 'polygon')
             for j, ring in enumerate(section.get('holes', [])):
-                yield f"spaces[{space['id']}].vertical_sections[{i}].holes[{j}]", ring
+                yield f"spaces[{space['id']}].vertical_sections[{i}].holes[{j}]", ring, (*layer, 'holes', j)
+
+
+def _declared_vertex(plan, name, ring_path, index, before):
+    """Point into the submitted declaration, including a primitive/rect/path owner."""
+    from src.agent.geometry.parametric_validation import _pointer
+    parts = ['templates', name]
+    value = plan['templates'][name]
+    for token in ring_path:
+        if isinstance(value, dict) and token not in value:
+            break
+        value = value[token]
+        parts.append(token)
+    if isinstance(value, list) and index < len(value) and value[index] == before:
+        parts.append(index)
+    return _pointer(parts)
+
+
+def _proposal_ring_pointers(geometry, parametric_pointer):
+    """Reverse only the floor/cell names and shapes created by the generic adapter."""
+    parts = parametric_pointer.split('/')[1:]
+    floor_index = int(parts[1][1:])
+    base = f'/geometry/floors/{floor_index}'
+    floor = geometry['floors'][floor_index]
+    if parts[2] == 'footprint':
+        if 'footprint' not in floor:
+            return ['/geometry/footprint_x', '/geometry/footprint_y']
+        tail = parts[2:]
+    else:
+        tail = ['cells', *parts[3:]]
+    value = floor
+    for token in tail:
+        if isinstance(value, dict) and token in value:
+            value = value[token]
+        elif isinstance(value, list) and token.isdecimal() and int(token) < len(value):
+            value = value[int(token)]
+        else:
+            break
+        base += '/' + token
+    return [base]
 
 
 def _space_rings(space):
@@ -358,6 +399,7 @@ def regularize_architectural_plan(plan, *, policy=None):
         # Collect all supporting lines before moving anything. Shared directions
         # and offsets, including partial wall segments, use one anchor family.
         families, records, old_polygons, host_supports, old_spaces = {}, [], {}, {}, {}
+        declaration_paths = {}
         for name, template in adopted['templates'].items():
             if _curved(template):
                 audit['not_assessed'].append(dict(path=f'templates.{name}',
@@ -382,7 +424,8 @@ def regularize_architectural_plan(plan, *, policy=None):
                         record_rejection('narrow_component_as_space', path,
                                'narrow geometry-only component needs a component representation or explicit design decision; no automatic widening/deletion', width_m=width)
             frame = frames[name]
-            for path, ring in ring_records:
+            for path, ring, ring_path in ring_records:
+                declaration_paths[id(ring)] = ring_path
                 if len(ring) < 3 or not Polygon(ring).is_valid or Polygon(ring).area <= EPS:
                     record_rejection('invalid_ring', f'templates.{name}.{path}', 'input ring must be a valid positive-area polygon',
                         geometry_diagnostic=ring_failure_diagnostic(ring, epsilon=EPS))
@@ -494,6 +537,8 @@ def regularize_architectural_plan(plan, *, policy=None):
                 index = movements.index(movement)
                 record_rejection('outline_displacement_exceeded', f'templates.{name}.{path}',
                        'support-line intersections amplify movement beyond the architectural displacement budget; preserve input and declare intended dimensions',
+                       template=name, frame_id=frames[name]['id'],
+                       parametric_pointer=_declared_vertex(plan, name, declaration_paths[id(ring)], index, ring[index]),
                        max_vertex_displacement_m=movement, limit_m=displacement_limit,
                        outline_hausdorff_m=Polygon(ring).hausdorff_distance(polygon),
                        worst_vertex=dict(index=index, before=copy.deepcopy(ring[index]), after=rebuilt[index],
@@ -924,9 +969,11 @@ def _protect_volume_contacts(original, adopted, audit, reject):
         for b in ids[index+1:]:
             old, new = volume_relation(before[a], before[b]), volume_relation(after[a], after[b])
             if old != new:
+                from src.agent.geometry.parametric_proposal import parametric_space_locations
+                members = list(parametric_space_locations(original, (a, b)).values())
                 reject('volume_contact_changed', f'spaces[{a},{b}]',
                        'parameter adoption would change a real volume gap/contact; declare intended geometry explicitly',
-                       before=old[0] if len(old) == 1 else old,
+                       members=members, before=old[0] if len(old) == 1 else old,
                        after=new[0] if len(new) == 1 else new)
     audit['contact_check'] = dict(status='passed', straight_prism_count=len(ids),
         section_prism_count=sum(len(sections) for sections in before.values()),
@@ -1090,7 +1137,20 @@ def regularize_architectural_proposal(proposal, *, policy=None):
 
         if 'modelling' in original:
             plan['modelling'] = adapt_policy(original['modelling'])
-        adopted, audit = regularize_architectural_plan(plan, policy=adapt_policy(policy))
+        try:
+            adopted, audit = regularize_architectural_plan(plan, policy=adapt_policy(policy))
+        except ArchitecturalRegularizationError as error:
+            # Map adapter identities back onto the caller's actual floor and cell rows.
+            originals = {cell_ids[cell['id']]: dict(space_id=cell['id'], floor_id=floor['name'],
+                         proposal_space=f'/geometry/floors/{i}/cells/{j}', proposal_floor=f'/geometry/floors/{i}')
+                         for i, floor in enumerate(geometry['floors']) for j, cell in enumerate(floor['cells'])}
+            for row in error.audit['rejections']:
+                if 'parametric_pointer' in row:
+                    row['proposal_pointers'] = _proposal_ring_pointers(geometry, row.pop('parametric_pointer'))
+                    row['floor_id'] = geometry['floors'][int(row['template'][1:])]['name']
+                if row['code'] == 'volume_contact_changed':
+                    row['members'] = [originals[member['id']] for member in row['members']]
+            raise
         audit['diagnostics'].extend(footprint_bases)
         result = copy.deepcopy(original)
         result.pop('modelling', None)

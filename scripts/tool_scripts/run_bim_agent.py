@@ -2262,10 +2262,10 @@ def build_tool_server(run: Path, readonly=False):
                      "trigger_action": "mcp_result_packaging"})
         from scripts.tool_scripts.bim_agent_replies import compact_reply
         result = compact_reply(toolkit.run, "build_bim", result)
-        if result.get("status") == "error" and result.get("draft"):
+        if result.get("status") in {"error", "rejected"} and (result.get("draft") or result.get("error_details")):
             # DSH may retain only the first part of a long MCP error. Show the
             # exact editable base and actionable diagnostics before audit history.
-            first = ("status", "error", "error_stage", "draft", "plan_sha256", "draft_sha256",
+            first = ("status", "error", "error_stage", "stage", "draft", "plan_sha256", "draft_sha256",
                      "saved_candidate", "details_file", "error_details")
             result = {**{key: result[key] for key in first if key in result}, **result}
         content.append(TextContent(type="text", text=json.dumps(result, ensure_ascii=False, separators=(",", ":"))))

@@ -15,6 +15,7 @@ from time import perf_counter
 
 from src.agent.geometry_model.parse import parse_geometry
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
+from src.agent.geometry.source_enclosure import ReciprocalEnclosureError
 from src.agent.geometry.source_model import _digest
 from src.agent.geometry.source_naming import public_names_for_display, public_reference_map, public_reference_text
 
@@ -250,6 +251,12 @@ def compile_source_proposal(proposal: dict, *, provenance: dict | None = None,
     except Exception as exc:
         source = None
         report.update(status="error", source_geometry_ready=False, error=f"{type(exc).__name__}: {exc}")
+        if isinstance(exc, ReciprocalEnclosureError):
+            report["error_details"] = {"reciprocal_openings": {
+                "base_source_model_sha256": exc.base_sha256, "pair_count": len(exc.conflicts),
+                "pairs": exc.conflicts,
+                "action": "Check the declared open extent and the contacting boundary against the evidence. "
+                          "A matching open declaration must cover the shared open part on both sides."}}
     report["timings"] = {**timings, "compile_total_seconds": perf_counter() - started}
     return source, report
 

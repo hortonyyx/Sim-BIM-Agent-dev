@@ -6,6 +6,7 @@ Generic source revisions deliberately do not inherit that claim.
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import hashlib
 import json
 import os
@@ -189,6 +190,43 @@ def _base(toolkit, candidate, draft):
     return _load((folder / "parametric_plan.json").read_bytes()), state, candidate
 
 
+def _outline_movements(rejections, plan):
+    """Group identical observed movements while retaining each independent declaration."""
+    groups = {}
+    for row in rejections:
+        if row.get('code') != 'outline_displacement_exceeded' or 'parametric_pointer' not in row:
+            continue
+        vertex = row['worst_vertex']
+        key = (row['frame_id'], tuple(vertex['before']), tuple(vertex['after']), row['limit_m'])
+        group = groups.setdefault(key, dict(frame=row['frame_id'], before=vertex['before'],
+            attempted=vertex['after'], limit_m=row['limit_m'], declarations=[]))
+        group['declarations'].append(row['parametric_pointer'])
+    if not groups:
+        return {}
+    summary = {'group_count': len(groups), 'groups': [], 'shown_declarations': 0,
+               'total_declarations': sum(len(group['declarations']) for group in groups.values())}
+    for group in groups.values():
+        # Leave room for the draft hash and the first complete raw rejection in a short tool window.
+        item = {**group, 'declarations': group['declarations'][:16],
+                'total_declarations': len(group['declarations'])}
+        if len(_json([*summary['groups'], item]).encode('utf-8')) <= 3600:
+            summary['groups'].append(item)
+            summary['shown_declarations'] += len(item['declarations'])
+    try:
+        from src.agent.geometry.parametric_proposal import expand_parametric_instances
+        counts = Counter(instance['template'] for instance in expand_parametric_instances(plan))
+        affected = {row['template'] for row in rejections if 'parametric_pointer' in row}
+        counts = {name: counts[name] for name in sorted(affected)}
+        if len(_json(counts).encode('utf-8')) <= 700:
+            summary['instances_using_each_template'] = counts
+    except (KeyError, TypeError, ValueError):
+        # The ring gate runs before expansion. Unvalidated instance data cannot supply counts.
+        pass
+    summary['basis'] = ('Equal observed and attempted XY in the same modelling frame. '
+                        'Review each declaration against its evidence; attempted coordinates are not a repair.')
+    return {'outline_movements': summary}
+
+
 def _regularization_diagnostics(toolkit, state):
     audit = state.get("regularization_failure")
     if not isinstance(audit, dict):
@@ -203,6 +241,11 @@ def _regularization_diagnostics(toolkit, state):
     summary = {key: copy.deepcopy(audit[key]) for key in
                ("status", "grid_m", "max_outline_displacement_m", "not_assessed", "required_next_check")
                if key in audit}
+    if any('parametric_pointer' in row for row in rejections):
+        draft = _draft(toolkit, state['draft'])
+        if _sha(draft) != state['plan_sha256']:
+            raise ValueError('saved parametric draft changed')
+        summary.update(_outline_movements(rejections, _load(draft.read_bytes())))
     summary.update(rejection_count=len(rejections), rejections=copy.deepcopy(rejections[:4]))
     summary["repair_hint"] = (
         "Inspect each rejection's path, before/after vertex and supporting lines. "
@@ -444,6 +487,21 @@ def _build(toolkit, plan_json, *, action, base=None, patch=None, parent=None,
     else:
         state["status"] = "build_rejected"
         result["parametric"] = state
+        if result.get('error_stage') == 'source_hard_constraints':
+            from src.agent.geometry.parametric_proposal import parametric_space_locations
+            refused = result['regularization']
+            source_ids = {sid for row in refused['rejections'] for line in row.get('lines', [])
+                          for sid in line.get('source_space_ids', [])}
+            if source_ids:
+                locations = parametric_space_locations(plan, sorted(source_ids))
+                shown = []
+                for item in locations.values():
+                    if len(_json([*shown, item]).encode('utf-8')) > 3000:
+                        break
+                    shown.append(item)
+                result.setdefault('error_details', {})['alignment_spaces'] = {
+                    'affected_source_space_count': len(source_ids), 'shown': shown,
+                    'read_all_rejections': {**refused['read']['arguments'], 'json_pointer': '/rejections'}}
     if field_feedback and (not candidate or result.get("error")):
         result["error_details"] = {**result.get("error_details", {}), **field_feedback}
     _write(path.with_suffix(".state.json"), state)

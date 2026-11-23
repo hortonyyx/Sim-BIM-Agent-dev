@@ -224,6 +224,7 @@ def prepare_source_proposal(toolkit, proposal, *, parent=None):
         adopted, audit = regularize_architectural_proposal(effective, policy=policy)
     except ValueError as error:
         if hasattr(error, "audit"):
+            error.audit['submitted_proposal'] = original_ref
             error.audit_reference = _save(toolkit, path.with_suffix(".regularization.json"), error.audit)
         raise
     reference = {"schema_version": 1, "kind": "proposal", "policy": copy.deepcopy(policy),

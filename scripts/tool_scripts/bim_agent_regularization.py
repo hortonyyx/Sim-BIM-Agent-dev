@@ -229,6 +229,10 @@ def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None
                           counts=dict(Counter(row["type"] for row in report["items"])))
     if not report["items"]:
         return None
+    owners = {boundary["id"]: boundary["space_id"] for boundary in source["boundaries"]}
+    for item in report["items"]:
+        for line in item.get("lines", []):
+            line["source_space_ids"] = sorted({owners[bid] for bid in line.get("boundary_ids", []) if bid in owners})
     folder = toolkit.run / "geometry_rejections"
     folder.mkdir(exist_ok=True)
     attempt = folder / f"attempt_{len(list(folder.glob('attempt_*'))) + 1:03d}"

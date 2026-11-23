@@ -280,7 +280,9 @@ def test_formal_mcp_guard_still_reports_a_broken_incidence_construction(tmp_path
     before = _parametric_file_hashes(run)
     server = build_tool_server(run)
     value = junction_plan()
-    result = _result(asyncio.run(server.call_tool('build_parametric_bim', {'plan_json': json.dumps(value)})))
+    refused = asyncio.run(server.call_tool('build_parametric_bim', {'plan_json': json.dumps(value)}))
+    assert refused.isError
+    result = refused.structuredContent
     assert result['error_stage'] == 'parametric_expansion' and result['saved_candidate'] is None
     assert not result['save_effects']['geometry_applied']
     assert not list(run.glob('candidate_*')) and not list(run.rglob('*.adopted.json'))

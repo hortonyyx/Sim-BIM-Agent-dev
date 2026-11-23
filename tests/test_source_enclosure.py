@@ -3,7 +3,7 @@ import copy
 import pytest
 
 from src.agent.geometry.source_bim import build_source_bim
-from src.agent.geometry.source_enclosure import apply_source_enclosure
+from src.agent.geometry.source_enclosure import apply_source_enclosure, ReciprocalEnclosureError
 from src.agent.geometry.source_model import _digest
 from tests.test_source_bim import three_rooms
 
@@ -107,6 +107,19 @@ def test_shared_open_requires_matching_other_side_declaration():
     assert all(row["condition"] == "open" and not row["exterior"]
                and set(row["space_ids"]) == {"a", "b"} for row in shared)
     assert all(len(row["vertices"]) == 4 for row in shared)
+
+
+def test_conflicting_partial_declarations_report_one_pair_with_both_edit_locations():
+    source = _source()
+    a, b = source['boundary_relations'][0]['boundary_ids']
+    rows = [dict(boundary_id=bid, condition='open', scope='partial', **_evidence(),
+                 vertices=[[3,3,z], [6,3,z], [6,3,z+1], [3,3,z+1]])
+            for bid, z in ((a, 0), (b, 2))]
+    with pytest.raises(ReciprocalEnclosureError) as caught:
+        apply_source_enclosure(source, _declaration(source, boundaries=rows))
+    assert caught.value.base_sha256 == source['source_model_sha256']
+    assert caught.value.conflicts == [dict(boundary_id=a, declarations=['/enclosure_declaration/boundaries/0'],
+        counterpart_id=b, counterpart_declarations=['/enclosure_declaration/boundaries/1'])]
 
 
 def test_shared_partial_open_ring_preserves_its_physical_inner_hole():

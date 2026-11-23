@@ -131,6 +131,29 @@ def test_acute_intersection_cannot_amplify_grid_adoption_into_a_metre_shift():
     assert raw == before
 
 
+def test_equal_outline_movements_keep_distinct_raw_declarations_and_repeat_scope():
+    from scripts.tool_scripts.bim_agent_parametric import _outline_movements
+    raw = single([[.024,.024],[20.024,.024],[.024,1.073]])
+    raw['templates']['typ/~'] = raw['templates'].pop('main')
+    raw['instances'][0]['template'] = 'typ/~'
+    raw['repeats'] = [dict(id='upper', template='typ/~', id_prefix='U', start=1, count=6,
+                           z=3, height=3, source_refs=['repeated geometry'])]
+    with pytest.raises(ArchitecturalRegularizationError) as rejected:
+        regularize_architectural_plan(raw, policy=POLICY)
+    summary = _outline_movements(rejected.value.audit['rejections'], raw)['outline_movements']
+    assert summary['group_count'] == 1 and summary['shown_declarations'] == 2
+    assert set(summary['groups'][0]['declarations']) == {
+        '/templates/typ~1~0/footprint/1', '/templates/typ~1~0/spaces/0/polygon/1'}
+    assert summary['instances_using_each_template'] == {'typ/~': 7}
+    proposal = expand_parametric_proposal(raw)
+    with pytest.raises(ArchitecturalRegularizationError) as refused:
+        regularize_architectural_proposal(proposal, policy=POLICY)
+    rows = refused.value.audit['rejections']
+    assert all('parametric_pointer' not in row for row in rows)
+    assert {path for row in rows for path in row['proposal_pointers']} >= {
+        '/geometry/floors/0/footprint/vertices/1', '/geometry/floors/0/cells/0/polygon/1'}
+
+
 @pytest.mark.parametrize('origin,yaw', [([0, 0], 0), ([103.024, -28.013], 31)])
 def test_grid_dimensioned_chamfer_keeps_derived_support_and_complete_aperture(origin, yaw, tmp_path):
     local = [[0, 0], [8.1, 0], [8.1, 5.1], [7.5, 6.5], [0, 6.5]]

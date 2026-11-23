@@ -213,6 +213,22 @@ def profile_summary(result):
 def summarize_reply(result):
     """Pure presentation: errors, findings, IDs, heights and geometry stay explicit."""
     reply = copy.deepcopy(result)
+    architectural = reply.get('architectural_diagnostics', {})
+    for row in architectural.get('rejections', []):
+        if row['code'] == 'volume_contact_changed' and row.get('members'):
+            reply['error_details'] = {**reply.get('error_details', {}), 'volume_contact': row,
+                                      'submitted_proposal': architectural.get('submitted_proposal')}
+            break
+    reciprocal = (reply.get('error_details') or {}).get('reciprocal_openings')
+    if reciprocal:
+        shown = []
+        for pair in reciprocal['pairs']:
+            if _reply_bytes([*shown, pair]) > 3600:
+                break
+            shown.append(pair)
+        if len(shown) < reciprocal['pair_count']:
+            reciprocal.update(pairs=shown, omitted_pair_count=reciprocal['pair_count'] - len(shown),
+                full_pairs_pointer='/error_details/reciprocal_openings/pairs')
     mesh_feedback = reply.get('mesh_feedback')
     if isinstance(mesh_feedback, dict):
         # Images have already been attached. Keep all selected overlay IDs and
