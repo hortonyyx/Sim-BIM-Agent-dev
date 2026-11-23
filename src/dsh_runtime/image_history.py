@@ -111,16 +111,15 @@ class ImageHistory:
 
     def _comparison(self, body, recent, reads):
         """Keep the newest occurrence of each exact read across a consecutive comparison."""
+        if not reads:
+            return recent
+        # User images and recent non-comparison results keep their original contracts.
+        # Allocate only the remaining image slots/bytes to comparisons, including the latest batch.
         kept = dict(recent)
         latest = {}
         for record in reversed(reads):
-            if record['sha256'] in latest:
-                kept.pop(record['view_id'], None)
-            else:
-                latest[record['sha256']] = record
-        extra = [r for r in latest.values() if r['view_id'] not in kept]
-        if not extra:
-            return kept
+            kept.pop(record['view_id'], None)
+            latest.setdefault(record['sha256'], record)
         count, size = len(kept), sum(r['bytes'] for r in kept.values())
         for item in body['input']:
             content = item.get('content')
@@ -130,12 +129,14 @@ class ImageHistory:
                 count += 1
                 url = block.get('image_url', '')
                 if not isinstance(url, str) or not url.startswith('data:') or ';base64,' not in url:
-                    return kept  # Its size is unknown; leave the ordinary retention unchanged.
+                    return kept  # The protected image has unknown size; reserve no comparison bytes.
                 length = len(url) - url.index(',') - 1
                 size += length // 4 * 3 - int(url.endswith('=')) - int(url.endswith('=='))
-        for record in extra:
-            if count >= self.max_images or size + record['bytes'] > self.max_image_bytes:
+        for record in latest.values():
+            if count >= self.max_images:
                 break
+            if size + record['bytes'] > self.max_image_bytes:
+                continue
             kept[record['view_id']] = record
             count += 1
             size += record['bytes']
@@ -143,13 +144,13 @@ class ImageHistory:
 
     @staticmethod
     def _record_read(call, returned, known, reads):
+        """Append verified pixels, or accept a directory lookup without pixels."""
         if call['name'] in DIRECT_READS:
             if len(returned) == 1:
                 # A crop or normalized preview is identified by its actual returned bytes.
                 reads.append(returned[0])
-            else:
-                reads.clear()
-            return
+                return True
+            return False
         arguments = call['arguments']
         if isinstance(arguments, str):
             try:
@@ -159,14 +160,14 @@ class ImageHistory:
         if isinstance(arguments, dict):
             action = arguments.get('action', 'read')
             if action == 'list' and not returned:
-                return
+                return True
             view_id = arguments.get('view_id')
             source = known.get(view_id) if isinstance(view_id, str) else None
             if (action == 'read' and len(returned) == 1 and source
                     and arguments.get('sha256') == source['sha256'] == returned[0]['sha256']):
                 reads.append(returned[0])
-                return
-        reads.clear()
+                return True
+        return False
 
     def project(self, body):
         """Keep recent batches and bounded, consecutive exact reads presented for comparison."""
@@ -174,18 +175,23 @@ class ImageHistory:
         records = self.records()
         known = {r['view_id']: r for r in records}
         calls, images, reads = {}, [], []
-        solo_read = None
+        pending = set()
+        read_batch = False
         batch = -1
         outputs_seen = True
         for item_index, item in enumerate(body['input']):
             if item.get('type') == 'function_call':
-                solo_read = (item['call_id'] if outputs_seen and item['name'] in COMPARISON_READS
-                             else None)
-                if solo_read is None:
-                    reads.clear()
                 if outputs_seen:
+                    if pending:  # A new batch started before every prior reply arrived.
+                        reads.clear()
+                    pending.clear()
                     batch += 1
                     outputs_seen = False
+                    read_batch = True
+                pending.add(item['call_id'])
+                if item['name'] not in COMPARISON_READS:
+                    read_batch = False
+                    reads.clear()
                 calls[item['call_id']] = (batch, item)
             elif item.get('type') == 'function_call_output':
                 outputs_seen = True
@@ -200,11 +206,18 @@ class ImageHistory:
                     record = self._register(records, known, block, call, block_index)
                     images.append((group, item_index, block_index, record))
                     returned.append(record)
-                if item['call_id'] == solo_read:
-                    self._record_read(calls[solo_read][1], returned, known, reads)
+                if item['call_id'] in pending:
+                    pending.remove(item['call_id'])
+                    if read_batch and not self._record_read(calls[item['call_id']][1], returned, known, reads):
+                        read_batch = False
+                        reads.clear()
             elif item.get('role') in ('user', 'assistant', 'developer', 'system'):
                 reads.clear()
-                solo_read = None
+                pending.clear()
+                read_batch = False
+                outputs_seen = True
+        if pending:
+            reads.clear()
         write_json(self.directory / 'index.json', records)
         groups = sorted({group for group, *_ in images})
         recent_groups = set(groups[-self.batches:])

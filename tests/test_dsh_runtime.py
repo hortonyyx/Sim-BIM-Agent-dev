@@ -205,8 +205,8 @@ def image_body():
     body = {'input': [initial], 'reasoning': {'effort': 'high'}}
     for batch in range(5):
         count = 4 if batch == 4 else 1
-        calls = [{'type': 'function_call', 'name': 'view_image', 'call_id': f'call_{batch}_{i}',
-                  'arguments': json.dumps({'name': f'image-{batch}-{i}'})} for i in range(count)]
+        calls = [{'type': 'function_call', 'name': 'view_mesh_observation', 'call_id': f'call_{batch}_{i}',
+                  'arguments': json.dumps({'observation': f'obs-{batch}-{i}'})} for i in range(count)]
         body['input'].extend(calls)
         body['input'].extend({'type': 'function_call_output', 'call_id': c['call_id'], 'output': [
             {'type': 'input_text', 'text': 'unaltered geometry and coordinates'}, image(c['call_id'].encode())]} for c in calls)
@@ -396,6 +396,86 @@ def test_direct_and_archived_comparison_keeps_each_actual_crop_once(tmp_path):
         projected, audit = history.project(switched)
         assert audit['tool_images_after'] == 3 and not audit['comparison_sha256']
         assert history.restore_full(projected) == switched
+
+
+@pytest.mark.parametrize('reverse_outputs', [False, True])
+def test_parallel_image_reads_are_one_comparison_and_release_on_any_failed_or_mixed_batch(tmp_path, reverse_outputs):
+    from src.dsh_runtime.image_history import ImageHistory, NAME
+    history = ImageHistory(tmp_path)
+    body = image_body()
+    history.project(body)
+    views = history.records()[:4]
+
+    def pair(call_id, record, *, archive=False):
+        arguments = ({'view_id': record['view_id'], 'sha256': record['sha256']} if archive
+                     else {'name': call_id + '.png'})
+        call = {'type': 'function_call', 'call_id': call_id, 'name': NAME if archive else 'view_image',
+                'arguments': json.dumps(arguments)}
+        block = json.loads((tmp_path / 'blocks' / record['block_sha256']).read_bytes())
+        reply = {'type': 'function_call_output', 'call_id': call_id, 'output': [block]}
+        return call, reply
+
+    for direction, view in zip(('north', 'east', 'south', 'west'), views):
+        body['input'].extend(pair(direction, view))
+    s_call, s_reply = pair('south-again', views[2], archive=True)
+    w_call, w_reply = pair('west-again', views[3])
+
+    def last_batch(call, reply):
+        replies = [reply, w_reply]
+        if reverse_outputs:
+            replies.reverse()
+        return {**body, 'input': [*body['input'], call, w_call, *replies]}
+
+    complete = last_batch(s_call, s_reply)
+    projected, audit = history.project(complete)
+    visible = [i['call_id'] for i in projected['input'] if i.get('type') == 'function_call_output'
+               and any(b['type'] == 'input_image' for b in i['output'])]
+    assert set(visible) == {'north', 'east', 'south-again', 'west-again'} and len(visible) == 4
+    assert set(audit['comparison_sha256']) == {r['sha256'] for r in views}
+    assert history.restore_full(projected) == complete
+
+    for limit in ('count', 'bytes'):
+        bounded = ImageHistory(tmp_path, max_images=4 if limit == 'count' else 16)
+        if limit == 'bytes':
+            bounded.max_image_bytes = len(b'user-image') + sum(r['bytes'] for r in views[1:])
+        projected, audit = bounded.project(complete)
+        assert audit['tool_images_after'] == 3
+        assert set(audit['comparison_sha256']) == {r['sha256'] for r in views[1:]}
+        assert bounded.restore_full(projected) == complete
+
+    invalid_cases = (last_batch({**s_call, 'name': 'inspect_candidate'}, s_reply),
+                     last_batch(s_call, {**s_reply, 'output': 'read failed'}),
+                     last_batch(s_call, {**s_reply, 'output': w_reply['output']}),
+                     {**complete, 'input': complete['input'][:-1]})
+    for index, invalid in enumerate(invalid_cases):
+        isolated = ImageHistory(tmp_path / f'invalid-{index}')
+        projected, audit = isolated.project(invalid)
+        assert audit['comparison_sha256'] == []
+        assert isolated.restore_full(projected) == invalid
+
+
+def test_latest_parallel_batch_cannot_exceed_comparison_budget(tmp_path):
+    from src.agent_runtime.adapter import decode_image_url
+    from src.dsh_runtime.image_history import ImageHistory
+    # The initial user image occupies a slot. Five different tool images arrive together.
+    seed = image_body()
+    user_image = seed['input'][0]
+    calls = [i for i in seed['input'] if i.get('type') == 'function_call'][:5]
+    replies = [i for i in seed['input'] if i.get('type') == 'function_call_output'][:5]
+    body = {'input': [user_image, *[{**c, 'name': 'view_image'} for c in calls], *replies]}
+    for limit in ('count', 'bytes'):
+        history = ImageHistory(tmp_path / limit, max_images=4 if limit == 'count' else 16)
+        if limit == 'bytes':
+            history.max_image_bytes = len(b'user-image') + 3 * len(b'call_0_0')
+        projected, audit = history.project(body)
+        assert projected['input'][0] == user_image
+        wire_images = [block for item in projected['input'] for key in ('content', 'output')
+                       for block in item.get(key, []) if block['type'] == 'input_image']
+        assert len(wire_images) == 4 and len(wire_images) <= history.max_images
+        assert sum(len(decode_image_url(b['image_url'])[0]) for b in wire_images) <= history.max_image_bytes
+        assert len(audit['comparison_sha256']) == audit['tool_images_after'] == 3
+        assert audit['archived_view_ids'] == [r['view_id'] for r in history.records()[:2]]
+        assert history.restore_full(projected) == body
 
 
 def test_image_overlay_resume_is_exact_and_projected_pending_restores_full_history(tmp_path, monkeypatch):
