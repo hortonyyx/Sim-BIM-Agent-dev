@@ -54,7 +54,8 @@ def test_check_command_retains_gate_and_places_all_temporary_output_in_cache(mon
     assert check.main(["fast", "tests/test_check_workflow.py", "--cache-root", str(tmp_path / "cache")]) == 0
     command, env = seen["command"], seen["env"]
     assert command[command.index("-n") + 1] == "0"
-    assert "no_billed_gate" in command and "-o" not in command
+    assert "no_billed_gate" in command
+    assert [command[i + 1] for i, arg in enumerate(command) if arg == "-o"] == ["tmp_path_retention_policy=failed"]
     assert env["PYTHONPATH"] == str(check.ROOT)
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert Path(env["TEMP"]).is_relative_to(tmp_path / "cache")

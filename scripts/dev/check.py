@@ -69,6 +69,7 @@ def main(argv=None):
     env = {**os.environ, "SIM_BIM_TEST_SCOPE": args.scope, "PYTHONPATH": str(ROOT),
            "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "TEMP": str(cache), "TMP": str(cache)}
     command = [sys.executable, "-X", "utf8", "-B", "-m", "pytest", "-n", str(args.workers),
+               "-o", "tmp_path_retention_policy=failed",
                "-p", "no_billed_gate", "-p", "no:cacheprovider", "--basetemp", str(cache / "temp"),
                "--junitxml", str(cache / "results.xml"), "-q", *selected]
     print("Evidence cache: " + str(cache), flush=True)
