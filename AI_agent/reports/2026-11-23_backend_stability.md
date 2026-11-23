@@ -20,6 +20,19 @@
 
 本轮共启动六次真实整案，均使用项目授权的 ChatGPT 订阅；离线验证单独运行。新加坡时间 22:28 读得账户周额度剩余 63%。[订阅额度读数](D:/Sim-BIM-Agent/runs/backend-stability-20261123/usage-observations.jsonl)
 
+## 后端收工与前端接手
+
+下一轮由用户和开发者共同确定前端效果与交互。产品目前通过命令行接收任务，正式交付物包含源 BIM 和可离线打开的 HTML 查看页。现有查看器支持旋转、剖切、楼层分解、选取和量测。可以从下列两份正式结果开始讨论，直接打开即可。[产品命令](../../sim_bim.py) · [查看器实现](../../scripts/tool_scripts/render_geometry_viewer.py)
+
+| 案例 | 已有结果 | 适合一起查看的内容 |
+|---|---|---|
+| SM25，C05 | [离线查看页](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/sm25-dsh-cold1/private/dsh/work/bim/candidate_05/viewer.html) · [源 BIM](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/sm25-dsh-cold1/private/dsh/work/bim/candidate_05/source_model.json) | 两层图纸案例，按楼层找房间和门，查看空间之间的连接。 |
+| 利苑六期，C04 | [离线查看页](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/private/dsh/work/bim/candidate_04/viewer.html) · [源 BIM](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/private/dsh/work/bim/candidate_04/source_model.json) | 结合 23/F 平面和外部 mesh 核对楼梯与顶层窗带。7.0–8.4 米处整层夹层的楼板依据不足，可用来讨论怎样让用户看清分区并追溯其依据。 |
+
+后续后端迭代沿用统一主控。当前主控可按需委派只读观察，独自负责建模、选稿和交付。项目已有共享开口、标准层展开等可复用能力，Python SDK 也支持以循环和变量组合这些操作。v185 两案的生产主控仅能调用已注册工具。已确定的方向是把跨案例验证有效的建模方法继续沉淀到 SDK，同时给主控提供现场编写和运行脚本的入口，使它可以在同一份脚本里调用 SDK、表达本楼的特例。[Python SDK](../../src/agent/SDK.md) · [利苑本次主控可见工具](D:/Sim-BIM-Agent/runs/backend-stability-local-edits-20261123/executions/lee-dsh-cold1/shared/tools.json)
+
+生产脚本入口尚待实现。历史局部对照中，SDK 让屋顶题首稿更快，核心筒题则因接口阅读和往返耗时更久。后续用同模型、同原料比较首个完整楼模、最终交付耗时和建筑质量，才能判断整栋收益。下一轮的前端工作可直接使用上述成品。[局部对照实测](2026-10-26_harness_value_discussion_brief.md)
+
 ## 开发目录占用
 
 11 月 23 日晚逐目录只读扫描 `D:/Sim-BIM-Agent`。文件逻辑总大小为 161.14 GiB，约 247 万个文件名；NTFS 按文件 ID 去重后的文件分配量约 160.35 GiB，扫描时 D 盘可用 21.91 GiB。扫描不跟随目录联接，分配量不包含目录索引等卷级开销。按逻辑大小，`runs` 为 74.55 GiB，`cache` 为 49.38 GiB，`repo` 为 16.91 GiB，`cases` 为 16.90 GiB。工作源码目录中的 `AI_agent/archive` 和 `AI_agent/logs` 分别占 7.76 和 4.45 GiB，实际 Git 目录为 2.42 GiB。
