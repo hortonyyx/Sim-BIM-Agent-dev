@@ -53,7 +53,8 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
                    max_candidates: int, floor_plan_images: list[str] | None = None,
                    started_epoch: float | None = None,
                    seconds: float | None = None, process_reviews: bool = False,
-                   orchestrator: bool = False) -> tuple[Path, str, str]:
+                   orchestrator: bool = False, blocks: list[dict] | None = None,
+                   locale: str | None = None) -> tuple[Path, str, str]:
     """Freeze and validate original inputs through the shared admission function."""
     from src.agent.bim_inputs import prepare_bim_inputs
     if started_epoch is None and seconds is not None:
@@ -64,8 +65,15 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
         max_candidates=max_candidates, floor_images=floor_plan_images,
         started_epoch=started_epoch, seconds=seconds)
     inventory = manifest["images"]
+    if locale is not None:
+        if locale not in ("zh-CN", "en"):
+            raise ValueError("locale must be zh-CN or en")
+        manifest["locale"] = locale
+    if blocks is not None:
+        manifest["blocks"] = blocks
     if orchestrator:
         manifest["orchestrator"] = True
+    if orchestrator or blocks is not None or locale is not None:
         (run / "inputs.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if process_reviews:
         if image_kind != "drawings" or mesh or not inventory:
@@ -84,6 +92,14 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS
     task = scope
+    if locale is not None:
+        language = "Simplified Chinese" if locale == "zh-CN" else "English"
+        guide += (f"\nWrite user-facing output, names, assumptions, progress, and modelling notes in {language}. "
+                  "Preserve the user's original captions and filenames as evidence.\n")
+    if blocks is not None:
+        ordered = [{"id": b["id"], "caption": b["caption"], "files": [
+            {"name": a["name"], "tool_filename": a["file"], "kind": a["kind"]} for a in b["assets"]]} for b in blocks]
+        task += "\n\nUser material blocks in submitted order. Each caption describes the files in its block, in order:\n" + json.dumps(ordered, ensure_ascii=False)
     if orchestrator:
         from scripts.tool_scripts.bim_agent_guidance import describe_orchestrator_inputs
         task += "\n\n" + describe_orchestrator_inputs(manifest)

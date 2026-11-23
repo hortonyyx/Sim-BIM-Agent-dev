@@ -10,6 +10,33 @@ from src.dsh_runtime.continuation import verified_resume
 from src.dsh_runtime.transport import PooledTransport
 
 
+def test_official_deepseek_projects_flat_tools_and_replays_multimodal_history(monkeypatch):
+    monkeypatch.setattr(relay, "MODEL", "deepseek-flash")
+    tool = {"type": "function", "function": {"name": "view_image", "parameters": {"type": "object"}}}
+    state = relay.Session([{"role": "user", "content": "Read the plan"}], [tool], {},
+                          provider="deepseek", output_tokens=32000)
+    host = {"model": "deepseek-flash", "stream": True, "reasoning": {"effort": "high"},
+            "tools": [{"type": "function", "name": relay.native_name("view_image")}]}
+    body = state.request(host)
+    assert "include" not in body and "store" not in body
+    assert body["tools"][0]["name"] == "view_image" and body["max_output_tokens"] == 32000
+    reason = {"id": "r1", "type": "reasoning", "content": [{"type": "reasoning_text", "text": "fixture"}],
+              "summary": []}
+    call = {"id": "f1", "call_id": "c1", "type": "function_call", "name": "view_image", "arguments": "{}"}
+    state.requests = 1
+    state.observed(body, {"output": [reason, call]})
+    image = {"type": "input_image", "image_url": "data:image/png;base64,fixture"}
+    receipt = {"type": "function_call_output", "call_id": "c1", "output": [image]}
+    raw = {**host, "input": [reason, relay.downstream(call), receipt]}
+    following = state.request(raw)
+    assert following["input"] == [*body["input"], reason, call, receipt]
+    pending = {"raw": relay.clean(raw), "body": relay.clean(following), "redacted": True,
+               "body_sha256": relay.digest(relay.encoded(following))}
+    resumed = {**raw, "input": [*raw["input"], {"role": "user", "content": [
+        {"type": "input_text", "text": relay.RESUME_MARKER}]}]}
+    assert verified_resume(pending, resumed, relay.RESUME_MARKER) == following
+
+
 def test_sparse_completed_stream_preserves_exact_opaque_and_rejects_conflicts():
     hidden={"id":"rs_1","type":"reasoning","encrypted_content":"private-fixture","summary":[]}
     call={"id":"fc_1","type":"function_call","name":"inputs","call_id":"call_1","arguments":"{}","namespace":"runtime"}

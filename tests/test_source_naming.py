@@ -302,14 +302,19 @@ def test_public_prose_references_do_not_rewrite_paths_or_partial_ids():
         'Room Z08_F1_Office_SE. F1: check seed-office-south-2 and images/PLAN.F1.png.')
 
 
-def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_path):
+@pytest.mark.parametrize("locale", ["en", "zh-CN"])
+def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_path, locale):
     from scripts.tool_scripts.bim_agent_delivery_display import render_delivery_html
     from scripts.tool_scripts.run_bim_agent import Toolkit
 
     p = proposal()
-    p["assumptions"] = ["Room west on ground-original; window high remains <unconfirmed>."]
+    p["assumptions"] = ["Room west on ground-original; window high remains <unconfirmed>.",
+                        "Original user text: 楼层 [[msg:名称]] __TITLE__."]
     p["unresolved"] = ["Check shared between west and east. Image images/west.png remains original."]
-    (tmp_path / "inputs.json").write_text('{"images": {}, "plan_regularization_rule": "plan_regularization_v1", "max_candidates": 24}', encoding="utf-8")
+    (tmp_path / "inputs.json").write_text(json.dumps({
+        "images": {}, "locale": locale, "plan_regularization_rule": "plan_regularization_v1",
+        "max_candidates": 24,
+    }), encoding="utf-8")
     toolkit = Toolkit(tmp_path)
     built = toolkit.build(p)
     candidate = tmp_path / built["candidate"]
@@ -320,12 +325,28 @@ def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_
     before = copy.deepcopy(result)
     page = render_delivery_html(result, s)
     viewer = (candidate / "viewer.html").read_text(encoding="utf-8")
+    assert page == (tmp_path / "delivery.html").read_text(encoding="utf-8")
+    assert result["locale"] == locale
+    assert f'lang="{locale}"' in page and f'lang="{locale}"' in viewer
+    if locale == "en":
+        assert "BIM candidate and verification report" in page and ">Open model</a>" in page
+        assert "No height evidence bound to this opening" in page
+        assert "源 BIM 候选" not in viewer and "几何规整清单" not in page
+        assert "measure: snap vertex 1" in viewer and "Wall thickness" in viewer
+        assert ">section cuts<" in viewer and ">Texture opacity<" in viewer
+    else:
+        assert "BIM 候选与实际检查" in page and ">打开模型</a>" in page
+        assert "未关联此开口的高度依据" in page and ">West</td>" not in page
+        assert "Source BIM candidate" not in viewer and "Opening heights" not in page
+        assert "选择第一个顶点" in viewer and "墙厚" in viewer
+        assert ">剖切<" in viewer and ">贴图透明度<" in viewer
     # Only inspect the prose banner; embedded source JSON intentionally retains IDs.
     banner = viewer[viewer.index("<aside "):]
     for rendered in (page, banner):
         assert f'Check {names["openings"]["shared"]} between {names["spaces"]["west"]} and {names["spaces"]["east"]}.' in rendered
         assert f'Room {names["spaces"]["west"]} on F1; window {names["openings"]["high"]}' in rendered
         assert "&lt;unconfirmed&gt;" in rendered and "images/west.png" in rendered
+        assert "Original user text: 楼层 [[msg:名称]] __TITLE__." in rendered
     assert result == before
     assert result["generation"]["unresolved"] == p["unresolved"]
     assert (candidate / "source_model.json").read_bytes() == source_bytes

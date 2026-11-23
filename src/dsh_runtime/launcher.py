@@ -75,7 +75,9 @@ def prepare(case, *, material_paths=None):
     specs = asyncio.run(catalog())
     if config.get('worker'):
         from src.agent.runtime_mesh_workers import observer_tool_specs
-        specs += observer_tool_specs(dsh=True, background=config["worker"].get("background", False))
+        worker = config["worker"]
+        specs += observer_tool_specs(dsh=True, background=worker.get("background", False),
+                                     routes=worker.get("routes"))
     tools = [{
         'type': 'function',
         'function': {'name': t['name'], 'description': t.get('description', ''), 'parameters': t['inputSchema']},
@@ -171,18 +173,29 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
     worker_args = None
     if config.get('worker'):
         worker = config['worker']
+        routes = worker.get('routes', [])
+        worker_provider = routes[0]['provider'] if routes else config.get('provider', 'chatgpt-subscription')
         worker_args = ['--run', str(case / 'private/dsh/work/bim'),
-                       '--store', str(case / 'private/workers'), '--provider', 'chatgpt-subscription',
+                       '--store', str(case / 'private/workers'), '--provider', worker_provider,
                        '--model', worker['model'], '--chatgpt-auth-dir', config['chatgpt_auth_dir'],
                        '--output-tokens', str(worker['output_tokens']), '--reasoning-effort', worker['reasoning_effort'],
                        '--max-concurrent', str(worker['max_concurrent']),
                        '--model-calls', str(worker['model_calls']), '--tool-calls', str(worker['tool_calls'])]
+        if routes:
+            worker_args += ['--routes', json.dumps(routes)]
+        if worker_provider == 'deepseek' or any(r['provider'] == 'deepseek' for r in routes):
+            if config.get('credentials_file'):
+                worker_args += ['--credentials-file', config['credentials_file']]
+            else:
+                from src.workbench.connections import protected_deepseek_key_path
+                worker_args += ['--protected-key', str(protected_deepseek_key_path())]
         if config['limits']['wall_seconds'] is not None:
             worker_args += ['--seconds', str(config['limits']['wall_seconds'])]
         if worker.get('background'):
             worker_args.append('--background')
     patch.write_text(make_patch(url, config['model'], images, worker_args=worker_args,
                                 context_window=config.get('context_window', 1050000),
+                                **({'display_name': 'DeepSeek official API'} if config.get('provider') == 'deepseek' else {}),
                                 worker_wall_seconds=config['limits']['wall_seconds'] if worker_args else None), encoding='utf-8')
     exe = Path(config['dsh_executable'])
     cli = exe.parent / 'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
@@ -305,9 +318,14 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     if not policy_file.exists():
         relay.save(policy_file, delivery_policy)
     if credential is None:
-        credential = (SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project'
-                      else SubscriptionCredentials(Path(config['chatgpt_auth_dir'])) if config.get('chatgpt_auth_dir')
-                      else SubscriptionCredentials())
+        if config.get('provider') == 'deepseek':
+            from .model_routes import ApiCredential, model_connection
+            credential = ApiCredential(model_connection('deepseek', config['model'],
+                                        credentials_file=config.get('credentials_file')))
+        else:
+            credential = (SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project'
+                          else SubscriptionCredentials(Path(config['chatgpt_auth_dir'])) if config.get('chatgpt_auth_dir')
+                          else SubscriptionCredentials())
     server = relay.create_server(
         case,
         control,
@@ -315,6 +333,7 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         credential,
         config.get('minimum_floor_elevations', 1),
         image_history=images,
+        **({'provider': 'deepseek', 'output_tokens': config['output_tokens']} if config.get('provider') == 'deepseek' else {}),
     )
     serving = False
     try:

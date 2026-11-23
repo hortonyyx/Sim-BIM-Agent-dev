@@ -931,10 +931,13 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "shapely" },
+    { name = "starlette" },
     { name = "trimesh" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -956,10 +959,13 @@ requires-dist = [
     { name = "pydantic", specifier = "==2.13.3" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.12.1" },
     { name = "python-dotenv", specifier = "==1.2.2" },
+    { name = "python-multipart", specifier = "==0.0.26" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "scipy", specifier = "==1.17.1" },
     { name = "shapely", specifier = "==2.1.2" },
+    { name = "starlette", specifier = "==1.0.0" },
     { name = "trimesh", specifier = "==4.11.5" },
+    { name = "uvicorn", specifier = "==0.44.0" },
 ]
 
 [package.metadata.requires-dev]

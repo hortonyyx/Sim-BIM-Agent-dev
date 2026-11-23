@@ -84,3 +84,60 @@ def test_background_worker_configuration_is_dsh_only(tmp_path, monkeypatch):
     path.write_text(json.dumps(raw))
     with pytest.raises(ValueError, match="worker.background"):
         load_configuration(path)
+
+
+def test_dsh_mixed_routes_freeze_in_order_and_use_shared_limits(tmp_path, monkeypatch):
+    choices = [{"provider": "chatgpt-subscription", "model": "gpt-6.1-terra"},
+               {"provider": "deepseek", "model": "deepseek-flash"}]
+    path = project(tmp_path, provider="deepseek", model="deepseek-flash", worker=None, workers=choices)
+    case = load_configuration(path)["cases"][0]
+    monkeypatch.setattr("src.dsh_runtime.product.installed_executable", lambda _: Path("dsh"))
+    config = host_config(case, tmp_path)
+    assert config["provider"] == "deepseek" and config["output_tokens"] == 32000
+    assert config["worker"]["routes"] == choices and config["worker"]["max_concurrent"] == 2
+    for key in ("tool_calls", "model_calls"):
+        assert config["worker"][key] + config["limits"][key] == case["limits"][key]
+    raw = json.loads(path.read_bytes())
+    raw["cases"][0]["workers"].append(choices[1])
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="distinct"):
+        load_configuration(path)
+
+
+def test_resume_rejects_changed_input_groups_or_language():
+    materials = dict(images=None, mesh=None, building_input=None, blocks=[{"id": "A", "caption": ""}], locale="en")
+    manifest = {"images": {}, "blocks": materials["blocks"], "locale": "en"}
+    verify_resume_inputs(manifest, materials)
+    with pytest.raises(ValueError, match="configured blocks"):
+        verify_resume_inputs(manifest, {**materials, "blocks": []})
+    with pytest.raises(ValueError, match="configured locale"):
+        verify_resume_inputs(manifest, {**materials, "locale": "zh-CN"})
+
+
+def test_real_mixed_worker_profiles_keep_separate_transports(tmp_path, monkeypatch):
+    import asyncio
+    from src.agent import observer_mcp
+    from src.agent_runtime.adapter import HttpChatAdapter
+    from src.agent_runtime.responses import HttpResponsesAdapter
+    from src.workbench import connections
+
+    monkeypatch.setattr(connections, "official_deepseek_key", lambda p: "offline-test-key")
+    async def validate(connection, model):
+        assert (connection.descriptor.route_id, model) in {
+            ("chatgpt-subscription", "gpt-6.1-terra"), ("deepseek", "deepseek-flash")}
+    monkeypatch.setattr(observer_mcp, "validate_connection_model", validate)
+    args = observer_mcp.parser().parse_args(["--run", str(tmp_path), "--store", str(tmp_path / "pool"),
+        "--model", "gpt-6.1-terra", "--max-concurrent", "2", "--model-calls", "5", "--tool-calls", "3"])
+    async def inspect_transport(provider, model, adapter_type, billing_mode):
+        profile = observer_mcp.worker_profile(args, provider, model)
+        assert profile["route"]["billing_mode"] == billing_mode
+        adapter = await profile["adapter_factory"]("test", None)
+        try:
+            assert isinstance(adapter, adapter_type)
+            if provider == "deepseek":
+                assert adapter.endpoint == "https://api.deepseek.com/chat/completions"
+            assert "offline-test-key" not in json.dumps(profile["route"])
+        finally:
+            await adapter.close()
+    asyncio.run(inspect_transport("chatgpt-subscription", "gpt-6.1-terra", HttpResponsesAdapter, "subscription"))
+    asyncio.run(inspect_transport("deepseek", "deepseek-flash", HttpChatAdapter, "metered"))

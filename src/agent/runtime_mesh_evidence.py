@@ -288,7 +288,7 @@ def prepare_mesh_worker_packet(parent_run, child_run, *, task_id, question, note
         target.write_bytes(png)
     child_manifest = {key: copy.deepcopy(manifest[key]) for key in
         ("images", "image_kind", "mesh_input", "building_input",
-         "architectural_modelling_policy", "vertical_continuity_policy") if key in manifest}
+         "architectural_modelling_policy", "vertical_continuity_policy", "blocks", "locale") if key in manifest}
     child_manifest.update(input_mode="runtime_building_observer" if multimodal else "runtime_mesh_worker_observation", scope=question,
         floor_plan_images=[], floor_scope_source="not_declared", **request["timing"])
     _path(child_run, "inputs.json").write_bytes(json_bytes(child_manifest))
@@ -303,6 +303,7 @@ def prepare_mesh_worker_packet(parent_run, child_run, *, task_id, question, note
         packet["parent_reports"] = reports
     if multimodal:
         packet["building_scope"] = manifest["scope"]
+        packet.update({key: manifest[key] for key in ("blocks", "locale") if key in manifest})
         packet["user_declaration"] = manifest.get("building_input", {}).get("declaration")
         packet["image_kind"] = manifest.get("image_kind")
     if input_views:

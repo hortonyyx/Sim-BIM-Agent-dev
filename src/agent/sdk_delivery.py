@@ -56,7 +56,9 @@ def publish_finished(run: Path, candidate: str, reply, output_directory) -> dict
         raise ValueError("candidate report/proposal no longer matches the finished source")
     root = Path(__file__).resolve().parents[2]
     renderer_names = ("src/agent/execution/source_proposal.py", "src/agent/geometry/source_bim.py",
-                      "scripts/tool_scripts/render_geometry_viewer.py")
+                      "scripts/tool_scripts/render_geometry_viewer.py",
+                      "scripts/tool_scripts/bim_agent_delivery_display.py",
+                      "scripts/tool_scripts/bim_display_language.py")
     publication = {
         "schema": "bim_sdk_publication_v1", "candidate": candidate,
         "source_model_sha256": attested["source_model_sha256"],

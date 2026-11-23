@@ -106,6 +106,44 @@ def test_external_observer_evidence_accounting_and_restart(tmp_path, with_mesh):
         pass
 
 
+def test_selected_worker_models_are_dispatched_and_reused_across_restart(tmp_path):
+    inputs = Path(_case(tmp_path)["input_root"])
+    run, _, _ = runtime_entry.prepare_inputs(tmp_path / "parent", images=inputs / "sketches",
+        mesh=None, building_input=None, image_kind="drawings", scope="Read the drawings.",
+        max_candidates=2, started_epoch=time.time(), seconds=180, orchestrator=True, locale="en")
+    answer = {"uncertain": [{"uncertainty_id": "scale", "statement": "Scale is unverified.",
+                              "related_observation_ids": []}]}
+    tasks = [{"task_id": name, "question": "Check the scale.", "budget": {"model_calls": 1, "tool_calls": 0}}
+             for name in ("first", "second", "selected")]
+    tasks[-1]["worker"] = "offline-scripted/second-model"
+    fixture = tmp_path / "replies.json"
+    fixture.write_text(json.dumps({t["task_id"]: [_response("answer", answer=json.dumps(answer))] for t in tasks}))
+    routes = [{"provider": "scripted", "model": name} for name in ("first-model", "second-model")]
+    store = tmp_path / "pool"
+    args = observer_mcp.parser().parse_args(["--run", str(run), "--store", str(store),
+        "--provider", "scripted", "--model", "first-model", "--routes", json.dumps(routes),
+        "--script", str(fixture), "--max-concurrent", "2", "--model-calls", "5", "--tool-calls", "2"])
+
+    def execute():
+        with observer_mcp.open_observers(args) as workers:
+            response = asyncio.run(workers.call_tool("delegate_workers", {"tasks": tasks}))
+            results = response["structuredContent"]["results"]
+            assert all(r["status"] == "completed" for r in results), results
+            assert [r["worker"] for r in results] == ["offline-scripted/first-model",
+                                                       "offline-scripted/second-model",
+                                                       "offline-scripted/second-model"]
+            assert [t["worker"] for t in workers.state()["tasks"]] == [r["worker"] for r in results]
+    execute()
+    events = (store / "events.jsonl").read_bytes()
+    execute()
+    assert (store / "events.jsonl").read_bytes() == events
+    records = [json.loads(p.read_bytes()) for p in store.glob("tasks/*/mesh_worker.json")]
+    assert len(records) == 3 and all(r["packet"]["locale"] == "en" for r in records)
+    requests = {e.task_id: e.payload.versions.remote_model.remote_alias for e in EventStore.read_events(store / "events.jsonl")
+                if e.payload.event_type == "adapter_request"}
+    assert requests == {"first": "first-model", "second": "second-model", "selected": "second-model"}
+
+
 def test_background_observer_allows_independent_bim_work_and_joins_on_read(tmp_path):
     from src.agent.runtime_tools import frozen_bim_client
     from src.dsh_runtime.observer_closeout import observer_closeout

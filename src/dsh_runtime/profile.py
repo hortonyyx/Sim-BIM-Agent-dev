@@ -10,7 +10,7 @@ DISABLED = [
     'compaction-basic', 'llm-deepseek', 'llm-deepseek-account', 'session-telemetry-otel',
 ]
 def make_patch(base_url, model, image_directory=None, *, worker_args=None, context_window=1050000,
-               worker_wall_seconds=None):
+               worker_wall_seconds=None, display_name="GPT Sol subscription relay"):
     max_tokens=128000
     profile = f"""- id: agent-default-model
   config:
@@ -21,7 +21,7 @@ def make_patch(base_url, model, image_directory=None, *, worker_args=None, conte
   config:
     providers:
       siwc-relay:
-        displayName: GPT Sol subscription relay
+        displayName: {display_name}
         apiKeyEnv: SIM_BIM_RELAY_TOKEN
         api: openai-responses
         baseURL: {json.dumps(base_url)}

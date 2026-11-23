@@ -14,6 +14,13 @@
     "scripts.tool_scripts.run_bim_agent"
   ],
   "resources": [
+    "src/workbench/static/index.html",
+    "src/workbench/static/app.js",
+    "src/workbench/static/style.css",
+    "src/workbench/static/language.js",
+    "src/workbench/static/dom.js",
+    "src/workbench/static/preview.js",
+    "src/workbench/static/mark.svg",
     "src/agent/data/room_types.json",
     "src/agent_runtime/model_profiles.json",
     "src/agent_runtime/route_dispatch.json",
@@ -51,6 +58,8 @@
     "src/agent/sdk.py"
   ],
   "import_distributions": {
+    "starlette": "starlette",
+    "uvicorn": "uvicorn",
     "PIL": "pillow",
     "anyio": "anyio",
     "dotenv": "python-dotenv",

@@ -75,6 +75,9 @@ def demo(output: Path):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="Sim-BIM Agent", description="Generate and inspect lightweight BIM.")
     commands = parser.add_subparsers(dest="action")
+    desk = commands.add_parser("workbench", help="open the local modelling workspace in your browser")
+    desk.add_argument("--port", type=int, default=0)
+    desk.add_argument("--no-browser", action="store_true")
     commands.add_parser("doctor", help="verify installed files and dependencies without contacting a model")
     sample = commands.add_parser("demo", help="build a small synthetic BIM locally, without a model")
     sample.add_argument("--output", type=Path, required=True)
@@ -101,6 +104,9 @@ def main(argv=None):
         parser.print_help()
         return 0
     try:
+        if args.action == "workbench":
+            from src.workbench.server import serve
+            return serve(args.port, not args.no_browser)
         identity = doctor()
         if args.action == "doctor":
             result = identity

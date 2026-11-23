@@ -535,6 +535,7 @@ class Toolkit:
         path = self.candidate_path(candidate)
         source = json.loads((path / "source_model.json").read_bytes())
         result = {"candidate": candidate, "selection_origin": selection_origin,
+                  "locale": self.manifest.get("locale", "zh-CN"),
                   "viewer": f"{candidate}/viewer.html", "source_model": f"{candidate}/source_model.json",
                   "viewer_exists": (path / "viewer.html").is_file(),
                   "generation_status": generation_status or {"state":"in_progress"},
@@ -1085,6 +1086,7 @@ class Toolkit:
             provenance["architectural_regularization"] = architectural_regularization
         stage("admission_seconds")
         report = export_source_proposal(proposal, self.run/candidate, provenance=provenance,
+            locale=self.manifest.get("locale", "zh-CN"),
             mesh_path=self.run/'assets'/'input.glb' if proposal.get('mesh_frame') else None,
             vertical_continuity_policy=self.manifest.get('vertical_continuity_policy'))
         stage("export_seconds")

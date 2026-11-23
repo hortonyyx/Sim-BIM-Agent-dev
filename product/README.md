@@ -30,6 +30,10 @@ Sim-BIM Agent 结合模型的视觉理解与建筑建模工具，生成包含楼
 
 首次安装需要联网下载依赖。看到 `"status": "ready"` 后即可继续。
 
+双击 `Start.cmd` 在默认浏览器中打开本地工作台。选择工作区后，可以把 PNG、GLB 或建筑说明 JSON 拖入，填写组说明并加入素材栏。点开始建模前可修改总说明、主控模型和可选 worker。设置支持 ChatGPT 订阅登录和 DeepSeek 官方 API Key，后者按用量计费。界面、建模说明及新生成的 HTML 支持中文和英文。
+
+工作台把原始素材复制到工作区的 `materials/`，草稿保存在 `project.json`，每次运行的输入快照、日志和交付结果在 `runs/`。配置与凭据保存在本机用户目录。
+
 可以先运行一个不需要模型账号的本地示例：
 
 ```powershell
@@ -95,7 +99,7 @@ D:/Sim-BIM-Data/
 
 含统一调度器的构建附有 [建模任务模板](config.orchestrator.example.json)。将它复制为 `D:/Sim-BIM-Data/config/building-a.json`，在 `materials.images` 填写本次使用的 PNG 目录。有带贴图的 GLB 时，可填写 `materials.mesh`；建筑说明放在 `materials.building_input`。这三个路径均相对于 `input_root`。可在 `materials.image_notes` 中以实际 PNG 文件名为键，记录楼层、立面方向或资料适用范围。
 
-模板选择 `runtime: "dsh"`，需要在 Windows 上安装 DeepSeek Harness，当前适配 ChatGPT 订阅线路。安装后可将其 `dsh.cmd` 放入 PATH，也可在对应 case 的 `dsh_executable` 中填写实际 `DeepSeek Harness.exe` 绝对路径。使用随产品附带的自研运行时可选 `runtime: "native"`，此时删除 `dsh_executable`。
+模板选择 `runtime: "dsh"`，需要在 Windows 上安装 DeepSeek Harness。工作台支持 ChatGPT 订阅和 DeepSeek 官方 API。启动时会从 PATH 或 Windows 安装信息查找宿主，也可在对应 case 的 `dsh_executable` 中填写实际 `DeepSeek Harness.exe` 绝对路径。使用随产品附带的自研运行时可选 `runtime: "native"`，此时删除 `dsh_executable`。
 
 运行 `./Start.cmd auth models` 核对订阅账号可用型号。模板由 GPT-6.2 Sol 主控，需要时可委派 GPT-6.1 Terra 执行只读观察，最多两项并发，主控负责写入最终 BIM。移除 `worker` 可关闭委派。两种宿主都接受这份材料清单和任务说明。
 

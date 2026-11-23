@@ -1,4 +1,4 @@
-"""One-run local Responses relay for the existing SIWC authorization. Never accepts an upstream URL."""
+"""One-run local Responses relay restricted to the selected official provider."""
 from __future__ import annotations
 import asyncio
 import copy
@@ -176,7 +176,7 @@ def assembled(response, done):
 
 class Session:
 
-    def __init__(self, messages, tools, limits, image_history=None):
+    def __init__(self, messages, tools, limits, image_history=None, *, provider="chatgpt-subscription", output_tokens=None):
         self.limits = limits
         self.image_history = image_history
         if image_history is not None:
@@ -190,6 +190,15 @@ class Session:
             tools=tools,
             parameters={'max_tokens': 128000, 'reasoning_effort': 'high'},
         )
+        if provider == "deepseek":
+            # DeepSeek supports flat function definitions and full reasoning items
+            # in stateless history. The ChatGPT-only namespace and include fields
+            # would hide the callable tools from DeepSeek.
+            self.initial.pop("include")
+            self.initial.pop("store")
+            if "tools" in self.initial:
+                self.initial["tools"] = self.initial["tools"][0]["tools"]
+            self.initial["max_output_tokens"] = output_tokens
         self.names = {x['function']['name'] for x in tools}
         self.history = []
         self.last_calls = []
@@ -548,12 +557,12 @@ class Handler(BaseHTTPRequestHandler):
                 model=MODEL,
                 body_sha256=digest(encoded(body)),
                 bytes=len(encoded(body)),
-                upstream=ENDPOINT,
+                upstream=self.server.endpoint,
             )
             started = time.time()
             with self.server.transport.stream(
                 'POST',
-                ENDPOINT,
+                self.server.endpoint,
                 content=encoded(body),
                 timeout=httpx.Timeout(left, connect=min(20, left)),
                 headers={
@@ -586,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
                                      failure=state.failure)
                     return self.error(
                         r.status_code,
-                        'subscription upstream rejected request; see relay audit',
+                        'model provider rejected this request; see relay audit',
                     )
                 self.begin()
                 opened = True
@@ -773,15 +782,21 @@ def publish_budget(state):
         },
     )
 
-def create_server(case, control, model, credential, minimum_floors=1, image_history=None):
+def create_server(case, control, model, credential, minimum_floors=1, image_history=None, *,
+                  provider="chatgpt-subscription", output_tokens=None):
+    endpoints = {"chatgpt-subscription": ENDPOINT, "deepseek": "https://api.deepseek.com/responses"}
+    if provider not in endpoints:
+        raise ValueError("unsupported DSH relay provider")
     configure(case, control, model)
     CONTROL.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    server.state = Session(*cfg(), read_limits(), image_history=image_history)
+    server.state = Session(*cfg(), read_limits(), image_history=image_history, provider=provider,
+                           output_tokens=output_tokens)
     server.mutex = threading.Lock()
     server.credential = credential
     server.minimum_floors = minimum_floors
-    server.transport = PooledTransport(ENDPOINT, audit)
+    server.endpoint = endpoints[provider]
+    server.transport = PooledTransport(server.endpoint, audit)
     publish_budget(server.state)
     return server
 

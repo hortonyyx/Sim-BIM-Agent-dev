@@ -111,6 +111,7 @@ def building_precision(toolkit, candidate, source=None):
             display['regularization_report'] = regularization
             saved = json.loads((path / 'report.json').read_text(encoding='utf-8'))
             viewer = build_source_viewer_html(display,
+                locale=toolkit.manifest.get('locale', 'zh-CN'),
                 source_geometry_ready=saved.get('source_geometry_ready', False),
                 assumptions=source.get('assumptions', []),
                 unresolved=source.get('generation', {}).get('unresolved', []),

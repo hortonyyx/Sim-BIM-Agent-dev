@@ -3,6 +3,7 @@
   "scope": {
     "runtime": [
       "src/dsh_runtime",
+      "src/workbench",
       "AI_agent/workflow/configs/deepseek_harness.yml",
       "src/agent_runtime",
       "src/harness_contracts",

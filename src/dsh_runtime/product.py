@@ -10,14 +10,34 @@ import shutil
 import sys
 
 from src.agent.runtime_configuration import (
-    ROOT, load_configuration, resolve_case_input, resolve_supplemental_inputs, selected_case,
+    ROOT, load_configuration, orchestrator_worker, resolve_case_input, resolve_supplemental_inputs, selected_case,
 )
 from src.agent.bim_inputs import admitted_png_paths
-from src.agent_runtime.connections import resolve_connection, validate_connection_model
 from src.agent_runtime.estimation import get_model_profile
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
 from src.agent_runtime.run_paths import resolve_run_output
 from . import launcher
+from .model_routes import ApiCredential, model_connection
+
+
+def _windows_installation():
+    import winreg
+    uninstall = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, uninstall) as keys:
+                for index in range(winreg.QueryInfoKey(keys)[0]):
+                    try:
+                        with winreg.OpenKey(keys, winreg.EnumKey(keys, index)) as entry:
+                            if winreg.QueryValueEx(entry, "DisplayName")[0] == "DeepSeek Harness":
+                                path = Path(winreg.QueryValueEx(entry, "InstallLocation")[0]) / "DeepSeek Harness.exe"
+                                if path.is_file() and (path.parent / "resources/app.asar").is_file():
+                                    return path
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return None
 
 
 def installed_executable(configured: str | None) -> Path:
@@ -26,9 +46,11 @@ def installed_executable(configured: str | None) -> Path:
         executable = Path(explicit).expanduser().resolve()
     else:
         cli = shutil.which("dsh.cmd")
-        if not cli:
+        executable = (Path(cli).resolve().parents[4] / "DeepSeek Harness.exe" if cli else None)
+        if os.name == "nt" and (executable is None or not executable.is_file()):
+            executable = _windows_installation()
+        if executable is None:
             raise ValueError("set dsh_executable to the installed DeepSeek Harness.exe or add dsh.cmd to PATH")
-        executable = Path(cli).resolve().parents[4] / "DeepSeek Harness.exe"
     if not executable.is_file() or not (executable.parent / "resources/app.asar").is_file():
         raise ValueError(f"DeepSeek Harness desktop installation missing at {executable}")
     return executable
@@ -45,22 +67,34 @@ def host_config(case, auth_dir):
               "dsh_executable": str(installed_executable(case.get("dsh_executable"))),
               "context_window": case.get("context_tokens") or get_model_profile(model, strict=True).context_window_tokens,
               "image_history_batches": case.get("image_history_batches")}
-    if case.get("worker") is not None:
-        worker = case["worker"]
-        pool = {"model": worker.get("model", model),
+    provider = case.get("provider", "chatgpt-subscription")
+    if provider == "deepseek":
+        config.update(provider=provider, output_tokens=case["output_tokens"])
+    worker = orchestrator_worker(case)
+    if worker is not None:
+        choices = case.get("workers")
+        pool = {"model": choices[0]["model"] if choices else worker.get("model", model),
                 "output_tokens": worker.get("output_tokens", case["output_tokens"]),
                 "reasoning_effort": worker.get("reasoning_effort", "high"),
                 "max_concurrent": worker.get("max_concurrent", 1)}
         if worker.get("background"):
             pool["background"] = True
+        if choices:
+            pool["routes"] = choices
         for key in ("model_calls", "tool_calls"):
             pool[key] = max(1, limits[key] // 4)
             coordinator_limits[key] -= pool[key]
         config["worker"] = pool
+    if case.get("credentials_file") and (provider == "deepseek" or any(
+            route["provider"] == "deepseek" for route in case.get("workers", []))):
+        config["credentials_file"] = str((ROOT / Path(case["credentials_file"]).expanduser()).resolve())
     return config
 
 
 def verify_resume_inputs(manifest, material_paths):
+    for name in ("blocks", "locale"):
+        if manifest.get(name) != material_paths.get(name):
+            raise ValueError(f"configured {name} differs from the admitted DSH run")
     images = material_paths["images"]
     hashes = {p.name: launcher.digest(p) for p in admitted_png_paths(images)} if images else {}
     expected = {name: data["sha256"] for name, data in manifest["images"].items()}
@@ -86,22 +120,37 @@ def launch(case, *, resume=False):
     auxiliary, declaration = resolve_supplemental_inputs(case)
     mesh = primary if case["input_kind"] == "mesh" else None
     materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
+    materials.update({key: case[key] for key in ("blocks", "locale") if key in case})
     if resume:
         if launcher.read(output / "config.json") != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
             raise ValueError("requested DSH configuration or task differs from the frozen run")
         verify_resume_inputs(launcher.read(output / "private/dsh/work/bim/inputs.json"), materials)
     elif output.exists():
         raise ValueError(f"run directory already exists: {output}")
-    connection = resolve_connection(case["provider"], None, chatgpt_auth_dir=credentials.directory)
-    for model in dict.fromkeys([case["model"], config.get("worker", {}).get("model", case["model"])]):
-        asyncio.run(validate_connection_model(connection, model))
+    provider = case["provider"]
+    pool = config.get("worker", {})
+    routes = [{"provider": provider, "model": case["model"]}]
+    if pool:
+        routes.extend(pool.get("routes", [{"provider": provider, "model": pool["model"]}]))
+    connections = {}
+    for route in routes:
+        name = route["provider"]
+        if name not in connections:
+            connections[name] = model_connection(name, route["model"], auth_dir=credentials.directory,
+                                                 credentials_file=config.get("credentials_file"))
+    subscription = connections.get("chatgpt-subscription")
+    if subscription:
+        catalog = {m.slug for m in asyncio.run(subscription.subscription.list_models())}
+        if any(r["model"] not in catalog for r in routes if r["provider"] == "chatgpt-subscription"):
+            raise ValueError("selected model is not available in this ChatGPT subscription catalog")
+    connection = connections[provider]
     if not resume:
         output.mkdir(parents=True, exist_ok=False)
         (output / "shared").mkdir()
         (output / "shared/task.txt").write_text(case["scope"], encoding="utf-8")
         (output / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
         launcher.prepare(output, material_paths=materials)
-    return launcher.run(output, resume, credential=credentials,
+    return launcher.run(output, resume, credential=connection.subscription or ApiCredential(connection),
                         image_history_batches=case.get("image_history_batches"))
 
 

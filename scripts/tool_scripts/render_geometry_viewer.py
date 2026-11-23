@@ -18,7 +18,10 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from pathlib import Path
+
+from scripts.tool_scripts.bim_display_language import localize_template, translator
 
 _VENDOR = Path(__file__).resolve().parent / "vendor"
 
@@ -89,7 +92,8 @@ _APP_JS = r"""
     }) : text; }
   const spaceName = z => (NAMES.spaces||{})[(SOURCE_MAP.zones||{})[z]||z] || z;
   const objectName = n => (NAMES.objects||{})[n] || n;
-  const roleLabel = r => ROOM_TYPES[r] ? ROOM_TYPES[r].label_zh+' · '+r : r;
+  const enumLabel = value => GEO.enum_labels?.[value] ?? value;
+  const roleLabel = role => GEO.locale === 'zh-CN' ? (ROOM_TYPES[role]?.label_zh || enumLabel(role)) : enumLabel(role);
   const ROLES = GEO.roles || {};
   const HAS_ROLES = Object.keys(ROLES).length > 0;
   const roleOf = z => (ROLES[z] || '').toString().toLowerCase();
@@ -242,7 +246,7 @@ _APP_JS = r"""
     let area=0;
     for(let i=0;i<indices.length;i+=3){const [a,b,c]=indices.slice(i,i+3).map(j=>points[j]);
       area+=Math.abs((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))/2;}
-    if(Math.abs(area-expected)>Math.max(1e-8,Math.abs(expected)*1e-8)) throw new Error('Display triangulation does not cover its boundary');
+    if(Math.abs(area-expected)>Math.max(1e-8,Math.abs(expected)*1e-8)) throw new Error('[[msg:Display triangulation does not cover its boundary]]');
     return {positions:loops.flat().flat(),indices};
   }
   function ringGeom(ring, holes=[]){ const {positions:pos,indices:idx}=triangulateRings(ring,holes);
@@ -325,7 +329,7 @@ _APP_JS = r"""
     const m=new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide,transparent:true,
       opacity:o.state==='closed'?0.7:0.12,depthWrite:false});
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
-    mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'门':'空开口',name:o.name,
+    mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'[[msg:门]]':'[[msg:空开口]]',name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
       parent:o.parent,kind:'opening',dup,area:polyArea(o.verts),baseColor:color,sourceId:o.source_opening_id,
       spaceId:o.space_id,otherSpaceId:o.other_space_id,state:o.state};
@@ -430,7 +434,7 @@ _APP_JS = r"""
   function clearMeasure(){ measuring=false; snap.visible=false; clearPair();
     $('meas').style.display='none'; renderer.domElement.style.cursor='default'; }
   function startMeasure(){ clearMeasure(); measuring=true; renderer.domElement.style.cursor='crosshair';
-    $('meas').style.display='block'; $('meas').textContent='measure: snap vertex 1  (Esc to exit)'; }
+    $('meas').style.display='block'; $('meas').textContent='[[msg:measure: snap vertex 1  (Esc to exit)]]'; }
   function marker(p){ mGroup.add(topBall(p, 0xd81b60, 0.011)); }
   // Picking follows wall opacity: when walls are OPAQUE you can only snap/select what is visibly
   // in front (a candidate hidden behind a face is skipped); turn DOWN wall opacity to reach the
@@ -486,7 +490,7 @@ _APP_JS = r"""
       if(d<bd && (thru || !occluded(A.clone().add(B).multiplyScalar(0.5)))){ bd=d; best={e,A,B}; } }
     clearSelection(); if(!best) return;
     selGroup.add(fatLine(best.A, best.B, SEL_COLOR, 0.006));   // whole edge as one thick, always-on-top line
-    $('sel').innerHTML='<div class="hh">edge</div>'+kv([['名称',best.e.publicName],['所属面',best.e.parentName],['所属房间',spaceName(best.e.zone)],['所属楼层',floorName(best.e.floor)],['length',best.e.len.toFixed(3)+' m']])+traceInfo([['源父对象 ID',(SOURCE_MAP.surfaces||{})[best.e.sourceName]||(SOURCE_MAP.windows||{})[best.e.sourceName]||(SOURCE_MAP.openings||{})[best.e.sourceName]||best.e.sourceName]]); $('sel').style.display='block'; }
+    $('sel').innerHTML='<div class="hh">[[msg:edge]]</div>'+kv([['[[msg:名称]]',best.e.publicName],['[[msg:所属面]]',best.e.parentName],['[[msg:所属房间]]',spaceName(best.e.zone)],['[[msg:所属楼层]]',floorName(best.e.floor)],['[[msg:length]]',best.e.len.toFixed(3)+' m']])+traceInfo([['[[msg:源父对象 ID]]',(SOURCE_MAP.surfaces||{})[best.e.sourceName]||(SOURCE_MAP.windows||{})[best.e.sourceName]||(SOURCE_MAP.openings||{})[best.e.sourceName]||best.e.sourceName]]); $('sel').style.display='block'; }
 
   // ---- selection picking (face raycast, for click-select only) ----
   const raycaster=new THREE.Raycaster();
@@ -498,10 +502,10 @@ _APP_JS = r"""
       .filter(h=>comparisonPlanes().every(p=>p.distanceToPoint(h.point)>=-0.0001)); return hits.length?hits[0]:null; }
   // structured selection readout: a titled block of label→value rows (one per line)
   function kv(pairs){ return pairs.filter(p=>p[1]!=null && p[1]!=='').map(p=>row(p[0], esc(p[1]))).join(''); }
-  function traceInfo(pairs){ const content=kv(pairs); return content?'<details class="trace"><summary>内部编号与原始记录</summary>'+content+'</details>':''; }
+  function traceInfo(pairs){ const content=kv(pairs); return content?'<details class="trace"><summary>[[msg:内部编号与原始记录]]</summary>'+content+'</details>':''; }
   function rawEvidence(items){ return (items||[]).map(x=>typeof x==='string'?x:JSON.stringify(x)).join('; '); }
   function evidenceText(items){ return referenceText(rawEvidence(items)); }
-  function enclosureLabel(v){ return ({enclosed:'封闭',semi_open:'半开敞',open:'开敞',physical:'实体',mixed:'局部混合',unknown:'未知'})[v] || v; }
+  function enclosureLabel(v){ return ({enclosed:'[[msg:封闭]]',semi_open:'[[msg:半开敞]]',open:'[[msg:开敞]]',physical:'[[msg:实体]]',mixed:'[[msg:局部混合]]',unknown:'[[msg:未知]]'})[v] || v; }
   function boundaryFor(u){ const bid=((SOURCE_MAP.surfaces||{})[u.name] || u.name); return SOURCE_BOUNDARIES[bid] || null; }
   function coverageFor(b){
     if(!b || !(b.vertices||[]).length) return '';
@@ -509,60 +513,60 @@ _APP_JS = r"""
     (b.enclosure_regions||[]).forEach(r=>{if(area[r.condition]!=null) area[r.condition]+=polyArea(r.vertices||[])-(r.holes||[]).reduce((sum,h)=>sum+polyArea(h),0);});
     if(!(b.enclosure_regions||[]).length){ if(b.enclosure==='open') area.open=total; if(b.enclosure==='unknown') area.unknown=total; }
     const physical=Math.max(0,total-area.open-area.unknown), rows=[];
-    [['实体',physical],['开敞',area.open],['未知',area.unknown]].forEach(([k,a])=>{if(a>total*1e-8) rows.push(k+' '+(a/total*100).toFixed(0)+'%');});
+    [['[[msg:实体]]',physical],['[[msg:开敞]]',area.open],['[[msg:未知]]',area.unknown]].forEach(([k,a])=>{if(a>total*1e-8) rows.push(k+' '+(a/total*100).toFixed(0)+'%');});
     return rows.join(' · ');
   }
   function boundaryEvidence(b,key){ return evidenceText([...(b&&b[key]||[]),...(b&&b.enclosure_regions||[]).flatMap(r=>r[key]||[])]); }
-  function boundaryEvidenceKinds(b){ return [...new Set((b&&b.enclosure_regions||[]).map(r=>r.evidence_kind).filter(Boolean))].join(', '); }
+  function boundaryEvidenceKinds(b){ return [...new Set((b&&b.enclosure_regions||[]).map(r=>enumLabel(r.evidence_kind)).filter(Boolean))].join(', '); }
   function wallPropertyRows(b){
     if(!b || b.geometry_type!=='wall' || b.kind!=='physical') return [];
     const p=WALL_PROPERTIES[b.id]||{}, thickness=p.thickness_m;
-    return [['墙厚',p.conflict?'厚度记录冲突，待确认':thickness==null?'未知':Number((thickness*1000).toFixed(3))+' mm'],
-      ['厚度判定',({observed:'图纸读数',inferred:'推断',unknown:'未知'})[p.evidence_status]||'未注明'],
-      ['取线位置',({centerline:'墙中心线',negative_face:'世界负方向侧墙面',positive_face:'世界正方向侧墙面',unknown:'未知'})[p.reference_side]||'未知'],
-      ['厚度依据',evidenceText(p.basis||[])],['墙厚来源',evidenceText(p.source_refs||[])]];
+    return [['[[msg:墙厚]]',p.conflict?'[[msg:厚度记录冲突，待确认]]':thickness==null?'[[msg:未知]]':Number((thickness*1000).toFixed(3))+' mm'],
+      ['[[msg:厚度判定]]',({observed:'[[msg:图纸读数]]',inferred:'[[msg:推断]]',unknown:'[[msg:未知]]'})[p.evidence_status]||'[[msg:未注明]]'],
+      ['[[msg:取线位置]]',({centerline:'[[msg:墙中心线]]',negative_face:'[[msg:世界负方向侧墙面]]',positive_face:'[[msg:世界正方向侧墙面]]',unknown:'[[msg:未知]]'})[p.reference_side]||'[[msg:未知]]'],
+      ['[[msg:厚度依据]]',evidenceText(p.basis||[])],['[[msg:墙厚来源]]',evidenceText(p.source_refs||[])]];
   }
   function describe(mode,o){ const u=o.userData;
-    if(mode==='floor') return '<div class="hh">楼层</div>'+kv([['名称',floorName(u.floor)],['底标高',BASES[u.floor]+' m']])+traceInfo([['源楼层 ID',NAMED_FLOORS[u.floor]?.id],['原楼层名',NAMED_FLOORS[u.floor]?.source_name]]);
+    if(mode==='floor') return '<div class="hh">[[msg:楼层]]</div>'+kv([['[[msg:名称]]',floorName(u.floor)],['[[msg:底标高]]',BASES[u.floor]+' m']])+traceInfo([['[[msg:源楼层 ID]]',NAMED_FLOORS[u.floor]?.id],['[[msg:原楼层名]]',NAMED_FLOORS[u.floor]?.source_name]]);
     if(u.kind==='enclosure-region' && mode!=='zone'){ const boundary=SOURCE_BOUNDARIES[u.boundaryId];
-      return '<div class="hh">'+(u.condition==='open'?'明确开敞区域':'围护未知区域')+'</div>'+kv([
-        ['名称',u.publicName],['所属面',objectName(u.boundaryId)],['所属楼层',floorName(u.floor)],['空间',spaceName(u.zone)],['面积',u.area.toFixed(2)+' m²'],
-        ['边界覆盖',coverageFor(boundary)],['证据类型',u.evidenceKind],
-        ['假设',evidenceText(u.assumptions)]])+traceInfo([['源边界 ID',u.boundaryId],['来源',rawEvidence(u.sourceRefs)]]); }
+      return '<div class="hh">'+(u.condition==='open'?'[[msg:明确开敞区域]]':'[[msg:围护未知区域]]')+'</div>'+kv([
+        ['[[msg:名称]]',u.publicName],['[[msg:所属面]]',objectName(u.boundaryId)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:空间]]',spaceName(u.zone)],['[[msg:面积]]',u.area.toFixed(2)+' m²'],
+        ['[[msg:边界覆盖]]',coverageFor(boundary)],['[[msg:证据类型]]',enumLabel(u.evidenceKind)],
+        ['[[msg:假设]]',evidenceText(u.assumptions)]])+traceInfo([['[[msg:源边界 ID]]',u.boundaryId],['[[msg:来源]]',rawEvidence(u.sourceRefs)]]); }
     if(u.kind==='opening' && mode!=='zone') return '<div class="hh">'+esc(u.type)+'</div>'+kv([
-      ['名称',objectName(u.name)],['所属面',objectName(u.parent)],['所属楼层',floorName(u.floor)],['所属房间',spaceName(u.zone)],['连通',spaceName(u.spaceId)+' ↔ '+(u.otherSpaceId?spaceName(u.otherSpaceId):'室外')],
-      ['开闭状态',({open:'开放',closed:'关闭',unknown:'未确定'})[u.state]],['面积',u.area.toFixed(2)+' m²']])+traceInfo([['源开口 ID',u.sourceId],['显示对象 ID',u.name]]);
+      ['[[msg:名称]]',objectName(u.name)],['[[msg:所属面]]',objectName(u.parent)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:所属房间]]',spaceName(u.zone)],['[[msg:连通]]',spaceName(u.spaceId)+' ↔ '+(u.otherSpaceId?spaceName(u.otherSpaceId):'[[msg:室外]]')],
+      ['[[msg:开闭状态]]',({open:'[[msg:开放]]',closed:'[[msg:关闭]]',unknown:'[[msg:未确定]]'})[u.state]],['[[msg:面积]]',u.area.toFixed(2)+' m²']])+traceInfo([['[[msg:源开口 ID]]',u.sourceId],['[[msg:显示对象 ID]]',u.name]]);
     if(mode==='zone'){ const r=roleOf(u.zone), sid=(SOURCE_MAP.zones||{})[u.zone]||u.zone, space=SOURCE_SPACES[sid],
       enclosureEvidence=space&&(space.enclosure_evidence||{}), roleEvidence=space&&space.role_evidence;
-      return '<div class="hh">zone</div>'+kv([['名称',spaceName(u.zone)],['所属楼层',floorName(u.floor)],['功能',roleLabel(r)||'—'],
-        ['功能判定',roleEvidence&&({observed:'图文明确',inferred:'推断',unknown:'待判定'})[roleEvidence.basis]],
-        ['功能依据',roleEvidence&&evidenceText(roleEvidence.source_refs)],
-        ['功能假设',roleEvidence&&evidenceText(roleEvidence.assumptions)],
-        ['空间开敞性',space&&enclosureLabel(space.exposure||space.enclosure)],
-        ['证据类型',enclosureEvidence&&enclosureEvidence.evidence_kind],
-        ['假设',space&&evidenceText([...(space.assumptions||[]),...(enclosureEvidence.assumptions||[])])],
-        ['volume',(zoneVol[u.zone]||0).toFixed(2)+' m³']])+traceInfo([['源空间 ID',sid],['来源',space&&rawEvidence([...(space.source_refs||[]),...(enclosureEvidence.source_refs||[])])]]); }
+      return '<div class="hh">[[msg:zone]]</div>'+kv([['[[msg:名称]]',spaceName(u.zone)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:功能]]',roleLabel(r)||'—'],
+        ['[[msg:功能判定]]',roleEvidence&&({observed:'[[msg:图文明确]]',inferred:'[[msg:推断]]',unknown:'[[msg:待判定]]'})[roleEvidence.basis]],
+        ['[[msg:功能依据]]',roleEvidence&&evidenceText(roleEvidence.source_refs)],
+        ['[[msg:功能假设]]',roleEvidence&&evidenceText(roleEvidence.assumptions)],
+        ['[[msg:空间开敞性]]',space&&enclosureLabel(space.exposure||space.enclosure)],
+        ['[[msg:证据类型]]',enclosureEvidence&&enumLabel(enclosureEvidence.evidence_kind)],
+        ['[[msg:假设]]',space&&evidenceText([...(space.assumptions||[]),...(enclosureEvidence.assumptions||[])])],
+        ['[[msg:volume]]',(zoneVol[u.zone]||0).toFixed(2)+' m³']])+traceInfo([['[[msg:源空间 ID]]',sid],['[[msg:来源]]',space&&rawEvidence([...(space.source_refs||[]),...(enclosureEvidence.source_refs||[])])]]); }
     // Area of the selected visible fragment: wall apertures are cut out;
     // windows remain separate child surfaces and are not subtracted here.
     const boundary=boundaryFor(u);
-    return '<div class="hh">surface</div>'+kv([['名称',u.publicName||objectName(u.name)],['所属面',objectName(u.parent||u.name)],['所属房间',spaceName(u.zone)],['所属楼层',floorName(u.floor)],['type',u.type],
-      ['显示语义',u.kind==='surface'?(u.enclosureCondition==='unknown'?'未知围护（未当作实体墙）':'实体围护'):'窗'],
+    return '<div class="hh">[[msg:surface]]</div>'+kv([['[[msg:名称]]',u.publicName||objectName(u.name)],['[[msg:所属面]]',objectName(u.parent||u.name)],['[[msg:所属房间]]',spaceName(u.zone)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:type]]',enumLabel(u.type)],
+      ['[[msg:显示语义]]',u.kind==='surface'?(u.enclosureCondition==='unknown'?'[[msg:未知围护（未当作实体墙）]]':'[[msg:实体围护]]'):'[[msg:窗]]'],
       ...(u.type==='Wall'?wallPropertyRows(boundary):[]),
-      ['边界围护',boundary&&enclosureLabel(boundary.enclosure||boundary.kind)],['边界覆盖',coverageFor(boundary)],
-      ['证据类型',boundaryEvidenceKinds(boundary)],['假设',boundaryEvidence(boundary,'assumptions')],
-      ['area',(u.area||0).toFixed(2)+' m²'], ['note', u.type==='Wall'?'当前实体片面积；开敞或未知区域另以半透明灰色辅助面显示':'']])+traceInfo([
-      ['源对象 ID',(SOURCE_MAP.surfaces||{})[u.name] || (SOURCE_MAP.windows||{})[u.name] || u.name],
-      ['来源',boundary&&rawEvidence([...(boundary.source_refs||[]),...(boundary.enclosure_regions||[]).flatMap(r=>r.source_refs||[])])]]);
+      ['[[msg:边界围护]]',boundary&&enclosureLabel(boundary.enclosure||boundary.kind)],['[[msg:边界覆盖]]',coverageFor(boundary)],
+      ['[[msg:证据类型]]',boundaryEvidenceKinds(boundary)],['[[msg:假设]]',boundaryEvidence(boundary,'assumptions')],
+      ['[[msg:area]]',(u.area||0).toFixed(2)+' m²'], ['[[msg:note]]', u.type==='Wall'?'[[msg:当前实体片面积；开敞或未知区域另以半透明灰色辅助面显示]]':'']])+traceInfo([
+      ['[[msg:源对象 ID]]',(SOURCE_MAP.surfaces||{})[u.name] || (SOURCE_MAP.windows||{})[u.name] || u.name],
+      ['[[msg:来源]]',boundary&&rawEvidence([...(boundary.source_refs||[]),...(boundary.enclosure_regions||[]).flatMap(r=>r.source_refs||[])])]]);
   }
   function handleClick(ev){
     if(measuring){ const r=renderer.domElement.getBoundingClientRect();
       const p=snapPick(ev.clientX-r.left, ev.clientY-r.top); if(!p) return;
       if(measurePts.length>=2) clearPair();  // continuous: a new click starts a fresh pair (only latest shown)
       marker(p); measurePts.push(p);
-      if(measurePts.length<2){ $('meas').textContent='measure: snap vertex 2  (Esc to exit)'; }
+      if(measurePts.length<2){ $('meas').textContent='[[msg:measure: snap vertex 2  (Esc to exit)]]'; }
       else { const d=measurePts[0].distanceTo(measurePts[1]);
         mGroup.add(fatLine(measurePts[0], measurePts[1], 0xd81b60, 0.004));  // always-on-top distance line
-        $('meas').textContent='distance: '+d.toFixed(3)+' m  (click=next, Esc=exit)'; }
+        $('meas').textContent='[[msg:distance: ]]'+d.toFixed(3)+'[[msg: m  (click=next, Esc=exit)]]'; }
       return; }
     const mode=$('colorBy').value;
     if(mode==='edge'){ edgePick(ev); return; }
@@ -604,9 +608,9 @@ _APP_JS = r"""
     referenceMeshes.forEach(m=>{const v=parseFloat($('meshOpacity').value)*m.userData.alphaFactor;
       m.material.opacity=v; m.material.transparent=v<1||m.userData.alphaMode==='BLEND';
       m.material.depthWrite=!m.material.transparent;});
-    $('meshStatus').textContent=textureFailures?'贴图加载失败，请重新打开完整 HTML。':
-      ($('showMesh').checked&&exploded?'展开时暂停贴图叠加':
-      (comparison?'粉色：BIM边界 · 绿色：窗 · 橙色：门；遮挡处可剖切查看。':'原始贴图按已保存坐标对齐，可随剖切和楼层筛选。'));
+    $('meshStatus').textContent=textureFailures?'[[msg:贴图加载失败，请重新打开完整 HTML。]]':
+      ($('showMesh').checked&&exploded?'[[msg:展开时暂停贴图叠加]]':
+      (comparison?'[[msg:粉色：BIM边界 · 绿色：窗 · 橙色：门；遮挡处可剖切查看。]]':'[[msg:原始贴图按已保存坐标对齐，可随剖切和楼层筛选。]]'));
     applyClipping(); }
   function explodeOffset(zone){ const amt=parseFloat($('explode').value); if(amt<=0) return new THREE.Vector3();
     if($('explodeMode').value==='floor') return new THREE.Vector3(0,0, (zoneFloor[zone]||0)*amt*radius*1.0);
@@ -622,16 +626,16 @@ _APP_JS = r"""
   // ---- right-side info (structured) ----
   function row(k,v){ return '<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>'; }
   $('hud').innerHTML =
-    '<div class="hh">MODEL</div>' + row('zones',(GEO.zones||[]).length) + row('surfaces',SURF.length) + row('windows',WINS.length) +
-    '<div class="hh">BOUNDING BOX</div>' + row('width (x)',size.x.toFixed(2)+' m') + row('depth (y)',size.y.toFixed(2)+' m') +
-    row('height (z)',size.z.toFixed(2)+' m') + row(SOURCE?'源高度分组':'floors',BASES.length);
-  if(SOURCE) $('hud').innerHTML += '<div class="hh">源建筑模型</div>' +
-    row('源空间',SOURCE.spaces.length) + row('源边界',SOURCE.boundaries.length) +
-    row('源开口',SOURCE.openings.length) + row((SOURCE.schema_version||'').startsWith('source_bim_v')?'源几何检查':'派生映射检查',esc(SOURCE.validation.status)) +
-    row('已记录的门/开口连接',(SOURCE.connections||[]).length) +
-    (SOURCE.schema_version==='source_bim_v3' ? row('半开敞 / 开敞空间',SOURCE.spaces.filter(s=>['semi_open','open'].includes(s.enclosure)).length) +
-      row('开敞 / 未知边界',SOURCE.boundaries.filter(b=>['open','unknown','mixed'].includes(b.enclosure)).length) : '') +
-    '<p>逻辑闭合只界定空间范围，不表示实体密闭或热区。半透明灰色是开敞或未知围护的查看辅助面；点选后可区分语义与来源。</p>';
+    '<div class="hh">[[msg:MODEL]]</div>' + row('[[msg:zones]]',(GEO.zones||[]).length) + row('[[msg:surfaces]]',SURF.length) + row('[[msg:windows]]',WINS.length) +
+    '<div class="hh">[[msg:BOUNDING BOX]]</div>' + row('[[msg:width (x)]]',size.x.toFixed(2)+' m') + row('[[msg:depth (y)]]',size.y.toFixed(2)+' m') +
+    row('[[msg:height (z)]]',size.z.toFixed(2)+' m') + row(SOURCE?'[[msg:源高度分组]]':'[[msg:floors]]',BASES.length);
+  if(SOURCE) $('hud').innerHTML += '<div class="hh">[[msg:源建筑模型]]</div>' +
+    row('[[msg:源空间]]',SOURCE.spaces.length) + row('[[msg:源边界]]',SOURCE.boundaries.length) +
+    row('[[msg:源开口]]',SOURCE.openings.length) + row((SOURCE.schema_version||'').startsWith('source_bim_v')?'[[msg:源几何检查]]':'[[msg:派生映射检查]]',esc(enumLabel(SOURCE.validation.status))) +
+    row('[[msg:已记录的门/开口连接]]',(SOURCE.connections||[]).length) +
+    (SOURCE.schema_version==='source_bim_v3' ? row('[[msg:半开敞 / 开敞空间]]',SOURCE.spaces.filter(s=>['semi_open','open'].includes(s.enclosure)).length) +
+      row('[[msg:开敞 / 未知边界]]',SOURCE.boundaries.filter(b=>['open','unknown','mixed'].includes(b.enclosure)).length) : '') +
+    '<p>[[msg:逻辑闭合只界定空间范围，不表示实体密闭或热区。半透明灰色是开敞或未知围护的查看辅助面；点选后可区分语义与来源。]]</p>';
 
   // ---- room-type legend (shown in zone mode: colour swatch → room type) ----
   function updateLegend(mode){
@@ -647,11 +651,11 @@ _APP_JS = r"""
   }
 
   // ---- section controls ----
-  const secDiv=$('sections'); secDiv.innerHTML='<h2>section cuts</h2>';
+  const secDiv=$('sections'); secDiv.innerHTML='<h2>[[msg:section cuts]]</h2>';
   AX.forEach(a=>{ const wrap=document.createElement('div'); wrap.className='sec'; const step=((a.max-a.min)/200)||0.01;
-    wrap.innerHTML='<label class="chk"><input type="checkbox" id="en'+a.key+'"> cut '+a.key+'</label>'+
+    wrap.innerHTML='<label class="chk"><input type="checkbox" id="en'+a.key+'"> [[msg:cut ]]'+a.key+'</label>'+
       '<input type="range" id="pos'+a.key+'" min="'+a.min+'" max="'+a.max+'" step="'+step+'" value="'+a.max+'">'+
-      '<label class="chk"><input type="checkbox" id="flip'+a.key+'"> flip side</label>';
+      '<label class="chk"><input type="checkbox" id="flip'+a.key+'"> [[msg:flip side]]</label>';
     secDiv.appendChild(wrap);
     const refresh=()=>{a.enabled=$('en'+a.key).checked; a.flip=$('flip'+a.key).checked; a.pos=parseFloat($('pos'+a.key).value); updatePlane(a); applyClipping();};
     $('en'+a.key).onchange=refresh; $('pos'+a.key).oninput=refresh; $('flip'+a.key).onchange=refresh; });
@@ -684,46 +688,47 @@ _APP_JS = r"""
 
 _PANEL_HTML = r"""
 <div id="panel">
-  <h1>Geometry inspection</h1>
+  <h1>[[msg:Geometry inspection]]</h1>
   <div class="subtitle">__TITLE__</div>
 
-  <h2>select by</h2>
-  <select id="colorBy"><option value="zone">zone</option><option value="floor">floor</option><option value="surface">surface</option><option value="edge">edge</option></select>
+  <h2>[[msg:select by]]</h2>
+  <select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select>
 
-  <h2>楼层 / 高度范围</h2>
-  <select id="floorSel"><option value="-1">all floors</option></select>
+  <h2>[[msg:楼层 / 高度范围]]</h2>
+  <select id="floorSel"><option value="-1">[[msg:all floors]]</option></select>
 
   <div id="meshControls" hidden>
-    <h2>识别对照</h2>
-    <label class="chk"><input type="checkbox" id="showMesh"> 叠加原始 textured mesh</label>
-    <select id="meshMode"><option value="outline">贴图 + BIM轮廓</option><option value="blend">贴图 + BIM实体</option><option value="mesh">仅贴图</option></select>
-    <label class="rng">贴图透明度</label>
+    <h2>[[msg:识别对照]]</h2>
+    <label class="chk"><input type="checkbox" id="showMesh"> [[msg:叠加原始 textured mesh]]</label>
+    <select id="meshMode"><option value="outline">[[msg:贴图 + BIM轮廓]]</option><option value="blend">[[msg:贴图 + BIM实体]]</option><option value="mesh">[[msg:仅贴图]]</option></select>
+    <label class="rng">[[msg:贴图透明度]]</label>
     <input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1">
     <p id="meshStatus"></p>
-    <p>贴图用于视觉对照；半透明区域不作颜色或表面量测。</p>
+    <p>[[msg:贴图用于视觉对照；半透明区域不作颜色或表面量测。]]</p>
   </div>
 
-  <h2>display</h2>
-  <label class="rng">wall opacity</label>
+  <h2>[[msg:display]]</h2>
+  <label class="rng">[[msg:wall opacity]]</label>
   <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="1">
-  <label class="rng">exploded view</label>
-  <select id="explodeMode"><option value="floor">by floor</option><option value="zone">by zone</option></select>
+  <label class="rng">[[msg:exploded view]]</label>
+  <select id="explodeMode"><option value="floor">[[msg:by floor]]</option><option value="zone">[[msg:by zone]]</option></select>
   <input type="range" id="explode" min="0" max="1" step="0.02" value="0">
-  <label class="chk"><input type="checkbox" id="showWalls" checked> wall / floor / roof faces</label>
-  <label class="chk"><input type="checkbox" id="showWin" checked> windows</label>
-  <label class="chk"><input type="checkbox" id="showOpen" checked> 门 / 空开口</label>
-  <label class="chk"><input type="checkbox" id="showEdges" checked> edges</label>
-  <label class="chk"><input type="checkbox" id="showLogical"> 逻辑空间边界（细虚线）</label>
-  <label class="chk"><input type="checkbox" id="showEnclosure" checked> 开敞 / 未知辅助面</label>
-  <div class="enclosure-key"><span></span>开敞 / 未知（点选查看类型）</div>
+  <label class="chk"><input type="checkbox" id="showWalls" checked> [[msg:wall / floor / roof faces]]</label>
+  <label class="chk"><input type="checkbox" id="showWin" checked> [[msg:windows]]</label>
+  <label class="chk"><input type="checkbox" id="showOpen" checked> [[msg:门 / 空开口]]</label>
+  <label class="chk"><input type="checkbox" id="showEdges" checked> [[msg:edges]]</label>
+  <label class="chk"><input type="checkbox" id="showLogical"> [[msg:逻辑空间边界（细虚线）]]</label>
+  <label class="chk"><input type="checkbox" id="showEnclosure" checked> [[msg:开敞 / 未知辅助面]]</label>
+  <div class="enclosure-key"><span></span>[[msg:开敞 / 未知（点选查看类型）]]</div>
 
   <div id="sections"></div>
 
-  <h2>tools</h2>
-  <button id="measure">measure (vertex &rarr; vertex)</button>
-  <button id="clearMeasure">clear measure</button>
-  <button id="savePng">save PNG</button>
-  <button id="reset">reset view</button>
+  __AUDIT__
+  <h2>[[msg:tools]]</h2>
+  <button id="measure">[[msg:measure (vertex &rarr; vertex)]]</button>
+  <button id="clearMeasure">[[msg:clear measure]]</button>
+  <button id="savePng">[[msg:save PNG]]</button>
+  <button id="reset">[[msg:reset view]]</button>
 </div>
 <div id="rinfo">
   <div id="hud"></div>
@@ -785,8 +790,8 @@ _STYLE = r"""
 """
 
 _HTML = r"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Geometry inspection — __TITLE__</title>
+<html lang="__LOCALE__"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[[msg:Geometry inspection]] — __TITLE__</title>
 <style>__STYLE__</style></head>
 <body>
 <div id="app"></div>
@@ -799,9 +804,9 @@ __PANEL__
 """
 
 
-def app_js() -> str:
+def app_js(locale: str = "zh-CN") -> str:
     """The viewer app script (for embedding + standalone syntax checking)."""
-    return _APP_JS
+    return localize_template(_APP_JS, locale, javascript=True)
 
 
 def discover_roles(bg_path: Path) -> dict:
@@ -845,13 +850,18 @@ def wall_properties(source: dict) -> dict:
     return result
 
 
-def build_viewer_html(data: dict, *, title: str = "building geometry", roles: dict | None = None,
-                      mesh_path: Path | None = None) -> str:
+def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | None = None,
+                      mesh_path: Path | None = None, locale: str = "zh-CN") -> str:
+    translate = translator(locale)
     three_js = (_VENDOR / "three.min.js").read_text(encoding="utf-8")
     orbit_js = (_VENDOR / "OrbitControls.js").read_text(encoding="utf-8")
     from src.agent.geometry.openings import visible_wall_parts
 
     geo = {
+        "locale": locale,
+        "enum_labels": {key: translate(key) for key in (
+            "Wall", "Window", "Floor", "Roof", "Ceiling", "pass", "warning", "severe",
+            "unknown", "untyped", "observed", "example", "manual_annotation", "inferred")},
         "zones": data.get("zones", []),
         "surfaces": data.get("surfaces", []),
         "windows": data.get("windows", []),
@@ -887,25 +897,23 @@ def build_viewer_html(data: dict, *, title: str = "building geometry", roles: di
         if indices:
             memberships[zone] = indices
     geo["floor_memberships"] = memberships
-    safe_title = html.escape(title)  # HTML-context (title tag + panel text)
+    safe_title = html.escape(title if title is not None else translate("building geometry"))  # HTML-context (title tag + panel text)
     from scripts.tool_scripts.bim_agent_delivery_display import render_regularization_html
-    regularization_html = render_regularization_html(source, data.get("regularization_report"))
-    panel = _PANEL_HTML.replace("__TITLE__", safe_title)
+    regularization_html = render_regularization_html(source, data.get("regularization_report"), locale=locale)
+    audit_panel = ""
     if regularization_html:
         audit_panel = ('<details style="margin-top:14px;max-width:100%;overflow-wrap:anywhere">'
-                       '<summary>几何规整清单</summary><div style="overflow-x:auto">'
+                       f'<summary>{translate("几何规整清单")}</summary><div style="overflow-x:auto">'
                        + regularization_html + '</div></details>')
-        panel = panel.replace('<h2>tools</h2>', audit_panel + '<h2>tools</h2>')
-    return (
-        _HTML
-        .replace("__STYLE__", _STYLE)
-        .replace("__PANEL__", panel)
-        .replace("__THREE_JS__", three_js)
-        .replace("__ORBIT_JS__", orbit_js)
-        .replace("__GEO_JSON__", _js_embed(geo))  # script-safe (no </script> breakout)
-        .replace("__APP_JS__", _APP_JS)
-        .replace("__TITLE__", safe_title)
-    )
+    # Replace placeholders in the trusted template once, so an input name or
+    # evidence containing another placeholder is preserved literally.
+    values = {
+        "LOCALE": locale, "STYLE": _STYLE, "AUDIT": audit_panel,
+        "THREE_JS": three_js, "ORBIT_JS": orbit_js, "GEO_JSON": _js_embed(geo),
+        "APP_JS": app_js(locale), "TITLE": safe_title,
+    }
+    template = _HTML.replace("__PANEL__", _PANEL_HTML)
+    return re.sub(r"__([A-Z_]+)__", lambda m: values[m[1]], localize_template(template, locale))
 
 
 def load_viewer_geometry(path: Path) -> dict:
@@ -946,6 +954,7 @@ def main() -> int:
     ap.add_argument("json", help="display/building geometry JSON, or validated source_bim_v2/v3 source_model.json")
     ap.add_argument("--out", help="output HTML (default: <json dir>/geometry_viewer.html)")
     ap.add_argument("--title", default="")
+    ap.add_argument("--locale", choices=("zh-CN", "en"), default="zh-CN")
     ap.add_argument("--mesh", type=Path, help="admitted original GLB; requires a matching source mesh_frame")
     ap.add_argument("--roles", help="optional JSON {zone: role} to colour zones by room type; "
                                     "default reads roles from the display geometry zone_meta")
@@ -959,7 +968,7 @@ def main() -> int:
     out = Path(args.out) if args.out else j.with_name("geometry_viewer.html")
     title = args.title or j.parent.parent.name or j.stem
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build_viewer_html(data, title=title, roles=roles, mesh_path=args.mesh), encoding="utf-8")
+    out.write_text(build_viewer_html(data, title=title, roles=roles, mesh_path=args.mesh, locale=args.locale), encoding="utf-8")
     if roles:
         print(f"  room-type roles: {len(roles)} zones (colour-by-type enabled)")
     kb = out.stat().st_size // 1024

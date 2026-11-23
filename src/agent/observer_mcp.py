@@ -19,7 +19,8 @@ from scripts.tool_scripts.bim_agent_feedback import mcp_json_result
 from src.agent.runtime_entry import ROOT, runtime_model_profile
 from src.agent.runtime_mesh_workers import MeshWorkerTools, observer_tool_specs
 from src.agent_runtime.adapter import ScriptedAdapter
-from src.agent_runtime.connections import resolve_connection, validate_connection_model
+from src.agent_runtime.connections import validate_connection_model
+from src.dsh_runtime.model_routes import model_connection
 from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.output_limits import validate_output_limit
 from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, provider_parameters
@@ -27,23 +28,17 @@ from src.agent_runtime.store import EventStore
 from src.harness_contracts import RunLifecyclePayload
 
 
-@contextmanager
-def open_observers(args):
-    run = args.run.resolve()
-    raw_manifest = (run / "inputs.json").read_bytes()
-    manifest = json.loads(raw_manifest)
-    limits = RunLimits(model_calls=args.model_calls, tool_calls=args.tool_calls, seconds=args.seconds,
-                       time_budget_mode="wall", tokens=args.tokens)
-    runtime_model_profile(args.provider, args.model)
-    validate_output_limit(args.model if args.provider != "scripted" else "scripted-model", args.output_tokens)
-    parameters = provider_parameters(args.provider, model=args.model, reasoning_effort=args.reasoning_effort,
+def worker_profile(args, provider, model):
+    runtime_model_profile(provider, model)
+    validate_output_limit(model if provider != "scripted" else "scripted-model", args.output_tokens)
+    parameters = provider_parameters(provider, model=model, reasoning_effort=args.reasoning_effort,
                                      output_tokens=args.output_tokens)
-    if args.provider == "scripted":
+    if provider == "scripted":
         if args.script is None:
             raise ValueError("scripted workers require --script with per-task replies")
         fixture = args.script.read_bytes()
         replies = json.loads(fixture)
-        route = {"route_id": "offline-scripted", "model": args.model,
+        route = {"route_id": "offline-scripted", "model": model,
                  "fixture_sha256": hashlib.sha256(fixture).hexdigest()}
 
         def adapter(task_id, child):
@@ -53,8 +48,9 @@ def open_observers(args):
         if args.script:
             raise ValueError("--script requires the scripted provider")
         auth_directory = args.chatgpt_auth_dir or os.environ.get("SIM_BIM_CHATGPT_AUTH_DIR")
-        connection = resolve_connection(args.provider, None, chatgpt_auth_dir=auth_directory)
-        route = connection.descriptor.model_route(args.model)
+        connection = model_connection(provider, model, auth_dir=auth_directory,
+                                      credentials_file=args.credentials_file, protected_key=args.protected_key)
+        route = connection.descriptor.model_route(model)
         catalog_lock = asyncio.Lock()
         verified = False
 
@@ -62,19 +58,38 @@ def open_observers(args):
             nonlocal verified
             async with catalog_lock:
                 if not verified:
-                    await validate_connection_model(connection, args.model)
+                    await validate_connection_model(connection, model)
                     verified = True
             return connection.create_adapter()
 
     route["host"] = "dsh_observer_pool"
     if args.background:
         route["background"] = True
+    return {"adapter_factory": adapter, "parameters": parameters, "route": route}
+
+
+@contextmanager
+def open_observers(args):
+    run = args.run.resolve()
+    raw_manifest = (run / "inputs.json").read_bytes()
+    manifest = json.loads(raw_manifest)
+    limits = RunLimits(model_calls=args.model_calls, tool_calls=args.tool_calls, seconds=args.seconds,
+                       time_budget_mode="wall", tokens=args.tokens)
+    choices = args.routes or [{"provider": args.provider, "model": args.model}]
+    profiles = {}
+    for row in choices:
+        profile = worker_profile(args, row["provider"], row["model"])
+        key = f"{profile['route']['route_id']}/{row['model']}"
+        if key in profiles:
+            raise ValueError("duplicate worker model choice")
+        profiles[key] = profile
+    first = next(iter(profiles.values()))
     store_path = args.store.resolve()
     with EventStore(store_path, run_id=store_path.name, task_id="observer_pool",
                     budget_limit=limits.ledger_limit()) as store:
         tools = MeshWorkerTools(SimpleNamespace(run_directory=run), store=store, root=ROOT,
-            adapter_factory=adapter, model=args.model, parameters=parameters, route=route, limits=limits,
-            start_epoch=manifest["started_epoch"], max_concurrent=args.max_concurrent, multimodal=True)
+            **first, model=first["route"]["model"], limits=limits, start_epoch=manifest["started_epoch"],
+            max_concurrent=args.max_concurrent, multimodal=True, worker_profiles=profiles if args.routes else None)
         config = {"run_directory": str(run), "manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
                   "configuration": tools._configuration()}
         if store.events:
@@ -99,7 +114,8 @@ async def serve(args):
         if background:
             background.publish()
         server = Server("sim-bim-workers")
-        specs = {tool["name"]: types.Tool(**tool) for tool in observer_tool_specs(dsh=True, background=args.background)}
+        specs = {tool["name"]: types.Tool(**tool) for tool in observer_tool_specs(
+            dsh=True, background=args.background, routes=workers.worker_routes)}
 
         @server.list_tools()
         async def list_tools():
@@ -130,9 +146,12 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", required=True, type=Path, help="admitted parent BIM workspace")
     p.add_argument("--store", required=True, type=Path, help="persistent worker-pool journal directory")
-    p.add_argument("--provider", choices=(CHATGPT_SUBSCRIPTION, "scripted"), default=CHATGPT_SUBSCRIPTION)
+    p.add_argument("--provider", choices=(CHATGPT_SUBSCRIPTION, "deepseek", "scripted"), default=CHATGPT_SUBSCRIPTION)
     p.add_argument("--model", required=True)
     p.add_argument("--chatgpt-auth-dir", type=Path)
+    p.add_argument("--routes", type=json.loads, help="ordered model choices frozen by the launcher")
+    p.add_argument("--credentials-file", type=Path, help="explicit DeepSeek CLI credentials file")
+    p.add_argument("--protected-key", type=Path, help="protected local DeepSeek credential selected by the workbench")
     p.add_argument("--output-tokens", type=int, default=32000)
     p.add_argument("--reasoning-effort")
     p.add_argument("--max-concurrent", type=int, required=True)

@@ -129,7 +129,7 @@ def mesh_worker_tool_specs():
     return json.loads(json.dumps(EXTRA_TOOLS))
 
 
-def observer_tool_specs(dsh=False, *, background=False):
+def observer_tool_specs(dsh=False, *, background=False, routes=None):
     delegate, read, state = mesh_worker_tool_specs()
     from src.agent.runtime_mesh_evidence import COMPARISON_REPORT
     delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["report_files"] = {
@@ -153,6 +153,11 @@ def observer_tool_specs(dsh=False, *, background=False):
     state.update(name="worker_state", description=(
         "Inspect configured worker model, concurrency, per-request output allowance, shared remaining budget "
         "and task status before delegating or reusing a result."))
+    if routes:
+        choices = [f"{row['provider']}/{row['model']}" for row in routes]
+        delegate["inputSchema"]["properties"]["tasks"]["items"]["properties"]["worker"] = {
+            "type": "string", "enum": choices,
+            "description": "Choose a configured model for this task. Omit for round-robin assignment."}
     if dsh:
         # Parent PNG crops require a matching native EventStore image receipt.
         # DSH observers open and crop the original admitted PNGs themselves.
@@ -292,7 +297,8 @@ class MeshWorkerTools:
 
     def __init__(self, frozen, *, store, root, adapter_factory, model, parameters,
                  route, limits, start_epoch, max_concurrent=8,
-                 reasoning_history="all", low_output_limit_reason=None, pricing=None, multimodal=False):
+                 reasoning_history="all", low_output_limit_reason=None, pricing=None, multimodal=False,
+                 worker_profiles=None):
         if type(max_concurrent) is not int or max_concurrent < 1:
             raise ValueError("max_concurrent must be a positive integer")
         self.frozen, self.store, self.root = frozen, store, Path(root).resolve()
@@ -307,7 +313,10 @@ class MeshWorkerTools:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._locks = {}
         self.multimodal = multimodal
-        self.worker_specs = observer_tool_specs() if multimodal else mesh_worker_tool_specs()
+        self.worker_profiles = worker_profiles or {}
+        self.worker_routes = [{"provider": profile["route"]["route_id"], "model": profile["route"]["model"]}
+                              for profile in self.worker_profiles.values()]
+        self.worker_specs = observer_tool_specs(routes=self.worker_routes) if multimodal else mesh_worker_tool_specs()
         self.delegate_name, self.read_name, _ = (tool["name"] for tool in self.worker_specs)
         self._schemas = {tool["name"]: Draft202012Validator(tool["inputSchema"]) for tool in self.worker_specs}
 
@@ -366,6 +375,8 @@ class MeshWorkerTools:
 
     def _configuration(self):
         return {"model": self.model, "parameters": self.parameters, "route": self.route,
+            **({"worker_models": [{"route": p["route"], "parameters": p["parameters"]}
+                                  for p in self.worker_profiles.values()]} if self.worker_profiles else {}),
             "limits": self.limits.model_dump(mode="json"), "start_epoch": self.start_epoch,
             "reasoning_history": self.reasoning_history, "max_concurrent": self.max_concurrent,
             "low_output_limit_reason": self.low_output_limit_reason,
@@ -478,12 +489,22 @@ class MeshWorkerTools:
                 return {"task_id": task["task_id"], "status": "root_time_budget_exhausted", "result": None}
             timing = {"started_epoch": now, "deadline_epoch": deadline,
                       "time_budget_seconds": deadline - now if deadline is not None else None}
+            worker = task.get("worker")
+            if self.worker_profiles:
+                if worker is None:
+                    count = sum(ref.source_id == "mesh-worker-admission" for event in self.store.events
+                                for ref in event.source_refs)
+                    worker = tuple(self.worker_profiles)[count % len(self.worker_profiles)]
+                elif worker not in self.worker_profiles:
+                    raise ValueError("unknown model for this worker pool")
             packet = prepare_mesh_worker_packet(self.run_directory, child.task_directory / "bim",
                 task_id=task["task_id"], question=task["question"], notes=task.get("notes", ()),
                 candidate=task.get("candidate"), observation_ids=task.get("observation_ids", ()), timing=timing,
                 image_view_ids=task.get("image_view_ids", ()), parent_store=self.store, multimodal=self.multimodal,
                 report_files=task.get("report_files", ()))
             record = {"task": task, "configuration": self._configuration(), "packet": packet, "timing": timing}
+            if self.worker_profiles:
+                record["worker"] = worker
             # Admission belongs to the coordinator's in-flight operation. The
             # child journal stays empty until its own Runtime starts normally.
             self.store.append(RunLifecyclePayload(action="start", reason="mesh worker scope admitted: " + child.task_id),
@@ -520,12 +541,17 @@ class MeshWorkerTools:
         from src.agent.runtime_mesh_evidence import hydrate_mesh_worker_answer, mesh_worker_view_blocks
         role = local_observer_role(limits.ledger_limit())
         child_run = child.task_directory / "bim"
+        profile = self.worker_profiles.get(record.get("worker"), {})
+        route = profile.get("route", self.route)
+        parameters = profile.get("parameters", self.parameters)
+        model = profile["route"]["model"] if profile else self.model
+        adapter_factory = profile.get("adapter_factory", self.adapter_factory)
         async with AsyncExitStack() as stack:
             client = await stack.enter_async_context(frozen_bim_client(
                 child_run, readonly=True, repository_root=self.root))
             tools = _EvidenceTools(FrozenBimTools(client, role, run_directory=child_run), record["packet"], child)
             catalog = await tools.list_tools()
-            context_values = self.route.get("context", {})
+            context_values = route.get("context", {})
             context_policy = ContextPolicy.model_validate_json(json.dumps({key: value for key, value in context_values.items()
                 if key in ContextPolicy.model_fields})) if context_values.get("enabled", True) else None
             if context_policy is not None and context_policy.image_history_batches is not None:
@@ -538,21 +564,25 @@ class MeshWorkerTools:
             specs = [{"type": "function", "function": {"name": t["name"],
                 "description": t.get("description", ""), "parameters": t["inputSchema"]}} for t in catalog]
             guidance = OBSERVER_GUIDANCE if self.multimodal else WORKER_GUIDANCE
+            locale = record["packet"].get("locale")
+            if locale:
+                guidance += ("\nWrite all user-facing observations, interpretations and uncertainties in " +
+                             ("Chinese." if locale in ("zh", "zh-CN") else "English."))
             versions = make_versions(child, root=self.root, prompt=guidance, tools=specs,
-                parameters=self.parameters, route=self.route,
+                parameters=parameters, route=route,
                 code_paths=("src/agent/runtime_mesh_workers.py", "src/agent/runtime_mesh_evidence.py",
                             "src/agent/input_image_view.py", "src/agent/runtime_mesh_image_views.py",
                             "src/agent/runtime_tools.py", "src/agent/bim_inputs.py", "src/agent/geometry", "scripts/tool_scripts"))
-            adapter = self.adapter_factory(child.task_id, child)
+            adapter = adapter_factory(child.task_id, child)
             if inspect.isawaitable(adapter):
                 adapter = await adapter
             if hasattr(adapter, "close"):
                 stack.push_async_callback(adapter.close)
-            engine = Runtime(store=child, adapter=adapter, tools=tools, role=role, model=self.model,
-                parameters=self.parameters, versions=versions, limits=limits,
+            engine = Runtime(store=child, adapter=adapter, tools=tools, role=role, model=model,
+                parameters=parameters, versions=versions, limits=limits,
                 pricing=self.pricing,
                 root_tool_calls=self.limits.tool_calls, start_epoch=record["timing"]["started_epoch"],
-                strict_model_profile=self.route["route_id"] in LIVE_PROVIDERS,
+                strict_model_profile=route["route_id"] in LIVE_PROVIDERS,
                 reasoning_history=self.reasoning_history, low_output_limit_reason=self.low_output_limit_reason,
                 context_policy=context_policy, context_update=update_observer_budget,
                 request_timeout_seconds=(self.limits.seconds / (self.max_concurrent + 1)
@@ -590,6 +620,7 @@ class MeshWorkerTools:
         if receipt["status"] == "completed":
             result = hydrate_mesh_worker_answer(receipt["answer"], record["packet"], child, child.task_directory / "bim")
         outcome = {"task_id": child.task_id, "status": receipt["status"], "result": result,
+            **({"worker": record["worker"]} if "worker" in record else {}),
             "runtime": {key: receipt.get(key) for key in ("status", "model_calls", "tool_calls", "reported_tokens",
                 "elapsed_seconds", "budget_available", "root_budget_available")},
             "answer": receipt.get("answer"), "source_basis": record["packet"].get("source_snapshot"),
@@ -673,6 +704,7 @@ class MeshWorkerTools:
                         continue
                     task_id = value["task"]["task_id"]
                     tasks[task_id] = {"task_id": task_id, "status": "incomplete",
+                        **({"worker": value["worker"]} if "worker" in value else {}),
                         "question": value["task"]["question"], "candidate": value["task"].get("candidate"),
                         "budget": value["task"]["budget"]}
                 elif source.source_id == "mesh-worker-outcome" and source.blob and event.task_id in tasks:
@@ -683,6 +715,7 @@ class MeshWorkerTools:
         remaining = max(0, self.limits.tool_calls - sum(event.payload.event_type == "tool_invocation"
             for event in self.store.all_events))
         return {"model": self.model, "route_id": self.route["route_id"], "max_concurrent": self.max_concurrent,
+            **({"worker_models": self.worker_routes} if self.worker_profiles else {}),
             "token_budget": self._token_budget_contract(),
             "answer_budget_policy": {"reserved_calls": "2 for task limits >=3, otherwise 1",
                 "scope": "within the original child/root budgets; unavailable time/tokens/root calls can still stop a task"},

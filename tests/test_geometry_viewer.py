@@ -69,7 +69,7 @@ def test_viewer_has_all_controls():
     for ctrl in ('id="opacity"', 'id="explode"', 'id="explodeMode"', 'id="measure"', 'id="savePng"',
                  'id="colorBy"', 'id="floorSel"', 'id="showWin"', 'id="showEdges"',
                  'id="showLogical"', 'id="showEnclosure"', 'id="hud"', 'id="meas"',
-                 'section cuts', 'select by'):
+                 '剖切', '选择对象'):
         assert ctrl in html, f"missing control: {ctrl}"
 
 

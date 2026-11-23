@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_workbench.py": {
+      "group": "targeted",
+      "reason": "Local web submission, ordered material copies, immutable run snapshots, model selections and locale"
+    },
     "tests/test_orchestrator_product.py": {
       "group": "targeted",
       "reason": "Unified material admission, host choice, worker routing and shared budgets"

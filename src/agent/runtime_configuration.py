@@ -63,6 +63,18 @@ def admit_project_materials(case: dict) -> None:
 
 def orchestrator_worker(case: dict) -> dict | None:
     worker = case.get("worker")
+    choices = case.get("workers")
+    if choices is not None:
+        if (case.get("mode") != "orchestrator" or case.get("runtime", "dsh") != "dsh"
+                or not isinstance(choices, list)):
+            raise ValueError("workers must be a list on a DSH orchestrator case")
+        if worker is not None and (not isinstance(worker, dict) or "model" in worker):
+            raise ValueError("set worker model choices in workers or worker.model, not both")
+        if not choices:
+            if worker:
+                raise ValueError("worker pool options require at least one selected worker")
+            return None
+        worker = {"max_concurrent": len(choices), **(worker or {})}
     if worker is None:
         return None
     if case.get("mode") != "orchestrator" or not isinstance(worker, dict):
@@ -73,16 +85,24 @@ def orchestrator_worker(case: dict) -> dict | None:
         raise ValueError("worker.background must be a boolean on the DSH runtime")
     if type(worker.get("max_concurrent", 1)) is not int or worker.get("max_concurrent", 1) < 1:
         raise ValueError("worker.max_concurrent must be a positive integer")
-    model = worker.get("model", case["model"])
-    if not isinstance(model, str) or not model.strip():
-        raise ValueError("worker.model must be a nonempty model ID")
-    validate_provider_model(case["provider"], model)
-    get_model_profile(model, strict=True)
     output = worker.get("output_tokens", case["output_tokens"])
-    validate_output_limit(model, output, reason=case.get("low_output_limit_reason"))
-    provider_parameters(case["provider"], model=model, output_tokens=output, temperature=case.get("temperature"),
-                        thinking=case.get("thinking", True),
-                        reasoning_effort=worker.get("reasoning_effort", case.get("reasoning_effort")))
+    routes = choices or [{"provider": case["provider"], "model": worker.get("model", case["model"])}]
+    seen = set()
+    for route in routes:
+        if not isinstance(route, dict) or set(route) != {"provider", "model"}:
+            raise ValueError("each worker choice needs a provider and model")
+        provider, model = route["provider"], route["model"]
+        if choices and provider not in (CHATGPT_SUBSCRIPTION, "deepseek"):
+            raise ValueError("worker provider is unavailable on this DSH connection")
+        if not isinstance(model, str) or not model.strip() or (provider, model) in seen:
+            raise ValueError("each worker model must be a distinct nonempty model ID")
+        seen.add((provider, model))
+        validate_provider_model(provider, model)
+        get_model_profile(model, strict=True)
+        validate_output_limit(model, output, reason=case.get("low_output_limit_reason"))
+        provider_parameters(provider, model=model, output_tokens=output, temperature=case.get("temperature"),
+                            thinking=case.get("thinking", True),
+                            reasoning_effort=worker.get("reasoning_effort", case.get("reasoning_effort")))
     return worker
 
 
@@ -99,8 +119,8 @@ def validate_host(case: dict) -> None:
             raise ValueError("dsh_executable requires the dsh runtime")
         return
     limits = case["limits"]
-    if case["provider"] != CHATGPT_SUBSCRIPTION or case.get("reasoning_effort", "high") != "high":
-        raise ValueError("the DSH product route currently uses chatgpt-subscription with high reasoning effort")
+    if case["provider"] not in (CHATGPT_SUBSCRIPTION, "deepseek") or case.get("reasoning_effort", "high") != "high":
+        raise ValueError("the DSH product route requires ChatGPT subscription or official DeepSeek with high reasoning effort")
     if limits.get("tokens") is not None or limits.get("money_cny") is not None:
         raise ValueError("DSH supports model call, tool call and wall time budgets; set tokens to null")
     if any(name in limits for name in ("model_retries", "retry_backoff_seconds", "model_reconnect_seconds",
@@ -109,7 +129,7 @@ def validate_host(case: dict) -> None:
     if (case.get("continuation") or case.get("compact_at_tokens") is not None
             or limits.get("time_budget_mode", "wall") != "wall"):
         raise ValueError("DSH uses wall time, native session recovery and its own context policy")
-    if case.get("worker") is not None and min(limits["model_calls"], limits["tool_calls"]) < 2:
+    if (case.get("worker") is not None or case.get("workers")) and min(limits["model_calls"], limits["tool_calls"]) < 2:
         raise ValueError("DSH needs enough calls for both the coordinator and optional worker pool")
 
 
@@ -375,7 +395,8 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
             raise ValueError("floor_plan_images must use admitted input filenames")
         providers = ({role.provider for role in role_configurations.values()}
                      if role_configurations is not None else {case["provider"]})
-        if providers != {CHATGPT_SUBSCRIPTION} and (
+        uses_workbench_key = case.get("runtime") == "dsh" and case["provider"] == "deepseek"
+        if providers != {CHATGPT_SUBSCRIPTION} and not uses_workbench_key and (
                 not isinstance(case.get("credentials_file"), str) or not case["credentials_file"].strip()):
             raise ValueError("each case requires an explicit read-only credentials_file")
         if case.get("chatgpt_auth_dir") is not None and (
