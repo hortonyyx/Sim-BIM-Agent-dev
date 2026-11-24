@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import html
 import json
 from pathlib import Path
 from time import perf_counter
@@ -17,7 +16,6 @@ from src.agent.geometry_model.parse import parse_geometry
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_enclosure import ReciprocalEnclosureError
 from src.agent.geometry.source_model import _digest
-from src.agent.geometry.source_naming import public_names_for_display, public_reference_map, public_reference_text
 
 
 _PROPOSAL_FIELDS = {"geometry", "assumptions", "unresolved", "enclosure_declaration",
@@ -77,37 +75,6 @@ def _validate_proposal(proposal: dict) -> tuple[dict, list[str], list[str], dict
         for cell in floor.get("cells", []):
             cell["role"] = require_role(cell.get("role"))
     return geometry, list(proposal["assumptions"]), list(proposal["unresolved"]), enclosure
-
-
-def _html_list(rows: list[str], references: dict, empty_label: str) -> str:
-    if not rows:
-        return f"<li>{empty_label}</li>"
-    return "".join(f"<li>{html.escape(public_reference_text(row, references), quote=True)}</li>" for row in rows)
-
-
-def build_source_viewer_html(display: dict, *, source_geometry_ready: bool,
-                             assumptions: list[str], unresolved: list[str],
-                             mesh_path: Path | None = None, locale: str = "zh-CN") -> str:
-    """Display a saved source and its original caveats without rebuilding it."""
-    from scripts.tool_scripts.bim_display_language import translator
-    from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
-
-    _ = translator(locale)
-    title = _("源 BIM 候选：几何检查通过，原图保真待评价")
-    if not source_geometry_ready:
-        title = _("源 BIM 候选：几何检查有严重问题，仍保留查看结果")
-    viewer = build_viewer_html(display, title=title, mesh_path=mesh_path, locale=locale)
-    references = public_reference_map(public_names_for_display(display["source_model"]))
-    banner = (
-        f'<aside class="source-notes" aria-label="{_("模型来源与说明")}">'
-        f"<strong>{html.escape(title)}</strong><br>"
-        f'{_("模型提交的几何方案；原图保真尚未核对，未经人工确认。")}'
-        f'<details><summary>{_("假设")}</summary><ul>{_html_list(assumptions, references, _("无"))}</ul></details>'
-        f'<details><summary>{_("未解决项")}</summary><ul>{_html_list(unresolved, references, _("无"))}</ul></details>'
-        f'<a href="report.json">{_("质量与来源记录")}</a> · <a href="proposal.json">{_("原始方案")}</a> · '
-        f'<a href="source_model.json">{_("源模型")}</a></aside>'
-    )
-    return viewer.replace('<div id="rinfo">', '<div id="rinfo">' + banner, 1)
 
 
 def _require_vertical_continuity(source: dict, policy: str | None) -> None:
@@ -287,10 +254,8 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
             (out_dir / "display_geometry.json").write_bytes(_json_bytes(display, indent=2))
             timings["display_geometry_seconds"] = perf_counter() - checkpoint
             checkpoint = perf_counter()
-            viewer = build_source_viewer_html(display,
-                source_geometry_ready=report["source_geometry_ready"],
-                assumptions=report["agent_assumptions"], unresolved=report["unresolved"],
-                mesh_path=mesh_path, locale=locale)
+            from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
+            viewer = build_viewer_html(display, mesh_path=mesh_path, locale=locale)
             (out_dir / "viewer.html").write_text(viewer, encoding="utf-8", newline="\n")
             timings["viewer_seconds"] = perf_counter() - checkpoint
     except Exception as exc:

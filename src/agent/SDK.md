@@ -153,8 +153,10 @@ mesh, supply the current `mesh_review` with inspected overlay IDs. Check any
 reported missing scope; never manufacture a judgment to finish.
 
 `finish_to` calls normal `finish_bim`, verifies its exact completed handoff, and
-publishes the same source/viewer bytes to a **new directory outside the run**.
-It returns paths for `source_model.json`, `delivery.html`, `publication.json`.
+publishes `Sim-BIM.html` to a **new directory outside the run**. The returned
+`viewer` path opens the portable, offline model. The `source_model` and
+`publication_file` paths refer to the selected source and its publication record
+in the native run workspace.
 No additional model-authored copy, validator or hash script is needed. Publication
 is still distinct from independent architectural acceptance. Admission, rendering
 and publication time all belong in end-to-end measurements.

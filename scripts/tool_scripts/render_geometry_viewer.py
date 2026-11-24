@@ -16,12 +16,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import re
 from pathlib import Path
 
-from scripts.tool_scripts.bim_display_language import localize_template, translator
+from scripts.tool_scripts.bim_display_language import (
+    room_role, room_type_labels, viewer_markup, viewer_messages, viewer_script,
+)
 
 _VENDOR = Path(__file__).resolve().parent / "vendor"
 
@@ -46,6 +47,8 @@ _APP_JS = r"""
 (function () {
   const GEO = window.GEO || { zones: [], surfaces: [], windows: [], roles: {} };
   const $ = (id) => document.getElementById(id);
+  let locale = 'en';
+  const msg = key => GEO.messages[key]?.[locale === 'en' ? 0 : 1] ?? key;
   const SURF = (GEO.surfaces || []).filter(s => (s.verts || []).length >= 3);
   const WINS = (GEO.windows || []).filter(w => (w.verts || []).length >= 3);
   const OPENS = (GEO.openings || []).filter(o => (o.verts || []).length >= 3);
@@ -56,7 +59,6 @@ _APP_JS = r"""
   const SOURCE_MAP = SOURCE ? (SOURCE.derived || {}) : {};
   const SOURCE_SPACES = Object.fromEntries(((SOURCE && SOURCE.spaces) || []).map(s=>[s.id,s]));
   const SOURCE_BOUNDARIES = Object.fromEntries(((SOURCE && SOURCE.boundaries) || []).map(b=>[b.id,b]));
-  const WALL_PROPERTIES = GEO.wall_properties || {};
   // resolve a window's zone: its parent surface's zone first (parent = "<wall>_<i>"),
   // then a zone-name prefix, then the nearest zone centroid — never returns '?' so a
   // window always pops out + groups/explodes with a real zone.
@@ -82,18 +84,17 @@ _APP_JS = r"""
   const ROLE_COLORS = Object.fromEntries(Object.entries(ROOM_TYPES).map(([k,v])=>[k,parseInt(v.color.slice(1),16)]));
   const ROLE_DEFAULT = ROLE_COLORS.unknown ?? 0xc9ced4;
   const NAMES = GEO.public_names || {};
-  const REFERENCES = NAMES.references || {};
-  const referenceKeys = Object.keys(REFERENCES).filter(k=>k!==REFERENCES[k]).sort((a,b)=>b.length-a.length);
-  const referencePattern = referenceKeys.length ? new RegExp(referenceKeys.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g') : null;
-  function referenceText(value){ const text=String(value);
-    return referencePattern ? text.replace(referencePattern,(key,at)=>{
-      const before=text[at-1]||'', after=text.slice(at+key.length);
-      return /[A-Za-z0-9_./:%\\-]/.test(before) || /^(?:[A-Za-z0-9_/%\\-]|[.:][A-Za-z0-9_])/.test(after) ? key : REFERENCES[key];
-    }) : text; }
-  const spaceName = z => (NAMES.spaces||{})[(SOURCE_MAP.zones||{})[z]||z] || z;
   const objectName = n => (NAMES.objects||{})[n] || n;
-  const enumLabel = value => GEO.enum_labels?.[value] ?? value;
-  const roleLabel = role => GEO.locale === 'zh-CN' ? (ROOM_TYPES[role]?.label_zh || enumLabel(role)) : enumLabel(role);
+  function roleLabel(role, bilingual=true){
+    const type=ROOM_TYPES[role] || ROOM_TYPES.unknown;
+    return locale==='en' ? type.label_en : type.label_zh+(bilingual?' · '+type.label_en:'');
+  }
+  function spaceName(zone){
+    const record=GEO.room_names[zone] || {};
+    if(record.name) return record.role!=='unknown' ? roleLabel(record.role,false) : record.name;
+    const role=roleOf(zone);
+    return role && role!=='unknown' ? roleLabel(role,false) : msg('Room');
+  }
   const ROLES = GEO.roles || {};
   const HAS_ROLES = Object.keys(ROLES).length > 0;
   const roleOf = z => (ROLES[z] || '').toString().toLowerCase();
@@ -117,7 +118,7 @@ _APP_JS = r"""
   const NAMED_FLOORS = NAMES.floors || [];
   const BASES = NAMED_FLOORS.length ? NAMED_FLOORS.map(f=>f.z_floor) : cluster((floorSurf.length ? floorSurf : SURF).map(zmin));
   const sourceFloor = i => (SOURCE?.floors||[]).find(f=>f.id===NAMED_FLOORS[i]?.id);
-  const floorName = i => sourceFloor(i)?.name || NAMED_FLOORS[i]?.name || 'F'+(i+1);
+  const floorName = i => sourceFloor(i)?.name || (locale==='en' ? 'Floor '+(i+1) : '第 '+(i+1)+' 层');
   const _zFloorZ = {}, _zMinZ = {};
   SURF.forEach(s => { const z=s.zone||'?', mn=zmin(s); _zMinZ[z]=Math.min(_zMinZ[z]??1e9,mn);
     if(s.type==='Floor') _zFloorZ[z]=Math.min(_zFloorZ[z]??1e9,mn); });
@@ -166,21 +167,36 @@ _APP_JS = r"""
 
   // ---- renderer / scene / camera ----
   const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  const viewport=$('app');
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  renderer.setSize(viewport.clientWidth,viewport.clientHeight,false);
   renderer.localClippingEnabled = true;
-  renderer.setClearColor(0xf2f4f7);
-  $('app').appendChild(renderer.domElement);
+  renderer.setClearColor(0xf4f6f8);
+  viewport.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.05, radius*200);
+  const camera = new THREE.PerspectiveCamera(42, viewport.clientWidth/Math.max(1,viewport.clientHeight), 0.05, radius*200);
   camera.up.set(0,0,1);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  function defaultView(){ camera.position.set(center.x+radius*1.6, center.y-radius*1.8, center.z+radius*1.3);
-    controls.target.copy(center); controls.update(); }
+  let cameraMoved=false;
+  controls.addEventListener('start',()=>{cameraMoved=true;});
+  function defaultView(){
+    const direction=new THREE.Vector3(1.6,-1.8,1.3).normalize();
+    const right=camera.up.clone().cross(direction).normalize(), up=direction.clone().cross(right);
+    const tanY=Math.tan(camera.fov*Math.PI/360), tanX=tanY*camera.aspect;
+    let distance=0;
+    for(const x of [bb.min.x,bb.max.x]) for(const y of [bb.min.y,bb.max.y]) for(const z of [bb.min.z,bb.max.z]){
+      const point=new THREE.Vector3(x,y,z).sub(center);
+      const fit=Math.max(Math.abs(point.dot(right))/tanX,Math.abs(point.dot(up))/tanY);
+      distance=Math.max(distance,point.dot(direction)+1.25*fit);
+    }
+    camera.position.copy(center).addScaledVector(direction,Math.max(distance,1));
+    controls.target.copy(center);controls.update();cameraMoved=false;
+  }
   scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(1,-1,2); scene.add(dl);
   const dl2=new THREE.DirectionalLight(0xffffff,0.3); dl2.position.set(-1,1,0.5); scene.add(dl2);
-  const grid=new THREE.GridHelper(radius*4,20,0xcccccc,0xe6e6e6); grid.rotateX(Math.PI/2);
+  const grid=new THREE.GridHelper(radius*6,76,0xd8dee6,0xe5e9ee); grid.rotateX(Math.PI/2);
+  grid.material.transparent=true;grid.material.opacity=.48;grid.material.depthWrite=false;
   grid.position.set(center.x, center.y, bb.min.z); scene.add(grid);
 
   // ---- small text labels (axes + compass) ----
@@ -191,19 +207,19 @@ _APP_JS = r"""
     sp.scale.set(scl, scl, 1); return sp;
   }
   // small axis ticks at the origin corner
-  const aL=radius*0.18, aLab=radius*0.05;
+  const guideSize=Math.max(radius*.35,Math.min(radius,Math.max(size.x,size.y)*1.2));
+  const aL=guideSize*.16, aLab=guideSize*.045;
   const axes=new THREE.AxesHelper(aL); axes.position.copy(bb.min); scene.add(axes);
   [['x',0xcc1111,new THREE.Vector3(aL*1.25,0,0)],['y',0x11aa11,new THREE.Vector3(0,aL*1.25,0)],
    ['z',0x1111cc,new THREE.Vector3(0,0,aL*1.25)]].forEach(([t,col,off])=>{
     const s=label(t,'#'+col.toString(16).padStart(6,'0'),aLab); s.position.copy(bb.min).add(off); scene.add(s); });
-  // compass: small flat 2D ring on the ground, N = +Y in the displayed coordinate frame
-  const cR=radius*0.16, cC=new THREE.Vector3(bb.min.x-radius*0.32, bb.min.y-radius*0.32, bb.min.z+0.02);
-  const ring=new THREE.Mesh(new THREE.RingGeometry(cR*0.86, cR, 48),
-    new THREE.MeshBasicMaterial({color:0x9aa0a6, side:THREE.DoubleSide})); ring.position.copy(cC); scene.add(ring);
-  const ntick=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
-    [cC.clone(), cC.clone().add(new THREE.Vector3(0,cR,0))]), new THREE.LineBasicMaterial({color:0xd32f2f}));
-  scene.add(ntick);
-  const nlab=label('N','#d32f2f',radius*0.06); nlab.position.copy(cC).add(new THREE.Vector3(0,cR*1.25,0)); scene.add(nlab);
+  // North follows the same +Y reference as the model axes, even after orbiting.
+  function orientCompass(){
+    camera.updateMatrixWorld();
+    const basis=camera.matrixWorld.elements,angle=Math.atan2(basis[1],basis[5]);
+    if(Math.hypot(basis[1],basis[5])>1e-5) $('northArrow').style.transform='rotate('+angle+'rad)';
+  }
+  controls.addEventListener('change',orientCompass);
 
   // ---- clip planes (section cuts) ----
   const AX = [
@@ -329,7 +345,7 @@ _APP_JS = r"""
     const m=new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide,transparent:true,
       opacity:o.state==='closed'?0.7:0.12,depthWrite:false});
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
-    mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'[[msg:门]]':'[[msg:空开口]]',name:o.name,
+    mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'Door':'Passage',name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
       parent:o.parent,kind:'opening',dup,area:polyArea(o.verts),baseColor:color,sourceId:o.source_opening_id,
       spaceId:o.space_id,otherSpaceId:o.other_space_id,state:o.state};
@@ -386,13 +402,6 @@ _APP_JS = r"""
   function polyArea(r){ let nx=0,ny=0,nz=0; const n=r.length;  // Newell → planar polygon area
     for(let i=0;i<n;i++){ const a=r[i],b=r[(i+1)%n]; nx+=(a[1]-b[1])*(a[2]+b[2]); ny+=(a[2]-b[2])*(a[0]+b[0]); nz+=(a[0]-b[0])*(a[1]+b[1]); }
     return Math.hypot(nx,ny,nz)/2; }
-  const zoneVol={};  // closed-zone volume via divergence theorem over its faces
-  SURF.forEach(s=>{ const z=s.zone||'?', r=s.verts; let v=zoneVol[z]||0;
-    for(let i=1;i<r.length-1;i++){ const a=r[0],b=r[i],c=r[i+1];
-      v += (a[0]*(b[1]*c[2]-b[2]*c[1]) - a[1]*(b[0]*c[2]-b[2]*c[0]) + a[2]*(b[0]*c[1]-b[1]*c[0]))/6; }
-    zoneVol[z]=v; });
-  Object.keys(zoneVol).forEach(z=>zoneVol[z]=Math.abs(zoneVol[z]));
-
   // ---- select-by modes + uniform-colour selection ----
   let selected=new Set(); const selGroup=new THREE.Group(); scene.add(selGroup);
   function refreshColors(){
@@ -407,10 +416,11 @@ _APP_JS = r"""
     updateLegend(mode);
   }
   function clearSelGroup(){ while(selGroup.children.length) selGroup.remove(selGroup.children[0]); }
-  function setSelection(arr, lbl){ clearSelGroup(); selected=new Set(arr);
+  let inspected=null;
+  function setSelection(arr){ clearSelGroup(); selected=new Set(arr);
     allPickables().forEach(m=>m.material.color.setHex(selected.has(m)?SEL_COLOR:(m.userData.baseColor??0xcccccc)));
-    $('sel').innerHTML=lbl||''; $('sel').style.display=lbl?'block':'none'; }
-  function clearSelection(){ setSelection([], ''); }
+  }
+  function clearSelection(){ setSelection([]); inspected=null; renderInspection(); }
 
   // ---- measure (button; CONTINUOUS; CAD-style screen-space vertex snap on true geometry) ----
   let measuring=false, measurePts=[]; const mGroup=new THREE.Group(); scene.add(mGroup);
@@ -434,7 +444,13 @@ _APP_JS = r"""
   function clearMeasure(){ measuring=false; snap.visible=false; clearPair();
     $('meas').style.display='none'; renderer.domElement.style.cursor='default'; }
   function startMeasure(){ clearMeasure(); measuring=true; renderer.domElement.style.cursor='crosshair';
-    $('meas').style.display='block'; $('meas').textContent='[[msg:measure: snap vertex 1  (Esc to exit)]]'; }
+    $('meas').style.display='block'; renderMeasurement(); }
+  function renderMeasurement(){
+    if(!measuring) return;
+    const distance=measurePts.length===2 ? measurePts[0].distanceTo(measurePts[1]) : null;
+    $('meas').textContent=distance!==null ? '[[msg:distance: ]]'+distance.toFixed(3)+'[[msg: m  (click=next, Esc=exit)]]' :
+      (measurePts.length ? '[[msg:measure: snap vertex 2  (Esc to exit)]]' : '[[msg:measure: snap vertex 1  (Esc to exit)]]');
+  }
   function marker(p){ mGroup.add(topBall(p, 0xd81b60, 0.011)); }
   // Picking follows wall opacity: when walls are OPAQUE you can only snap/select what is visibly
   // in front (a candidate hidden behind a face is skipped); turn DOWN wall opacity to reach the
@@ -490,7 +506,7 @@ _APP_JS = r"""
       if(d<bd && (thru || !occluded(A.clone().add(B).multiplyScalar(0.5)))){ bd=d; best={e,A,B}; } }
     clearSelection(); if(!best) return;
     selGroup.add(fatLine(best.A, best.B, SEL_COLOR, 0.006));   // whole edge as one thick, always-on-top line
-    $('sel').innerHTML='<div class="hh">[[msg:edge]]</div>'+kv([['[[msg:名称]]',best.e.publicName],['[[msg:所属面]]',best.e.parentName],['[[msg:所属房间]]',spaceName(best.e.zone)],['[[msg:所属楼层]]',floorName(best.e.floor)],['[[msg:length]]',best.e.len.toFixed(3)+' m']])+traceInfo([['[[msg:源父对象 ID]]',(SOURCE_MAP.surfaces||{})[best.e.sourceName]||(SOURCE_MAP.windows||{})[best.e.sourceName]||(SOURCE_MAP.openings||{})[best.e.sourceName]||best.e.sourceName]]); $('sel').style.display='block'; }
+    showInspection('edge',best.e); }
 
   // ---- selection picking (face raycast, for click-select only) ----
   const raycaster=new THREE.Raycaster();
@@ -500,81 +516,97 @@ _APP_JS = r"""
     raycaster.setFromCamera(mouse,camera);
     const hits=raycaster.intersectObjects(allPickables().filter(m=>m.visible),false)
       .filter(h=>comparisonPlanes().every(p=>p.distanceToPoint(h.point)>=-0.0001)); return hits.length?hits[0]:null; }
-  // structured selection readout: a titled block of label→value rows (one per line)
-  function kv(pairs){ return pairs.filter(p=>p[1]!=null && p[1]!=='').map(p=>row(p[0], esc(p[1]))).join(''); }
-  function traceInfo(pairs){ const content=kv(pairs); return content?'<details class="trace"><summary>[[msg:内部编号与原始记录]]</summary>'+content+'</details>':''; }
-  function rawEvidence(items){ return (items||[]).map(x=>typeof x==='string'?x:JSON.stringify(x)).join('; '); }
-  function evidenceText(items){ return referenceText(rawEvidence(items)); }
-  function enclosureLabel(v){ return ({enclosed:'[[msg:封闭]]',semi_open:'[[msg:半开敞]]',open:'[[msg:开敞]]',physical:'[[msg:实体]]',mixed:'[[msg:局部混合]]',unknown:'[[msg:未知]]'})[v] || v; }
-  function boundaryFor(u){ const bid=((SOURCE_MAP.surfaces||{})[u.name] || u.name); return SOURCE_BOUNDARIES[bid] || null; }
-  function coverageFor(b){
-    if(!b || !(b.vertices||[]).length) return '';
-    const total=(polyArea(b.vertices)-(b.holes||[]).reduce((sum,h)=>sum+polyArea(h),0))||1, area={open:0,unknown:0};
-    (b.enclosure_regions||[]).forEach(r=>{if(area[r.condition]!=null) area[r.condition]+=polyArea(r.vertices||[])-(r.holes||[]).reduce((sum,h)=>sum+polyArea(h),0);});
-    if(!(b.enclosure_regions||[]).length){ if(b.enclosure==='open') area.open=total; if(b.enclosure==='unknown') area.unknown=total; }
-    const physical=Math.max(0,total-area.open-area.unknown), rows=[];
-    [['[[msg:实体]]',physical],['[[msg:开敞]]',area.open],['[[msg:未知]]',area.unknown]].forEach(([k,a])=>{if(a>total*1e-8) rows.push(k+' '+(a/total*100).toFixed(0)+'%');});
-    return rows.join(' · ');
+  const surfaceByName=new Map(SURF.map(s=>[s.name,s]));
+  const openingByName=new Map(OPENS.map(o=>[o.name,o]));
+  const sourceOpenings=new Map((SOURCE?.openings||[]).map(o=>[o.id,o]));
+  function component(u){
+    const key=u.name || u.sourceName;
+    const surface=surfaceByName.get(key);
+    if(u.kind==='window') return 'Window';
+    if(u.kind==='opening') return openingByName.get(key)?.kind==='door' ? 'Door' : 'Passage';
+    if(u.kind==='enclosure-region') return u.condition==='open' ? 'Open boundary' : 'Unknown enclosure';
+    const type=u.type || surface?.type;
+    if(type==='Wall') return surface?.obc==='Outdoors' ? 'Exterior wall' : (surface?.obc==='Surface' ? 'Interior wall' : 'Wall');
+    return ({Floor:'Floor slab',Roof:'Roof',Ceiling:'Ceiling'})[type] || 'Boundary';
   }
-  function boundaryEvidence(b,key){ return evidenceText([...(b&&b[key]||[]),...(b&&b.enclosure_regions||[]).flatMap(r=>r[key]||[])]); }
-  function boundaryEvidenceKinds(b){ return [...new Set((b&&b.enclosure_regions||[]).map(r=>enumLabel(r.evidence_kind)).filter(Boolean))].join(', '); }
-  function wallPropertyRows(b){
-    if(!b || b.geometry_type!=='wall' || b.kind!=='physical') return [];
-    const p=WALL_PROPERTIES[b.id]||{}, thickness=p.thickness_m;
-    return [['[[msg:墙厚]]',p.conflict?'[[msg:厚度记录冲突，待确认]]':thickness==null?'[[msg:未知]]':Number((thickness*1000).toFixed(3))+' mm'],
-      ['[[msg:厚度判定]]',({observed:'[[msg:图纸读数]]',inferred:'[[msg:推断]]',unknown:'[[msg:未知]]'})[p.evidence_status]||'[[msg:未注明]]'],
-      ['[[msg:取线位置]]',({centerline:'[[msg:墙中心线]]',negative_face:'[[msg:世界负方向侧墙面]]',positive_face:'[[msg:世界正方向侧墙面]]',unknown:'[[msg:未知]]'})[p.reference_side]||'[[msg:未知]]'],
-      ['[[msg:厚度依据]]',evidenceText(p.basis||[])],['[[msg:墙厚来源]]',evidenceText(p.source_refs||[])]];
+  function declaredStoreys(zone){
+    const floors=zoneFloors[zone];
+    if(floors.length<2 || !verticalCore(zone)) return floors;
+    const space=SOURCE_SPACES[(SOURCE_MAP.zones||{})[zone]||zone];
+    if(!space) return floors;
+    // A vertical core can own a full-height source group in addition to its declared storeys.
+    return floors.filter(i=>{const f=sourceFloor(i);
+      return f?.id!==space.floor_id || ZONES.some(z=>zoneFloor[z]===i && !verticalCore(z)) ||
+        !floors.some(j=>j!==i && sourceFloor(j)?.height < f.height-0.001);
+    });
   }
-  function describe(mode,o){ const u=o.userData;
-    if(mode==='floor') return '<div class="hh">[[msg:楼层]]</div>'+kv([['[[msg:名称]]',floorName(u.floor)],['[[msg:底标高]]',BASES[u.floor]+' m']])+traceInfo([['[[msg:源楼层 ID]]',NAMED_FLOORS[u.floor]?.id],['[[msg:原楼层名]]',NAMED_FLOORS[u.floor]?.source_name]]);
-    if(u.kind==='enclosure-region' && mode!=='zone'){ const boundary=SOURCE_BOUNDARIES[u.boundaryId];
-      return '<div class="hh">'+(u.condition==='open'?'[[msg:明确开敞区域]]':'[[msg:围护未知区域]]')+'</div>'+kv([
-        ['[[msg:名称]]',u.publicName],['[[msg:所属面]]',objectName(u.boundaryId)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:空间]]',spaceName(u.zone)],['[[msg:面积]]',u.area.toFixed(2)+' m²'],
-        ['[[msg:边界覆盖]]',coverageFor(boundary)],['[[msg:证据类型]]',enumLabel(u.evidenceKind)],
-        ['[[msg:假设]]',evidenceText(u.assumptions)]])+traceInfo([['[[msg:源边界 ID]]',u.boundaryId],['[[msg:来源]]',rawEvidence(u.sourceRefs)]]); }
-    if(u.kind==='opening' && mode!=='zone') return '<div class="hh">'+esc(u.type)+'</div>'+kv([
-      ['[[msg:名称]]',objectName(u.name)],['[[msg:所属面]]',objectName(u.parent)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:所属房间]]',spaceName(u.zone)],['[[msg:连通]]',spaceName(u.spaceId)+' ↔ '+(u.otherSpaceId?spaceName(u.otherSpaceId):'[[msg:室外]]')],
-      ['[[msg:开闭状态]]',({open:'[[msg:开放]]',closed:'[[msg:关闭]]',unknown:'[[msg:未确定]]'})[u.state]],['[[msg:面积]]',u.area.toFixed(2)+' m²']])+traceInfo([['[[msg:源开口 ID]]',u.sourceId],['[[msg:显示对象 ID]]',u.name]]);
-    if(mode==='zone'){ const r=roleOf(u.zone), sid=(SOURCE_MAP.zones||{})[u.zone]||u.zone, space=SOURCE_SPACES[sid],
-      enclosureEvidence=space&&(space.enclosure_evidence||{}), roleEvidence=space&&space.role_evidence;
-      return '<div class="hh">[[msg:zone]]</div>'+kv([['[[msg:名称]]',spaceName(u.zone)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:功能]]',roleLabel(r)||'—'],
-        ['[[msg:功能判定]]',roleEvidence&&({observed:'[[msg:图文明确]]',inferred:'[[msg:推断]]',unknown:'[[msg:待判定]]'})[roleEvidence.basis]],
-        ['[[msg:功能依据]]',roleEvidence&&evidenceText(roleEvidence.source_refs)],
-        ['[[msg:功能假设]]',roleEvidence&&evidenceText(roleEvidence.assumptions)],
-        ['[[msg:空间开敞性]]',space&&enclosureLabel(space.exposure||space.enclosure)],
-        ['[[msg:证据类型]]',enclosureEvidence&&enumLabel(enclosureEvidence.evidence_kind)],
-        ['[[msg:假设]]',space&&evidenceText([...(space.assumptions||[]),...(enclosureEvidence.assumptions||[])])],
-        ['[[msg:volume]]',(zoneVol[u.zone]||0).toFixed(2)+' m³']])+traceInfo([['[[msg:源空间 ID]]',sid],['[[msg:来源]]',space&&rawEvidence([...(space.source_refs||[]),...(enclosureEvidence.source_refs||[])])]]); }
-    // Area of the selected visible fragment: wall apertures are cut out;
-    // windows remain separate child surfaces and are not subtracted here.
-    const boundary=boundaryFor(u);
-    return '<div class="hh">[[msg:surface]]</div>'+kv([['[[msg:名称]]',u.publicName||objectName(u.name)],['[[msg:所属面]]',objectName(u.parent||u.name)],['[[msg:所属房间]]',spaceName(u.zone)],['[[msg:所属楼层]]',floorName(u.floor)],['[[msg:type]]',enumLabel(u.type)],
-      ['[[msg:显示语义]]',u.kind==='surface'?(u.enclosureCondition==='unknown'?'[[msg:未知围护（未当作实体墙）]]':'[[msg:实体围护]]'):'[[msg:窗]]'],
-      ...(u.type==='Wall'?wallPropertyRows(boundary):[]),
-      ['[[msg:边界围护]]',boundary&&enclosureLabel(boundary.enclosure||boundary.kind)],['[[msg:边界覆盖]]',coverageFor(boundary)],
-      ['[[msg:证据类型]]',boundaryEvidenceKinds(boundary)],['[[msg:假设]]',boundaryEvidence(boundary,'assumptions')],
-      ['[[msg:area]]',(u.area||0).toFixed(2)+' m²'], ['[[msg:note]]', u.type==='Wall'?'[[msg:当前实体片面积；开敞或未知区域另以半透明灰色辅助面显示]]':'']])+traceInfo([
-      ['[[msg:源对象 ID]]',(SOURCE_MAP.surfaces||{})[u.name] || (SOURCE_MAP.windows||{})[u.name] || u.name],
-      ['[[msg:来源]]',boundary&&rawEvidence([...(boundary.source_refs||[]),...(boundary.enclosure_regions||[]).flatMap(r=>r.source_refs||[])])]]);
+  const storeysByZone=Object.fromEntries(Object.keys(zoneFloors).map(z=>[z,declaredStoreys(z)]));
+  const actualStoreys=(zone,fallback)=>storeysByZone[zone]||[fallback];
+  function selectionFloors(mode,item,u){
+    const floors=actualStoreys(u.zone,u.floor);
+    if(mode==='zone' || floors.length<2) return floors;
+    let low,high;
+    if(item.a && item.b){low=Math.min(item.a.z,item.b.z);high=Math.max(item.a.z,item.b.z);}
+    else if(item.geometry){if(!item.geometry.boundingBox) item.geometry.computeBoundingBox();
+      low=item.geometry.boundingBox.min.z;high=item.geometry.boundingBox.max.z;}
+    if(!Number.isFinite(low)) return floors;
+    const overlap=floors.filter(i=>{const f=sourceFloor(i);return f && low<f.z_floor+f.height-0.001 && high>f.z_floor+0.001;});
+    if(overlap.length) return overlap;
+    const touching=floors.filter(i=>{const f=sourceFloor(i);return f && low<=f.z_floor+f.height+0.001 && high>=f.z_floor-0.001;});
+    return touching.length ? touching : floors;
+  }
+  function authoredComponent(u){
+    const key=u.name || u.sourceName;
+    const source=(u.kind==='window' || u.kind==='opening') ?
+      sourceOpenings.get(u.sourceId || SOURCE_MAP.windows?.[key] || SOURCE_MAP.openings?.[key] || key) :
+      SOURCE_BOUNDARIES[u.boundaryId || SOURCE_MAP.surfaces?.[key] || key];
+    const name=source?.display_name || source?.name || source?.label;
+    return name && !/^[ZS]\d+(?:$|[_:/.-])|[_:]|\/(?:wall|floor|roof|boundary)\//i.test(name) ? name : '';
+  }
+  function showInspection(mode,item,floor){inspected={mode,item,floor};renderInspection();}
+  function renderInspection(){
+    const el=$('sel'); el.style.display=inspected ? 'block' : 'none';
+    if(!inspected){el.replaceChildren();return;}
+    const {mode,item}=inspected, u=item.userData || item;
+    const floors=selectionFloors(mode,item,u);
+    let storey=floors.map(floorName).join(' / '),name,use;
+    if(mode==='zone'){name=spaceName(u.zone);use=roleLabel(roleOf(u.zone));}
+    else if(mode==='floor'){
+      const i=inspected.floor;
+      name=storey=floorName(i);
+      const roles=new Set(ZONES.filter(z=>(storeysByZone[z]||[]).includes(i)).map(roleOf));
+      use=[...roles].map(r=>roleLabel(r)).join(' · ')||msg('Storey');
+    }else{
+      const type=msg(component(u));
+      name=authoredComponent(u) || spaceName(u.zone)+' · '+type;
+      use=type;
+      if(mode==='edge'){name+=' · '+msg('Edge');use=type+' · '+msg('Edge');}
+    }
+    el.innerHTML=[[msg('Name'),name],[msg('Storey'),storey],[msg('Function'),use]]
+      .map(([key,value])=>row(esc(key),esc(value))).join('');
   }
   function handleClick(ev){
     if(measuring){ const r=renderer.domElement.getBoundingClientRect();
       const p=snapPick(ev.clientX-r.left, ev.clientY-r.top); if(!p) return;
       if(measurePts.length>=2) clearPair();  // continuous: a new click starts a fresh pair (only latest shown)
       marker(p); measurePts.push(p);
-      if(measurePts.length<2){ $('meas').textContent='[[msg:measure: snap vertex 2  (Esc to exit)]]'; }
-      else { const d=measurePts[0].distanceTo(measurePts[1]);
-        mGroup.add(fatLine(measurePts[0], measurePts[1], 0xd81b60, 0.004));  // always-on-top distance line
-        $('meas').textContent='[[msg:distance: ]]'+d.toFixed(3)+'[[msg: m  (click=next, Esc=exit)]]'; }
+      if(measurePts.length===2) mGroup.add(fatLine(measurePts[0],measurePts[1],0xd81b60,0.004));
+      renderMeasurement();
       return; }
     const mode=$('colorBy').value;
     if(mode==='edge'){ edgePick(ev); return; }
     const hit=pick(ev); if(!hit){ clearSelection(); return; }
     const o=hit.object;
-    let sel; if(mode==='floor') sel=allPickables().filter(m=>m.userData.floor===o.userData.floor);
-    else if(mode==='zone') sel=allPickables().filter(m=>m.userData.zone===o.userData.zone); else sel=[o];
-    setSelection(sel, describe(mode,o));
+    let sel, floor;
+    if(mode==='floor'){
+      const floors=actualStoreys(o.userData.zone,o.userData.floor), active=Number($('floorSel').value);
+      const z=hit.point.z-o.position.z;
+      floor=floors.includes(active) ? active : (floors.find(i=>{const f=sourceFloor(i);
+        return f && z>=f.z_floor-0.001 && z<f.z_floor+f.height-0.001;
+      }) ?? floors[floors.length-1]);
+      sel=allPickables().filter(m=>actualStoreys(m.userData.zone,m.userData.floor).includes(floor));
+    }else if(mode==='zone') sel=allPickables().filter(m=>m.userData.zone===o.userData.zone); else sel=[o];
+    setSelection(sel); showInspection(mode,o,floor);
   }
   // click vs orbit-drag: only a near-stationary press is a click
   let downXY=null;
@@ -610,7 +642,7 @@ _APP_JS = r"""
       m.material.depthWrite=!m.material.transparent;});
     $('meshStatus').textContent=textureFailures?'[[msg:贴图加载失败，请重新打开完整 HTML。]]':
       ($('showMesh').checked&&exploded?'[[msg:展开时暂停贴图叠加]]':
-      (comparison?'[[msg:粉色：BIM边界 · 绿色：窗 · 橙色：门；遮挡处可剖切查看。]]':'[[msg:原始贴图按已保存坐标对齐，可随剖切和楼层筛选。]]'));
+      (comparison?'[[msg:粉色：BIM边界 · 绿色：窗 · 橙色：门；遮挡处可剖切查看。]]':''));
     applyClipping(); }
   function explodeOffset(zone){ const amt=parseFloat($('explode').value); if(amt<=0) return new THREE.Vector3();
     if($('explodeMode').value==='floor') return new THREE.Vector3(0,0, (zoneFloor[zone]||0)*amt*radius*1.0);
@@ -625,37 +657,41 @@ _APP_JS = r"""
 
   // ---- right-side info (structured) ----
   function row(k,v){ return '<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>'; }
-  $('hud').innerHTML =
-    '<div class="hh">[[msg:MODEL]]</div>' + row('[[msg:zones]]',(GEO.zones||[]).length) + row('[[msg:surfaces]]',SURF.length) + row('[[msg:windows]]',WINS.length) +
-    '<div class="hh">[[msg:BOUNDING BOX]]</div>' + row('[[msg:width (x)]]',size.x.toFixed(2)+' m') + row('[[msg:depth (y)]]',size.y.toFixed(2)+' m') +
-    row('[[msg:height (z)]]',size.z.toFixed(2)+' m') + row(SOURCE?'[[msg:源高度分组]]':'[[msg:floors]]',BASES.length);
-  if(SOURCE) $('hud').innerHTML += '<div class="hh">[[msg:源建筑模型]]</div>' +
-    row('[[msg:源空间]]',SOURCE.spaces.length) + row('[[msg:源边界]]',SOURCE.boundaries.length) +
-    row('[[msg:源开口]]',SOURCE.openings.length) + row((SOURCE.schema_version||'').startsWith('source_bim_v')?'[[msg:源几何检查]]':'[[msg:派生映射检查]]',esc(enumLabel(SOURCE.validation.status))) +
-    row('[[msg:已记录的门/开口连接]]',(SOURCE.connections||[]).length) +
-    (SOURCE.schema_version==='source_bim_v3' ? row('[[msg:半开敞 / 开敞空间]]',SOURCE.spaces.filter(s=>['semi_open','open'].includes(s.enclosure)).length) +
-      row('[[msg:开敞 / 未知边界]]',SOURCE.boundaries.filter(b=>['open','unknown','mixed'].includes(b.enclosure)).length) : '') +
-    '<p>[[msg:逻辑闭合只界定空间范围，不表示实体密闭或热区。半透明灰色是开敞或未知围护的查看辅助面；点选后可区分语义与来源。]]</p>';
+  function updateStats(){
+    const count=n=>n.toLocaleString(GEO.locale);
+    $('counts').innerHTML=row('[[msg:zones]]',count((GEO.zones||[]).length))+row('[[msg:surfaces]]',count(SURF.length))+
+      row('[[msg:windows]]',count(WINS.length))+row(SOURCE?'[[msg:Elevation groups]]':'[[msg:floors]]',count(BASES.length));
+    $('dimensions').innerHTML=row('[[msg:Width]]',size.x.toFixed(2)+' m')+row('[[msg:Depth]]',size.y.toFixed(2)+' m')+
+      row('[[msg:Height]]',size.z.toFixed(2)+' m');
+    $('elementStats').hidden=!SOURCE;
+    if(SOURCE) $('elementCounts').innerHTML=
+      row('[[msg:Spaces]]',count(SOURCE.spaces.length))+row('[[msg:Boundaries]]',count(SOURCE.boundaries.length))+
+      row('[[msg:Openings]]',count(SOURCE.openings.length))+row('[[msg:Connections]]',count((SOURCE.connections||[]).length))+
+      (SOURCE.schema_version==='source_bim_v3' ? row('[[msg:半开敞 / 开敞空间]]',count(SOURCE.spaces.filter(s=>['semi_open','open'].includes(s.enclosure)).length))+
+        row('[[msg:开敞 / 未知边界]]',count(SOURCE.boundaries.filter(b=>['open','unknown','mixed'].includes(b.enclosure)).length)) : '');
+  }
+  updateStats();
 
   // ---- room-type legend (shown in zone mode: colour swatch → room type) ----
   function updateLegend(mode){
     const el=$('legend'); if(!el) return;
-    if(mode!=='zone' || !HAS_ROLES){ el.style.display='none'; el.innerHTML=''; return; }
+    $('legendGroup').hidden=mode!=='zone' || !HAS_ROLES;
+    if($('legendGroup').hidden){el.innerHTML='';return;}
     const present=[], seen=new Set();
     (GEO.zones||[]).forEach(z=>{ const r=roleOf(z)||'untyped'; if(!seen.has(r)){ seen.add(r); present.push(r);} });
     present.sort();
     let h='';
     present.forEach(r=>{ const c=(r==='untyped')?ROLE_DEFAULT:(ROLE_COLORS[r]??ROLE_DEFAULT);
       h+='<div class="lg"><span class="sw" style="background:'+hex6(c)+'"></span>'+esc(roleLabel(r))+'</div>'; });
-    el.innerHTML=h; el.style.display='block';
+    el.innerHTML=h;
   }
 
   // ---- section controls ----
-  const secDiv=$('sections'); secDiv.innerHTML='<h2>[[msg:section cuts]]</h2>';
+  const secDiv=$('sections');
   AX.forEach(a=>{ const wrap=document.createElement('div'); wrap.className='sec'; const step=((a.max-a.min)/200)||0.01;
-    wrap.innerHTML='<label class="chk"><input type="checkbox" id="en'+a.key+'"> [[msg:cut ]]'+a.key+'</label>'+
-      '<input type="range" id="pos'+a.key+'" min="'+a.min+'" max="'+a.max+'" step="'+step+'" value="'+a.max+'">'+
-      '<label class="chk"><input type="checkbox" id="flip'+a.key+'"> [[msg:flip side]]</label>';
+    wrap.innerHTML='<label class="axis-label"><input type="checkbox" id="en'+a.key+'"><b>'+a.key+'</b></label>'+
+      '<input type="range" aria-label="'+a.key+'" id="pos'+a.key+'" min="'+a.min+'" max="'+a.max+'" step="'+step+'" value="'+a.max+'">'+
+      '<label class="chk flip"><input type="checkbox" id="flip'+a.key+'"> <span data-i18n="flip side">[[msg:flip side]]</span></label>';
     secDiv.appendChild(wrap);
     const refresh=()=>{a.enabled=$('en'+a.key).checked; a.flip=$('flip'+a.key).checked; a.pos=parseFloat($('pos'+a.key).value); updatePlane(a); applyClipping();};
     $('en'+a.key).onchange=refresh; $('pos'+a.key).oninput=refresh; $('flip'+a.key).onchange=refresh; });
@@ -672,6 +708,15 @@ _APP_JS = r"""
   $('opacity').oninput=e=>{const v=parseFloat(e.target.value); surfMeshes.forEach(m=>{
     m.material.opacity=v; m.material.transparent=v<1;});};
   $('explode').oninput=applyExplode; $('explodeMode').onchange=applyExplode;
+  for(const id of ['opacity','explode','meshOpacity']){
+    const input=$(id),output=$(id+'Value');
+    const showValue=()=>{
+      output.value=Math.round(Number(input.value)*100)+'%';
+      const fill=(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min));
+      input.style.setProperty('--progress',fill*100+'%');
+    };
+    input.addEventListener('input',showValue);showValue();
+  }
   $('measure').onclick=()=>{ measuring ? clearMeasure() : startMeasure(); };  // toggle
   $('clearMeasure').onclick=clearMeasure;
   window.addEventListener('keydown', e=>{ if(e.key==='Escape' && measuring) clearMeasure(); });
@@ -679,122 +724,226 @@ _APP_JS = r"""
   $('savePng').onclick=()=>{ renderer.render(scene,camera); const a=document.createElement('a');
     a.download='geometry_view.png'; a.href=renderer.domElement.toDataURL('image/png'); a.click(); };
 
-  refreshColors(); applyFilter(); applyExplode(); applyClipping(); defaultView();
-  window.addEventListener('resize',()=>{ camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight); });
+  function applyLocale(next){
+    locale=next==='zh-CN' ? 'zh-CN' : 'en';
+    GEO.locale=locale;
+    document.documentElement.lang=locale;
+    $('locale').value=locale;
+    document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=msg(el.dataset.i18n);});
+    for(const attr of ['title','aria-label','placeholder']){
+      document.querySelectorAll('[data-i18n-'+attr+']').forEach(el=>el.setAttribute(attr,msg(el.getAttribute('data-i18n-'+attr))));
+    }
+    Array.from(fs.options).filter(o=>Number(o.value)>=0).forEach(o=>{o.textContent=floorName(Number(o.value));});
+    updateStats();updateLegend($('colorBy').value);renderInspection();renderMeasurement();applyFilter();
+  }
+  $('locale').onchange=e=>applyLocale(e.target.value);
+  applyLocale('en');
+  refreshColors(); applyExplode(); defaultView();
+  new ResizeObserver(()=>{
+    const w=viewport.clientWidth,h=viewport.clientHeight;
+    if(!w || !h) return;
+    camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false);
+    if(!cameraMoved) defaultView();
+  }).observe(viewport);
   (function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
 })();
 """
 
 _PANEL_HTML = r"""
-<div id="panel">
-  <h1>[[msg:Geometry inspection]]</h1>
-  <div class="subtitle">__TITLE__</div>
-
-  <h2>[[msg:select by]]</h2>
-  <select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select>
-
-  <h2>[[msg:楼层 / 高度范围]]</h2>
-  <select id="floorSel"><option value="-1">[[msg:all floors]]</option></select>
-
-  <div id="meshControls" hidden>
-    <h2>[[msg:识别对照]]</h2>
-    <label class="chk"><input type="checkbox" id="showMesh"> [[msg:叠加原始 textured mesh]]</label>
-    <select id="meshMode"><option value="outline">[[msg:贴图 + BIM轮廓]]</option><option value="blend">[[msg:贴图 + BIM实体]]</option><option value="mesh">[[msg:仅贴图]]</option></select>
-    <label class="rng">[[msg:贴图透明度]]</label>
-    <input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1">
-    <p id="meshStatus"></p>
-    <p>[[msg:贴图用于视觉对照；半透明区域不作颜色或表面量测。]]</p>
+<header class="masthead">
+  <h1><svg class="brand-mark" aria-hidden="true" viewBox="0 0 32 32"><path fill="currentColor" d="M0 19 9 15v15H0zm10-3 6-4v18h-6zM16 2h15v15H16z"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M23.5 17H31v13h-7.5z"/></svg>Sim-BIM</h1>
+  <div class="head-actions">
+    <select id="locale" aria-label="[[msg:Language]]"><option value="en" lang="en">English</option><option value="zh-CN" lang="zh-CN">中文</option></select>
+    <button type="button" id="savePng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg><span>[[msg:Export PNG]]</span></button>
   </div>
-
-  <h2>[[msg:display]]</h2>
-  <label class="rng">[[msg:wall opacity]]</label>
-  <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="1">
-  <label class="rng">[[msg:exploded view]]</label>
-  <select id="explodeMode"><option value="floor">[[msg:by floor]]</option><option value="zone">[[msg:by zone]]</option></select>
-  <input type="range" id="explode" min="0" max="1" step="0.02" value="0">
-  <label class="chk"><input type="checkbox" id="showWalls" checked> [[msg:wall / floor / roof faces]]</label>
-  <label class="chk"><input type="checkbox" id="showWin" checked> [[msg:windows]]</label>
-  <label class="chk"><input type="checkbox" id="showOpen" checked> [[msg:门 / 空开口]]</label>
-  <label class="chk"><input type="checkbox" id="showEdges" checked> [[msg:edges]]</label>
-  <label class="chk"><input type="checkbox" id="showLogical"> [[msg:逻辑空间边界（细虚线）]]</label>
-  <label class="chk"><input type="checkbox" id="showEnclosure" checked> [[msg:开敞 / 未知辅助面]]</label>
-  <div class="enclosure-key"><span></span>[[msg:开敞 / 未知（点选查看类型）]]</div>
-
-  <div id="sections"></div>
-
-  __AUDIT__
-  <h2>[[msg:tools]]</h2>
-  <button id="measure">[[msg:measure (vertex &rarr; vertex)]]</button>
-  <button id="clearMeasure">[[msg:clear measure]]</button>
-  <button id="savePng">[[msg:save PNG]]</button>
-  <button id="reset">[[msg:reset view]]</button>
-</div>
-<div id="rinfo">
-  <div id="hud"></div>
-  <div id="legend"></div>
-  <div id="sel"></div>
-  <div id="meas"></div>
-</div>
+</header>
+<main class="viewer">
+  <section class="stage">
+    <div id="app"></div>
+    <div class="compass" aria-hidden="true"><span>N</span><svg viewBox="0 0 24 24"><g id="northArrow"><path fill="#34445a" d="m12 2 4 12-4-2-4 2z"/><path fill="#b5bfcb" d="m12 22-4-12 4 2 4-2z"/></g></svg></div>
+    <div class="view-filters">
+      <label class="filter" for="colorBy"><span>[[msg:select by]]</span><select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select></label>
+      <label class="filter" for="floorSel"><span>[[msg:楼层]]</span><select id="floorSel"><option value="-1">[[msg:all floors]]</option></select></label>
+    </div>
+    <div class="stage-tools">
+      <div id="meas" role="status"></div>
+      <div class="tool-row">
+        <button type="button" id="measure"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 13-13 5 5L8 21zM7 12l2 2m1-5 2 2m1-5 2 2"/></svg><span>[[msg:Measure]]</span></button>
+        <button type="button" id="clearMeasure">[[msg:clear measure]]</button>
+        <button type="button" id="reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1 7M4 4v6h6"/></svg><span>[[msg:reset view]]</span></button>
+      </div>
+    </div>
+    <div id="sel" aria-live="polite"></div>
+  </section>
+  <aside id="panel">
+    <div id="rinfo">
+      <section id="hud">
+        <h2>[[msg:Statistics]]</h2>
+        <div id="counts"></div>
+        <div id="dimensions" aria-label="[[msg:Dimensions]]"></div>
+        <details id="elementStats"><summary>[[msg:Building elements]]</summary><div id="elementCounts"></div></details>
+      </section>
+    </div>
+    <section class="settings">
+      <h2>[[msg:View settings]]</h2>
+      <details open><summary>[[msg:display]]</summary>
+        <div class="parameter">
+          <label for="opacity">[[msg:wall opacity]]</label><output id="opacityValue" for="opacity">100%</output>
+          <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="1">
+        </div>
+        <div class="parameter">
+          <label for="explode">[[msg:exploded view]]</label><output id="explodeValue" for="explode">0%</output>
+          <input type="range" id="explode" min="0" max="1" step="0.02" value="0">
+          <select id="explodeMode" aria-label="[[msg:exploded view]]"><option value="floor">[[msg:by floor]]</option><option value="zone">[[msg:by zone]]</option></select>
+        </div>
+      </details>
+      <details><summary>[[msg:Layers]]</summary><div class="checks">
+        <label class="chk"><input type="checkbox" id="showWalls" checked> [[msg:wall / floor / roof faces]]</label>
+        <label class="chk"><input type="checkbox" id="showWin" checked> [[msg:windows]]</label>
+        <label class="chk"><input type="checkbox" id="showOpen" checked> [[msg:门 / 空开口]]</label>
+        <label class="chk"><input type="checkbox" id="showEdges" checked> [[msg:edges]]</label>
+        <label class="chk"><input type="checkbox" id="showLogical"> [[msg:逻辑空间边界（细虚线）]]</label>
+        <label class="chk"><input type="checkbox" id="showEnclosure" checked> [[msg:开敞 / 未知辅助面]]</label>
+      </div></details>
+      <details><summary>[[msg:section cuts]]</summary><div id="sections"></div></details>
+      <details id="meshControls" hidden><summary>[[msg:Comparison]]</summary>
+        <div class="checks"><label class="chk"><input type="checkbox" id="showMesh"> [[msg:叠加原始 textured mesh]]</label></div>
+        <select id="meshMode" aria-label="[[msg:Comparison]]"><option value="outline">[[msg:贴图 + BIM轮廓]]</option><option value="blend">[[msg:贴图 + BIM实体]]</option><option value="mesh">[[msg:仅贴图]]</option></select>
+        <div class="parameter">
+          <label for="meshOpacity">[[msg:贴图透明度]]</label><output id="meshOpacityValue" for="meshOpacity">100%</output>
+          <input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1">
+        </div>
+        <p id="meshStatus" role="status"></p>
+      </details>
+      <details id="legendGroup"><summary>[[msg:Room types]]</summary><div id="legend"></div></details>
+    </section>
+  </aside>
+</main>
 """
 
 _STYLE = r"""
-  * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; overflow:hidden; font:13px/1.4 system-ui, sans-serif; }
-  #app { position:fixed; inset:0; }
-  #panel { position:absolute; top:14px; left:14px; width:280px; max-height:calc(100% - 28px); overflow-y:auto;
-    background:rgba(255,255,255,0.96); border:1px solid #d7dbe0; border-radius:10px; padding:16px 18px;
-    box-shadow:0 4px 16px rgba(0,0,0,0.14); color:#222; }
-  #panel h1 { font-size:16px; font-weight:600; margin:0 0 2px; }
-  #panel .subtitle { color:#8a9099; font-size:12px; margin-bottom:6px; }
-  #panel .hint { color:#8a9099; font-size:11.5px; margin:5px 0 2px; }
-  #panel h2 { font-size:11px; font-weight:700; margin:18px 0 7px; color:#5b6b86; text-transform:uppercase; letter-spacing:.06em; }
-  #panel label { display:block; }
-  #panel label.rng { font-size:12.5px; color:#555; margin:10px 0 5px; }
-  #panel label.chk { font-size:13px; margin:7px 0; cursor:pointer; }
-  #panel label.chk input { margin-right:7px; vertical-align:-1px; }
-  .enclosure-key { color:#667085; font-size:11.5px; margin:5px 0 0 2px; }
-  .enclosure-key span { width:13px; height:3px; display:inline-block; margin:0 4px 2px 0;
-    background:#8b949e; opacity:.65; }
-  #panel input[type=range] { width:100%; margin:2px 0 4px; accent-color:#3b6ea5; }
-  #panel select { width:100%; padding:6px 8px; font-size:13px; border:1px solid #cfd4da; border-radius:6px; background:#fff; }
-  #panel button { width:100%; padding:8px; margin-top:8px; font-size:13px; cursor:pointer;
-    border:1px solid #cfd4da; border-radius:7px; background:#f4f6f8; color:#2a3340; transition:background .12s; }
-  #panel button:hover { background:#e7ebf0; }
-  .sec { border-top:1px solid #ebedf0; padding-top:9px; margin-top:9px; }
-  #rinfo { position:absolute; top:12px; right:12px; width:340px; max-height:calc(100% - 24px); overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
-  #rinfo > * { flex-shrink:0; }
-  .source-notes { padding:12px 16px; background:rgba(255,255,255,0.96); color:#222;
-    border:1px solid #d7dbe0; border-radius:8px; overflow-wrap:anywhere; }
-  .source-notes details { margin-top:6px; }
-  .source-notes ul { padding-left:18px; }
-  #hud { background:rgba(20,28,44,0.88); color:#eef; padding:12px 16px; border-radius:8px; font-size:15px; }
-  #hud .hh { font-size:12px; letter-spacing:.05em; color:#8fb0e0; margin:8px 0 3px; text-transform:uppercase; }
-  #hud .hh:first-child { margin-top:0; }
-  #hud .kv { display:flex; justify-content:space-between; padding:2px 0 2px 10px; }
-  #hud .kv span { color:#c7d2e0; }
-  #hud .kv b { color:#fff; font-weight:600; }
-  #legend { display:none; background:rgba(20,28,44,0.88); color:#eef; padding:10px 16px; border-radius:8px; font-size:13px; }
-  #legend .hh { font-size:12px; letter-spacing:.05em; color:#8fb0e0; margin:0 0 6px; text-transform:uppercase; }
-  #legend .lg { display:flex; align-items:center; gap:8px; padding:2px 0; text-transform:capitalize; }
-  #legend .sw { width:14px; height:14px; border-radius:3px; border:1px solid rgba(255,255,255,0.4); display:inline-block; flex:0 0 auto; }
-  #sel { display:none; background:rgba(38,50,80,0.92); color:#eef; padding:12px 16px; border-radius:8px; font-size:14px; }
-  #sel .hh { font-size:12px; letter-spacing:.05em; color:#9fc0ef; margin:0 0 5px; text-transform:uppercase; }
-  #sel .kv { display:flex; justify-content:space-between; gap:16px; padding:3px 0 3px 10px; }
-  #sel .kv span { color:#c7d2e0; }
-  #sel .kv b { color:#fff; font-weight:600; text-align:right; word-break:break-word; }
-  #sel .kv span { flex-shrink:0; }
-  #sel .trace { border-top:1px solid #64708a; margin-top:10px; padding-top:8px; }
-  #sel .trace summary { cursor:pointer; color:#c7d2e0; font-size:12px; }
-  #meas { display:none; background:#d81b60; color:#fff; padding:11px 16px; border-radius:8px; font-size:19px; font-weight:700; box-shadow:0 2px 8px rgba(216,27,96,0.45); }
+  :root {color-scheme:light;--ink:#19212e;--muted:#586575;--line:#d9dee6;--blue:#244edc;--sheet:#fff;font:14px/1.45 "Work Sans","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;color:var(--ink);background:white;}
+  * {box-sizing:border-box;}
+  [hidden] {display:none!important;}
+  html,body {height:100%;margin:0;}
+  body {display:flex;flex-direction:column;overflow:hidden;}
+  button,select,input {font:inherit;}
+  button,select {color:var(--ink);}
+  button,select,summary,input[type=checkbox] {cursor:pointer;}
+  :focus-visible {outline:3px solid #7190ef;outline-offset:2px;}
+  h1,h2,p {margin:0;}
+  .masthead {display:flex;align-items:center;justify-content:space-between;gap:14px;flex:none;height:64px;padding:0 clamp(16px,2.1vw,34px);border-bottom:1px solid var(--line);background:white;}
+  h1 {display:flex;align-items:center;gap:10px;font-size:25px;letter-spacing:-.05em;line-height:1;font-weight:720;}
+  .brand-mark {height:28px;width:28px;color:var(--blue);}
+  .head-actions,.tool-row,.view-filters {display:flex;align-items:center;gap:8px;}
+  .head-actions {gap:14px;}
+  button,select {border:1px solid #bdc7d3;border-radius:5px;background:#fff;}
+  button {display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 12px;font-weight:570;white-space:nowrap;}
+  button svg {display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;}
+  button:hover,summary:hover {background:#f1f4f8;}
+  select {padding:7px 8px;}
+  #locale {border-color:transparent;max-width:106px;}
+  .viewer {display:grid;grid-template-columns:minmax(0,1fr) clamp(310px,25vw,405px);flex:1;min-height:0;}
+  .stage {position:relative;isolation:isolate;min-width:0;min-height:0;overflow:hidden;background:#f4f6f8;}
+  #app {position:absolute;inset:0;}
+  #app canvas {display:block;width:100%;height:100%;touch-action:none;}
+  .compass {position:absolute;right:clamp(12px,1.7vw,26px);top:clamp(12px,1.7vw,24px);display:grid;justify-items:center;gap:1px;pointer-events:none;color:#546479;font:600 10px/1 "Segoe UI",sans-serif;}
+  .compass svg {width:28px;height:28px;border:1px solid #cad2dd;border-radius:50%;background:#ffffffa8;}
+  #northArrow {transform-origin:12px 12px;}
+  .view-filters {position:absolute;left:clamp(12px,1.7vw,26px);top:clamp(12px,1.7vw,24px);align-items:stretch;max-width:calc(100% - 24px);}
+  .filter {min-width:0;display:flex;align-items:center;gap:5px;background:#fff;border:1px solid #c6cfda;border-radius:5px;padding-left:10px;box-shadow:0 1px 3px #2236550c;}
+  .filter>span {white-space:nowrap;font-size:12px;color:var(--muted);}
+  .filter select {background:transparent;border:0;font-weight:570;min-width:0;max-width:clamp(105px,14vw,220px);font-size:13px;}
+  .stage-tools {position:absolute;left:clamp(12px,1.7vw,26px);bottom:clamp(12px,1.7vw,24px);display:grid;justify-items:start;gap:9px;max-width:calc(100% - 24px);}
+  .tool-row {flex-wrap:wrap;gap:6px;}
+  .stage-tools button {font-size:13px;box-shadow:0 2px 5px #2236550e;}
+  #meas,#sel {display:none;}
+  #clearMeasure {display:none;}
+  .stage-tools:has(#meas[style*="block"]) #measure {border-color:var(--blue);color:var(--blue);background:#eff3ff;}
+  .stage-tools:has(#meas[style*="block"]) #clearMeasure {display:inline-flex;}
+  #meas {padding:6px 10px;border-radius:5px;background:#283858;color:#fff;font-size:12px;}
+  #sel {position:absolute;bottom:clamp(12px,1.7vw,24px);right:clamp(12px,1.7vw,24px);width:min(290px,46%);max-height:37%;overflow:auto;padding:12px 15px;background:#fff;border:1px solid #bfcbda;border-radius:7px;box-shadow:0 5px 20px #22365516;}
+  #sel .hh {font-size:14px;font-weight:650;margin-bottom:7px;}
+  .kv {display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+  .kv span {color:var(--muted);}
+  .kv b {font-variant-numeric:tabular-nums;font-weight:600;}
+  #sel .kv,#elementCounts .kv {padding:3px 0;font-size:13px;}
+  #sel .kv b {min-width:0;overflow-wrap:anywhere;text-align:right;}
+  #sel .kv span {flex:none;}
+  #panel {min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable;border-left:1px solid var(--line);padding:clamp(18px,1.65vw,28px);background:var(--sheet);}
+  #panel h2 {font-size:clamp(18px,1.4vw,23px);line-height:1.27;font-weight:670;letter-spacing:-.035em;}
+  #counts {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:16px 0 12px;}
+  #counts .kv,#dimensions .kv {display:flex;gap:2px;align-items:flex-start;flex-direction:column;}
+  #counts .kv {flex-direction:column-reverse;padding:10px 1px 11px;}
+  #counts .kv:nth-child(2n) {border-left:1px solid var(--line);padding-left:18px;}
+  #counts .kv:nth-child(-n+2) {border-bottom:1px solid var(--line);}
+  #counts .kv b {font-size:clamp(22px,1.8vw,30px);line-height:1.08;letter-spacing:-.04em;font-weight:640;}
+  #counts .kv span,#dimensions .kv span {font-size:13px;}
+  #dimensions {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 0;border-block:1px solid var(--line);}
+  #dimensions .kv {gap:3px;}
+  #dimensions .kv + .kv {padding-left:10px;border-left:1px solid var(--line);}
+  #dimensions b {font-size:14px;white-space:nowrap;}
+  .settings {margin-top:22px;}
+  .settings h2 {margin-bottom:10px!important;}
+  #panel details {border-bottom:1px solid var(--line);}
+  #panel summary {position:relative;padding:11px 2px 11px 18px;font-size:14px;font-weight:590;list-style:none;cursor:pointer;border-radius:2px;}
+  #panel summary::-webkit-details-marker {display:none;}
+  #panel summary:before {content:"";position:absolute;top:calc(50% - 4px);left:3px;width:6px;height:6px;border-right:1.5px solid #5b687c;border-bottom:1.5px solid #5b687c;transform:rotate(-45deg);}
+  #panel details[open]>summary:before {transform:rotate(45deg);}
+  #elementCounts,.checks,#legend,#sections {padding:0 1px 12px;}
+  .parameter {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 10px;margin:2px 0 13px;}
+  .parameter label,.checks,.parameter select,#meshMode {font-size:14px;}
+  .sec {font-size:13px;}
+  .parameter output {font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .parameter input,.parameter select {grid-column:1/-1;}
+  input[type=range] {width:100%;accent-color:var(--blue);height:20px;margin:3px 0;}
+  .parameter input[type=range] {appearance:none;background:transparent;cursor:pointer;}
+  .parameter input[type=range]::-webkit-slider-runnable-track {height:4px;border-radius:4px;background:linear-gradient(to right,var(--blue) var(--progress),#d9dfe7 var(--progress));}
+  .parameter input[type=range]::-webkit-slider-thumb {appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:50%;background:var(--blue);}
+  .parameter input[type=range]::-moz-range-track {height:4px;border-radius:4px;background:#d9dfe7;}
+  .parameter input[type=range]::-moz-range-progress {height:4px;background:var(--blue);}
+  .parameter input[type=range]::-moz-range-thumb {width:14px;height:14px;border:0;border-radius:50%;background:var(--blue);}
+  input[type=checkbox] {width:15px;height:15px;accent-color:var(--blue);margin:0;flex:none;}
+  .chk,.axis-label {display:flex;align-items:center;gap:8px;cursor:pointer;}
+  .checks {display:grid;gap:9px;padding-top:1px;}
+  .sec {display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:8px;padding:4px 0;}
+  .sec .flip {font-size:12px;}
+  #meshMode {width:100%;margin:0 0 13px;}
+  #meshStatus {color:var(--muted);font-size:12px;margin-bottom:12px;}
+  #meshStatus:empty {display:none;}
+  #legend {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}
+  .lg {display:flex;align-items:center;gap:7px;font-size:12px;overflow-wrap:anywhere;}
+  .sw {display:inline-block;width:12px;height:12px;flex:none;border-radius:3px;border:1px solid #0002;}
+  @media (max-width:800px) and (orientation:portrait), (max-width:650px) {
+    html,body {height:auto;min-height:100%;}
+    body {overflow:auto;}
+    .masthead {height:54px;padding:0 13px;}
+    .head-actions {gap:3px;}
+    .brand-mark {width:23px;height:23px;}
+    h1 {font-size:21px;gap:6px;}
+    .head-actions button {padding:7px 9px;font-size:12px;}
+    .viewer {display:block;}
+    .stage {height:60vh;height:60svh;min-height:300px;max-height:640px;}
+    #panel {overflow:visible;scrollbar-gutter:auto;border-left:none;border-top:1px solid var(--line);padding:18px 20px 26px;}
+    #counts {grid-template-columns:repeat(4,minmax(0,1fr));margin:12px 0 10px;}
+    #counts .kv,#counts .kv:nth-child(2n),#counts .kv:nth-child(-n+2) {padding:2px 3px 2px 8px;border:none;}
+    #counts .kv:first-child {padding-left:0;}
+    #counts .kv + .kv {border-left:1px solid var(--line);}
+    #counts .kv span {font-size:11px;}
+    .view-filters {gap:5px;}
+    .filter {padding-left:6px;gap:1px;}
+    .filter>span {font-size:11px;}
+    .filter select {font-size:12px;padding:6px 3px;max-width:30vw;}
+    #sel {bottom:55px;width:min(260px,72%);padding:9px 12px;}
+  }
+  @media (max-height:530px) and (min-width:651px) { .masthead {height:46px;} }
 """
 
 _HTML = r"""<!doctype html>
 <html lang="__LOCALE__"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>[[msg:Geometry inspection]] — __TITLE__</title>
+<title>Sim-BIM</title>
 <style>__STYLE__</style></head>
 <body>
-<div id="app"></div>
 __PANEL__
 <script>__THREE_JS__</script>
 <script>__ORBIT_JS__</script>
@@ -806,7 +955,7 @@ __PANEL__
 
 def app_js(locale: str = "zh-CN") -> str:
     """The viewer app script (for embedding + standalone syntax checking)."""
-    return localize_template(_APP_JS, locale, javascript=True)
+    return viewer_script(_APP_JS)
 
 
 def discover_roles(bg_path: Path) -> dict:
@@ -852,29 +1001,25 @@ def wall_properties(source: dict) -> dict:
 
 def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | None = None,
                       mesh_path: Path | None = None, locale: str = "zh-CN") -> str:
-    translate = translator(locale)
     three_js = (_VENDOR / "three.min.js").read_text(encoding="utf-8")
     orbit_js = (_VENDOR / "OrbitControls.js").read_text(encoding="utf-8")
     from src.agent.geometry.openings import visible_wall_parts
 
     geo = {
-        "locale": locale,
-        "enum_labels": {key: translate(key) for key in (
-            "Wall", "Window", "Floor", "Roof", "Ceiling", "pass", "warning", "severe",
-            "unknown", "untyped", "observed", "example", "manual_annotation", "inferred")},
+        "locale": "en",
+        "messages": viewer_messages(_HTML, _PANEL_HTML, _APP_JS),
         "zones": data.get("zones", []),
         "surfaces": data.get("surfaces", []),
         "windows": data.get("windows", []),
         "openings": data.get("openings", []),
         "visible_wall_parts": data["display_surface_parts"] if "display_surface_parts" in data else visible_wall_parts(data),
         "enclosure_regions": data.get("enclosure_regions", []),
-        "roles": roles if roles is not None else data.get("roles", {}),
+        "roles": dict(roles if roles is not None else data.get("roles", {})),
         "source_model": data.get("source_model"),
     }
-    from src.agent.roles import ROOM_TYPES, normalize
+    from src.agent.roles import ROOM_TYPES
     from src.agent.geometry.source_naming import viewer_names
-    geo["roles"] = {sid: normalize(role) or "unknown" for sid, role in geo["roles"].items()}
-    geo["room_types"] = ROOM_TYPES
+    geo["room_types"] = room_type_labels(ROOM_TYPES)
     geo["public_names"] = viewer_names(data, geo["visible_wall_parts"])
     source = data.get("source_model") or {}
     if mesh_path is not None:
@@ -886,9 +1031,18 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     zone_map = source.get("derived", {}).get("zones", {})
     named_floors = geo["public_names"]["floors"]
     memberships = {}
+    room_names = {}
     for zone in geo["zones"]:
         sid = zone_map.get(zone, zone)
-        space = spaces.get(sid)
+        space = spaces.get(sid, {})
+        role = geo["roles"].get(zone) or space.get("role")
+        if role:
+            geo["roles"][zone] = room_role(role)
+        authored = space.get("display_name") or space.get("name") or space.get("label")
+        if not authored and not space and re.search(r"[\s\u3400-\u9fff]", zone):
+            authored = zone
+        if authored and not re.search(r"(?:^[ZS]\d+(?:$|[_:/.-])|[_:]|/(?:wall|roof|floor|boundary)/)", str(authored), re.I):
+            room_names[zone] = {"name": authored, "role": room_role(authored)}
         if not space:
             continue
         indices = [i for i, floor in enumerate(named_floors)
@@ -896,24 +1050,17 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
                    or sid in source_floors.get(floor["id"], {}).get("spanning_space_ids", [])]
         if indices:
             memberships[zone] = indices
+    geo["room_names"] = room_names
     geo["floor_memberships"] = memberships
-    safe_title = html.escape(title if title is not None else translate("building geometry"))  # HTML-context (title tag + panel text)
-    from scripts.tool_scripts.bim_agent_delivery_display import render_regularization_html
-    regularization_html = render_regularization_html(source, data.get("regularization_report"), locale=locale)
-    audit_panel = ""
-    if regularization_html:
-        audit_panel = ('<details style="margin-top:14px;max-width:100%;overflow-wrap:anywhere">'
-                       f'<summary>{translate("几何规整清单")}</summary><div style="overflow-x:auto">'
-                       + regularization_html + '</div></details>')
     # Replace placeholders in the trusted template once, so an input name or
     # evidence containing another placeholder is preserved literally.
     values = {
-        "LOCALE": locale, "STYLE": _STYLE, "AUDIT": audit_panel,
+        "LOCALE": "en", "STYLE": _STYLE,
         "THREE_JS": three_js, "ORBIT_JS": orbit_js, "GEO_JSON": _js_embed(geo),
-        "APP_JS": app_js(locale), "TITLE": safe_title,
+        "APP_JS": app_js(),
     }
     template = _HTML.replace("__PANEL__", _PANEL_HTML)
-    return re.sub(r"__([A-Z_]+)__", lambda m: values[m[1]], localize_template(template, locale))
+    return re.sub(r"__([A-Z_]+)__", lambda m: values[m[1]], viewer_markup(template, geo["messages"]))
 
 
 def load_viewer_geometry(path: Path) -> dict:
@@ -928,13 +1075,7 @@ def load_viewer_geometry(path: Path) -> dict:
     if schema in {"source_bim_v2", "source_bim_v3"}:
         from src.agent.geometry.source_bim import source_view_geometry
 
-        display = source_view_geometry(data)
-        audit_path = path.with_name("regularization_report.json")
-        if audit_path.is_file():
-            audit = json.loads(audit_path.read_text(encoding="utf-8"))
-            if audit.get("source_model_sha256") == data.get("source_model_sha256"):
-                display["regularization_report"] = audit
-        return display
+        return source_view_geometry(data)
     if isinstance(schema, str) and schema.startswith("source_bim"):
         raise ValueError(f"unsupported source BIM schema: {schema}")
 

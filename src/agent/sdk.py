@@ -183,7 +183,7 @@ class BimSession:
         return build_with_views(self, plan, drawings=drawings, mesh_observations=mesh_observations)
 
     def finish_to(self, output_directory, candidate: str, *, reviews=None, inferences=None):
-        """Finish normally and publish the same bound source/viewer in one call.
+        """Finish normally and publish the bound interactive HTML in one call.
 
         The output directory must not exist. A failed or incomplete original
         finish cannot publish; no automatic review, repair or render occurs.

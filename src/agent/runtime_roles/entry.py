@@ -305,13 +305,15 @@ async def execute(args, *, adapter_factory=None, fault_hook=None, reader_fault_h
                 }
             store.write_json("receipt.json", result)
             from src.agent.bim_inputs import dump
+            from src.agent.runtime_delivery import publish_completed_model
+            publish_completed_model(output, result)
             delivery = result.get("finalization", {}).get("delivery")
             dump(run / "summary.json", {
                 "input_mode": manifest.get("input_mode"), "source_input_mode": manifest.get("source_input_mode"),
                 "input_contents": manifest.get("input_contents"),
                 "agent_response_completed": result["status"] == "completed", "runtime_status": result["status"],
                 "elapsed_seconds": result.get("elapsed_seconds"),
-                "delivery": ({**delivery, "report": "delivery.json", "viewer": "delivery.html"} if delivery else None),
+                "delivery": ({**delivery, "report": "delivery.json", "viewer": f"{delivery['candidate']}/viewer.html"} if delivery else None),
                 "receipt": "../receipt.json", "drawing_fidelity": "not_evaluated", "runtime_mode": "role_division"})
     from src.agent.runtime_behaviour import write_behaviour_report
     write_behaviour_report(output / "events.jsonl", output / "behaviour")
@@ -321,7 +323,8 @@ async def execute(args, *, adapter_factory=None, fault_hook=None, reader_fault_h
 def main():
     args = parser().parse_args()
     result = asyncio.run(execute(args))
-    print(json.dumps({"status": result["status"], "usage": result["role_accounting"]}, ensure_ascii=False))
+    print(json.dumps({"status": result["status"], "usage": result["role_accounting"],
+                      **({"viewer": result["viewer"]} if "viewer" in result else {})}, ensure_ascii=False))
     raise SystemExit(0 if result["status"] == "completed" else 1)
 
 

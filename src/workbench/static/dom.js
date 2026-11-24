@@ -9,7 +9,8 @@ const paths = {
   mesh: '<path d="m12 2-9 5v10l9 5 9-5V7zm0 10v10M3 7l9 5 9-5"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1.5"/><path d="m4 18 5-5 3 3 4-6 5 7"/>',
   declaration: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
-  external: '<path d="M13 4h7v7m0-7L10 14m0-9H4v15h15v-6"/>'
+  external: '<path d="M13 4h7v7m0-7L10 14m0-9H4v15h15v-6"/>',
+  download: '<path d="M12 3v13m-5-5 5 5 5-5M4 16v4h16v-4"/>'
 };
 export function icon(name) {
   const holder = document.createElement('i');

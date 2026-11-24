@@ -275,7 +275,7 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
     )
     return exit_code
 
-def run(case, resume=False, *, credential=None, host=execute_host, image_history_batches=None):
+def run(case, resume=False, *, credential=None, host=execute_host, image_history_batches=None, print_terminal=True):
     config = read(case / 'config.json')
     freeze = read(case / 'shared/freeze.json')
     if any((digest(case / name) != value for name, value in freeze['files'].items())):
@@ -384,7 +384,8 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         threading.Thread(target=server.serve_forever, daemon=True).start()
         serving = True
         terminal = drive(case, session, config, server, url, nonce, first, resume, host)
-        print(json.dumps(terminal, ensure_ascii=False))
+        if print_terminal:
+            print(json.dumps(terminal, ensure_ascii=False))
         if not terminal['delivered']:
             failure = terminal['failure']
             print(f"Delivery failed [{failure['category']} / {failure['code']}]: {failure['message']}", file=sys.stderr)

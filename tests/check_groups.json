@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_viewer_publication.py": {
+      "group": "targeted",
+      "reason": "Atomic, digest-bound publication of a single offline Sim-BIM viewer"
+    },
     "tests/test_workbench.py": {
       "group": "targeted",
       "reason": "Local web submission, ordered material copies, immutable run snapshots, model selections and locale"

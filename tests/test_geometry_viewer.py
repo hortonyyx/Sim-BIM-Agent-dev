@@ -69,7 +69,7 @@ def test_viewer_has_all_controls():
     for ctrl in ('id="opacity"', 'id="explode"', 'id="explodeMode"', 'id="measure"', 'id="savePng"',
                  'id="colorBy"', 'id="floorSel"', 'id="showWin"', 'id="showEdges"',
                  'id="showLogical"', 'id="showEnclosure"', 'id="hud"', 'id="meas"',
-                 '剖切', '选择对象'):
+                 'id="locale"', 'id="sections"'):
         assert ctrl in html, f"missing control: {ctrl}"
 
 
@@ -101,7 +101,7 @@ def test_enclosure_projection_uses_one_viewer_only_aid_for_open_and_unknown():
     assert embedded["visible_wall_parts"]["w1"][1]["enclosure_condition"] == "unknown"
     assert "LineDashedMaterial" in html and "ENCLOSURE_COLOR" in html and "ENCLOSURE_OPACITY" in html
     assert "allPickables().filter" in html and "raycaster.params.Line.threshold" in html
-    assert "源边界 ID" in html and "明确开敞区域" in html and "围护未知区域" in html
+    assert "Open boundary" in html and "Unknown enclosure" in html
     # Both conditions create the same viewer-only helper mesh. Unknown projected
     # wall parts are skipped, so that helper does not overlap a second face.
     region_block = html[html.index("ENC_REGIONS.forEach"):html.index("WINS.forEach")]
@@ -109,8 +109,7 @@ def test_enclosure_projection_uses_one_viewer_only_aid_for_open_and_unknown():
     assert "if(enclosureCondition==='unknown') return" in html
     assert "r.condition==='unknown'?" not in region_block
     assert "open-key" not in html and "unknown-key" not in html
-    assert "逻辑闭合只界定空间范围，不表示实体密闭或热区" in html
-    assert "边界覆盖" in html and "来源" in html and "假设" in html
+    assert "traceInfo(" not in html and "源边界 ID" not in html
 
 
 def _minimal_source_v2():
@@ -193,10 +192,9 @@ def test_geometry_cannot_break_out_of_script():
     assert "\\u003c/script\\u003e" in html  # the evil close-tag was escaped
 
 
-def test_title_is_html_escaped():
+def test_model_title_cannot_change_the_viewer_brand_or_inject_markup():
     html = rgv.build_viewer_html(_GEO, title="<b>&x")
-    assert "&lt;b&gt;&amp;x" in html                       # title escaped
-    assert "Geometry inspection — <b>&x" not in html       # raw title not injected
+    assert "<title>Sim-BIM</title>" in html and "<b>&x" not in html
 
 
 def test_viewer_colours_zones_by_room_type():
@@ -212,7 +210,10 @@ def test_viewer_colours_zones_by_room_type():
 
 
 def test_viewer_without_roles_falls_back_to_white_zone_fill():
-    html = rgv.build_viewer_html(_GEO, title="t")  # no roles
+    data = copy.deepcopy(_GEO)
+    for space in data["source_model"]["spaces"]:
+        space.pop("role")
+    html = rgv.build_viewer_html(data, title="t")
     start = html.index("window.GEO = ") + len("window.GEO = ")
     geo = json.loads(html[start:html.index(";</script>", start)])
     assert geo["roles"] == {}  # empty → JS HAS_ROLES false → white zone fill

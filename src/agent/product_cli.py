@@ -35,6 +35,7 @@ def demo(output: Path):
     """Exercise the real local BIM tools with a clearly synthetic two-room plan."""
     from src.agent_runtime.run_paths import resolve_run_output
     from src.agent.bim_inputs import prepare_bim_inputs
+    from src.agent.viewer_publication import publish_viewer
     from PIL import Image, ImageDraw
     from scripts.tool_scripts.bim_agent_guidance import REFERENCES
     from scripts.tool_scripts.run_bim_agent import Toolkit
@@ -63,11 +64,12 @@ def demo(output: Path):
     if not result.get("source_geometry_ready"):
         raise ValueError("Offline demonstration did not produce valid geometry")
     candidate = output / result["candidate"]
+    viewer = publish_viewer(output, result["candidate"], output)
     source = json.loads((candidate / "source_model.json").read_bytes())
     summary = {"status": "completed", "kind": "synthetic_offline_demo", "model_requests": 0,
                "spaces": len(source["spaces"]), "openings": len(source["openings"]),
                "source_model": str(candidate / "source_model.json"),
-               "viewer": str(candidate / "viewer.html"), "drawing_fidelity": "not_evaluated"}
+               "viewer": str(viewer), "drawing_fidelity": "not_evaluated"}
     (output / "demo-result.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     return summary
 

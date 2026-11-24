@@ -8,6 +8,7 @@ let fields = {taskBrief:'',coordinator:null,workers:[]};
 let draft = [], editing = null, saveTimer, runTimer, pollToken = 0, busy = false, loaded = false;
 let work = Promise.resolve(), previewController, dialogType, drag = null;
 let connectionsTimer, connectionsEpoch=0;
+let openWhenComplete = null;
 const pendingConnections=new Set();
 const t = key=>tr(state.locale,key);
 const same = (a,b)=>JSON.stringify(a) === JSON.stringify(b);
@@ -63,6 +64,7 @@ function act(action) {
   enqueue(action).catch(()=>{}).finally(()=>{busy=false; render();});
 }
 function applyState(next) {
+  if (next.workspace!==state.workspace) openWhenComplete=null;
   Object.assign(state,next);
   state.project ??= {blocks:[],revision:0};
   fields={taskBrief:state.project.taskBrief ?? t('briefDefault'),coordinator:state.project.coordinator ?? null,workers:state.project.workers ?? []};
@@ -126,12 +128,19 @@ function renderRun() {
   if (run.message) {
     const details=el('details','hint'); details.append(el('summary','',t('diagnostic')),el('p','',run.message)); panel.append(details);
   }
-  for (const [key,label] of [['viewer','viewer'],['report','report']]) if (run[key]) {
+  for (const key of ['viewer','download']) if (run[key]) {
     let url;
     try {url=new URL(run[key],location.origin);} catch {continue;}
     if (url.origin!==location.origin) continue;
-    const link=el('a','link-button',t(label)); link.href=url.href; link.target='_blank'; link.rel='noopener';
-    link.append(icon('external')); panel.append(link);
+    const link=el('a','link-button',t(key)); link.href=url.href;
+    if (key==='download') link.download='Sim-BIM.html';
+    else { link.target='_blank'; link.rel='noopener'; }
+    link.append(icon(key==='download'?'download':'external')); panel.append(link);
+    if (key==='viewer' && run.status==='completed' && openWhenComplete?.id===run.id && !busy) {
+      const submitted=openWhenComplete; openWhenComplete=null;
+      if (submitted.workspace===state.workspace && submitted.revision===state.project.revision &&
+          !dirtyBlock() && !dirtyFields() && !$('dialog').open) location.assign(url.href);
+    }
   }
 }
 function watchRun() {
@@ -484,6 +493,7 @@ function initialize() {
     act(async()=>{
       await saveProject();
       const result=await request('runs',{workspace:state.workspace,revision:state.project.revision,connectionRevisions});
+      openWhenComplete={id:result.run.id,workspace:state.workspace,revision:state.project.revision};
       state.run=result.run;notice('');watchRun();
     });
   };

@@ -164,7 +164,7 @@ def test_mesh_frame_and_overlay_reach_stdio_and_preserve_saved_geometry(tmp_path
     assert original.read_bytes() == original_bytes
 
 
-def test_precision_viewer_refresh_preserves_admitted_mesh(tmp_path, monkeypatch):
+def test_precision_audit_preserves_admitted_mesh_and_viewer(tmp_path, monkeypatch):
     from test_bim_agent_tools import _two_room_proposal
     from scripts.tool_scripts.bim_agent_precision import building_precision
     from scripts.tool_scripts import bim_agent_regularization as regularization
@@ -179,17 +179,18 @@ def test_precision_viewer_refresh_preserves_admitted_mesh(tmp_path, monkeypatch)
     path = run / built['candidate']
     source_bytes = (path/'source_model.json').read_bytes()
     source = json.loads(source_bytes)
+    viewer_bytes = (path/'viewer.html').read_bytes()
     audit = {'reports': [{'changes': []}], 'source_model_sha256': source['source_model_sha256']}
     monkeypatch.setattr(regularization, 'collect_candidate_report', lambda *args: audit)
     # Emulate an inherited audit first becoming available for this saved candidate.
     assert not (path/'regularization_report.json').exists()
-    building_precision(toolkit, built['candidate'])
+    assert building_precision(toolkit, built['candidate'])['regularization'] == audit
     html = (path/'viewer.html').read_text(encoding='utf-8')
     start = html.index('window.GEO = ') + len('window.GEO = ')
     embedded = json.loads(html[start:html.index(';</script>', start)])
     assert embedded['textured_mesh']['mesh_frame'] == value['mesh_frame']
     assert embedded['textured_mesh']['face_count'] == 12
-    assert '几何规整清单' in html
+    assert (path/'viewer.html').read_bytes() == viewer_bytes
     assert (path/'source_model.json').read_bytes() == source_bytes
 
 

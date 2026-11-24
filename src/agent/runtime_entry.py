@@ -22,7 +22,7 @@ from src.agent.runtime_tools import (
     write_frozen_materials, write_frozen_tool_catalog,
 )
 from src.agent.runtime_context import update_building_context
-from src.agent.runtime_delivery import completed_building_handoff, finalize_runtime_building
+from src.agent.runtime_delivery import completed_building_handoff, finalize_runtime_building, publish_completed_model
 from src.agent_runtime.adapter import HttpChatAdapter, ScriptedAdapter
 from src.agent_runtime.budget import PriceSchedule
 from src.agent_runtime.accounting import require_cny_price_schedule
@@ -472,6 +472,7 @@ async def execute(args) -> dict:
         task_completed = (result["status"] == "completed" and bool(result.get("completion"))
             and result.get("finalization", {}).get("completion_valid") is True
             and isinstance(delivery, dict) and delivery.get("complete_building") is True)
+        publish_completed_model(output, result)
         dump(run / "summary.json", {
             "input_mode": manifest.get("input_mode"), "source_input_mode": manifest.get("source_input_mode"),
             "input_contents": manifest.get("input_contents"),
@@ -479,7 +480,7 @@ async def execute(args) -> dict:
             "task_completed": task_completed,
             "completion_origin": "domain_tool" if task_completed else None,
             "runtime_status": result["status"], "elapsed_seconds": result.get("elapsed_seconds"),
-            "delivery": ({**delivery, "report": "delivery.json", "viewer": "delivery.html"}
+            "delivery": ({**delivery, "report": "delivery.json", "viewer": f"{delivery['candidate']}/viewer.html"}
                          if delivery else None),
             "receipt": "../receipt.json", "drawing_fidelity": "not_evaluated"})
         from src.agent.runtime_behaviour import write_behaviour_report
@@ -582,7 +583,7 @@ def parser():
 def main():
     args = parser().parse_args()
     result = asyncio.run(execute(args))
-    print(json.dumps({key: result[key] for key in ("status", "model_calls", "tool_calls", "reported_tokens", "billing_usd")}, ensure_ascii=False))
+    print(json.dumps({key: result[key] for key in ("status", "model_calls", "tool_calls", "reported_tokens", "billing_usd", "viewer") if key in result}, ensure_ascii=False))
     raise SystemExit(0 if result["status"] in {"completed", "model_budget_exhausted", "tool_budget_exhausted", "time_budget_exhausted", "token_budget_exhausted", "money_budget_exhausted", "model_profile_context_limit_exhausted", "configured_context_limit_exhausted"} else 1)
 
 

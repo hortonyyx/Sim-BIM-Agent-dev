@@ -40,7 +40,7 @@ def test_preview_and_export_use_identical_source_kernel_without_rendering(tmp_pa
     def forbidden(*args, **kwargs):
         pytest.fail("the construction check must not render a source")
     monkeypatch.setattr(module, "source_view_geometry", forbidden)
-    monkeypatch.setattr(module, "build_source_viewer_html", forbidden)
+    monkeypatch.setattr("scripts.tool_scripts.render_geometry_viewer.build_viewer_html", forbidden)
     source, checked = compile_source_proposal(proposal)
     assert json.loads(json.dumps(source)) == expected
     assert checked["source_geometry_ready"] == exported["source_geometry_ready"] == (not bad_host)
@@ -68,8 +68,8 @@ def test_direct_proposal_exports_independent_source_bim_with_openings(tmp_path):
     assert json.loads((out / "proposal.json").read_text(encoding="utf-8")) == proposal
     assert (out / "display_geometry.json").exists()
     viewer = (out / "viewer.html").read_text(encoding="utf-8")
-    assert "&lt;墙体位置由平面推断&gt;" in viewer
-    assert "&lt;b&gt;未确认门状态&lt;/b&gt;" in viewer
+    assert '<aside class="source-notes"' not in viewer
+    assert 'href="report.json"' not in viewer and 'href="proposal.json"' not in viewer
     assert "<b>未确认门状态</b>" not in viewer
 
 

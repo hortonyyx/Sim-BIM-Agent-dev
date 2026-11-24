@@ -113,6 +113,8 @@ def test_text_only_block_and_output_resolution(workbench):
     (bim / "delivery.html").write_text("report", encoding="utf-8")
     (bim / "candidate_01/viewer.html").write_text("viewer", encoding="utf-8")
     base = f"/results/{runs.workspace_tag(root)}/{identity}/"
+    assert client.get(base + "delivery.html").status_code == 404
+    (directory / "status.json").write_text(json.dumps({"status": "completed", "report": base + "delivery.html"}))
     assert client.get(base + "delivery.html").text == "report"
     assert client.get(base + "candidate_01/viewer.html").text == "viewer"
     (bim / "image_overlays").mkdir()
@@ -123,6 +125,16 @@ def test_text_only_block_and_output_resolution(workbench):
     assert client.get(base + overlay).content == png("blue")
     assert client.get(base + "image_overlays/unlisted.png").status_code == 404
     assert client.get(base + "inputs.json").status_code == 404
+    model = b"<!doctype html><title>Sim-BIM</title>"
+    (directory / "Sim-BIM.html").write_bytes(model)
+    (directory / "status.json").write_text(json.dumps({"status": "completed", "viewer": base + "Sim-BIM.html"}))
+    for private in ["delivery.html", "delivery.json", "candidate_01/viewer.html", overlay]:
+        assert client.get(base + private).status_code == 404
+    opened = client.get(base + "Sim-BIM.html")
+    assert opened.content == model and "content-disposition" not in opened.headers
+    download = client.get(base + "Sim-BIM.html?download=1")
+    assert download.content == model
+    assert download.headers["content-disposition"] == 'attachment; filename="Sim-BIM.html"'
 
 
 def test_recover_unreadable_workspace_and_reject_stale_language(workbench):

@@ -16,6 +16,7 @@ import traceback
 import uuid
 
 import portalocker
+from src.agent.viewer_publication import VIEWER_FILENAME
 from src.agent_runtime.output_limits import default_output_tokens
 from src.agent_runtime.providers import is_custom_provider
 from .custom_connections import freeze_custom_connection
@@ -194,15 +195,12 @@ def execute(directory):
     with portalocker.Lock(directory / ".running", timeout=0):
         try:
             case = selected_case(load_configuration(directory / "case.json"), identity)
-            if launch(case) != 0:
+            if launch(case, delivery_directory=directory) != 0:
                 raise ValueError("The model run stopped before delivery.")
-            bim = inside(directory, "production/private/dsh/work/bim")
-            delivery = read_json(bim / "delivery.json")
-            viewer = delivery["viewer"]
-            if not OUTPUT_FILE.fullmatch(viewer) or not inside(bim, viewer).is_file() or not (bim / "delivery.html").is_file():
+            if not inside(directory, VIEWER_FILENAME).is_file():
                 raise ValueError("No delivered viewer found")
-            base = f"/results/{workspace_tag(directory.parent.parent)}/{identity}/"
-            result = {"id": identity, "status": "completed", "message": "", "report": base + "delivery.html", "viewer": base + viewer}
+            viewer = f"/results/{workspace_tag(directory.parent.parent)}/{identity}/{VIEWER_FILENAME}"
+            result = {"id": identity, "status": "completed", "message": "", "viewer": viewer, "download": viewer + "?download=1"}
         except Exception as exc:
             traceback.print_exc()
             message = "运行未完成，请查看工作区本次运行的 run.log。" if locale == "zh-CN" else "Run did not complete. See run.log in the run folder."

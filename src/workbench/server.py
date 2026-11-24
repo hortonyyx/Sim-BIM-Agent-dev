@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from src.agent.viewer_publication import VIEWER_FILENAME
 
 from .connections import Connections
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
@@ -196,6 +197,21 @@ def create_app(workbench=None, *, warm=True):
         if p["tag"] != workspace_tag(root):
             raise InputError("未找到结果。", "Result not found.", 404)
         directory = run_dir(root, p["run_id"])
+        headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox allow-scripts allow-downloads"}
+        if p["file"] == VIEWER_FILENAME:
+            file = inside(directory, VIEWER_FILENAME)
+            if not file.is_file():
+                raise InputError("未找到结果。", "Result not found.", 404)
+            download = request.query_params.get("download") == "1"
+            return FileResponse(file, media_type="text/html", headers=headers,
+                                filename=VIEWER_FILENAME if download else None)
+        # Previously issued reports have relative links into their original run.
+        # New runs expose only the single public HTML, including while still running.
+        status_path = inside(directory, "status.json")
+        status = read_json(status_path) if status_path.is_file() else {}
+        if (status.get("status") != "completed" or not status.get("report")
+                or (directory / VIEWER_FILENAME).exists()):
+            raise InputError("未找到结果。", "Result not found.", 404)
         bim = inside(directory, "production/private/dsh/work/bim")
         if not OUTPUT_FILE.fullmatch(p["file"]):
             report = bim / "delivery.json"
@@ -207,8 +223,7 @@ def create_app(workbench=None, *, warm=True):
         file = inside(bim, p["file"])
         if not file.is_file():
             raise InputError("未找到结果。", "Result not found.", 404)
-        return FileResponse(file, headers={"X-Content-Type-Options": "nosniff",
-                            "Content-Security-Policy": "sandbox allow-scripts allow-downloads"})
+        return FileResponse(file, headers=headers)
 
     async def input_error(_, exc):
         code = "revision_conflict" if exc.status == 409 and ("draft" in str(exc).lower() or "workspace" in str(exc).lower()) else "input_error"

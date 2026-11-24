@@ -13,6 +13,7 @@ from src.agent.runtime_configuration import (
     ROOT, load_configuration, orchestrator_worker, resolve_case_input, resolve_supplemental_inputs, selected_case,
 )
 from src.agent.bim_inputs import admitted_png_paths
+from src.agent.viewer_publication import publish_attested_viewer
 from src.agent_runtime.estimation import get_model_profile
 from src.agent_runtime.providers import is_custom_provider
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
@@ -130,12 +131,20 @@ def verify_resume_inputs(manifest, material_paths):
             raise ValueError(f"configured {field} differs from the admitted DSH run")
 
 
-def launch(case, *, resume=False):
+def publish_result(output: Path, terminal: dict, directory: Path) -> None:
+    if terminal.get("delivered") is not True:
+        raise ValueError("The run stopped without a delivered model")
+    viewer = publish_attested_viewer(output / "private/dsh/work/bim", terminal.get("proof"), directory)
+    print(json.dumps({"status": "delivered", "viewer": str(viewer)}, ensure_ascii=False))
+
+
+def launch(case, *, resume=False, delivery_directory=None):
     if case.get("mode") != "orchestrator" or case.get("runtime") != "dsh":
         raise ValueError("select an orchestrator case using the dsh runtime")
     run_root = case.get("run_root")
     output = resolve_run_output(Path(case["output"]) if run_root else ROOT / case["output"],
                                 repository_root=ROOT, run_root=run_root)
+    public = delivery_directory or output
     credentials = SubscriptionCredentials(Path(case["chatgpt_auth_dir"]) if case.get("chatgpt_auth_dir") else None)
     frozen_config = launcher.read(output / "config.json") if resume else {}
     config = host_config(case, credentials.directory, resume_revisions=frozen_config.get("connection_revisions"))
@@ -148,6 +157,12 @@ def launch(case, *, resume=False):
         if frozen_config != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
             raise ValueError("requested DSH configuration or task differs from the frozen run")
         verify_resume_inputs(launcher.read(output / "private/dsh/work/bim/inputs.json"), materials)
+        terminal_path = output / "control/terminal.json"
+        terminal = launcher.read(terminal_path) if terminal_path.is_file() else {}
+        if terminal.get("delivered") is True:
+            # A storage failure after finish can retry just the hash-bound publication.
+            publish_result(output, terminal, public)
+            return 0
     elif output.exists():
         raise ValueError(f"run directory already exists: {output}")
     provider = case["provider"]
@@ -174,8 +189,11 @@ def launch(case, *, resume=False):
         (output / "shared/task.txt").write_text(case["scope"], encoding="utf-8")
         (output / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
         launcher.prepare(output, material_paths=materials)
-    return launcher.run(output, resume, credential=connection.subscription or ApiCredential(connection),
-                        image_history_batches=case.get("image_history_batches"))
+    exit_code = launcher.run(output, resume, credential=connection.subscription or ApiCredential(connection),
+                             image_history_batches=case.get("image_history_batches"), print_terminal=False)
+    if exit_code == 0:
+        publish_result(output, launcher.read(output / "control/terminal.json"), public)
+    return exit_code
 
 
 def main():

@@ -392,3 +392,86 @@ def localize_template(template: str, locale: str, *, javascript: bool = False) -
         return html.escape(html.unescape(value), quote=True)
 
     return re.sub(r"\[\[msg:(.*?)\]\]", expand, template)
+
+
+_VIEWER_LABELS = {
+    "View settings": "视图设置", "Elevation groups": "高程分组", "Statistics": "统计", "Dimensions": "尺寸",
+    "Spaces": "空间", "Boundaries": "边界", "Openings": "开口", "Connections": "连接",
+    "Layers": "图层", "Room types": "房间类型", "Width": "宽度", "Depth": "进深", "Height": "高度",
+    "Language": "语言", "Selection": "选择对象", "Measure": "测量", "Export PNG": "导出 PNG",
+    "Floor separation": "楼层分解", "Comparison": "对照", "Controls": "视图控制", "Building elements": "建筑构件",
+    "Name": "名称", "Storey": "楼层", "Function": "功能", "Room": "房间", "Boundary": "边界",
+    "Exterior wall": "外墙", "Interior wall": "内墙", "Floor slab": "楼板", "Edge": "边线",
+    "Door": "门", "Passage": "通道", "Open boundary": "开敞边界", "Unknown enclosure": "围护未确定",
+    "Wall": "墙", "Window": "窗", "Roof": "屋面", "Ceiling": "天花",
+}
+_MESSAGE = re.compile(r"\[\[msg:(.*?)\]\]")
+
+
+_ROOM_ALIASES = {
+    "办公室": "office", "辦公室": "office", "办公空间": "office", "独立办公": "office/enclosed",
+    "會議室": "conference/meeting/multipurpose", "会议厅": "conference/meeting/multipurpose",
+    "休息室": "lounge/breakroom", "茶歇室": "lounge/breakroom", "茶水间": "lounge/breakroom",
+    "走道": "corridor", "通廊": "corridor", "樓梯間": "stairwell", "楼梯": "stairwell",
+    "机电设备房": "electrical/mechanical", "设备房": "electrical/mechanical", "機房": "electrical/mechanical",
+    "设备间": "electrical/mechanical", "电梯井": "shaft", "管井": "shaft", "電梯井": "shaft",
+    "商铺": "retail", "商舖": "retail", "店铺": "retail", "大堂": "lobby", "门厅": "lobby",
+    "廁所": "restroom", "洗手间": "restroom", "洗手間": "restroom", "厕所": "restroom",
+}
+
+
+def room_role(value):
+    """Resolve imported labels and the pinned source BIM taxonomy."""
+    from src.agent.roles import ROOM_TYPES, normalize
+
+    role = _ROOM_ALIASES.get(str(value or "").strip()) or normalize(value)
+    return role if role in ROOM_TYPES else "unknown"
+
+
+def room_type_labels(room_types):
+    """Retain canonical codes and colors, with a readable English display name."""
+    familiar = {
+        "office/enclosed": "Enclosed office", "conference/meeting/multipurpose": "Meeting / multipurpose room",
+        "electrical/mechanical": "Electrical / mechanical room", "lounge/breakroom": "Lounge / break room",
+        "retail": "Retail space", "unknown": "Unclassified",
+    }
+    return {code: {**record, "label_en": familiar.get(code, code.replace("/", " / ").capitalize())}
+            for code, record in room_types.items()}
+
+
+def viewer_messages(*templates):
+    """Include only UI strings used by the standalone viewer, in both languages."""
+    keys = set(_VIEWER_LABELS)
+    for template in templates:
+        keys.update(_MESSAGE.findall(template))
+        keys.update(re.findall(r"""data-i18n=["']([^"']+)["']""", template))
+    en, zh = translator("en"), translator("zh-CN")
+    result = {}
+    for key in sorted(keys):
+        label = html.unescape(en(key))
+        result[key] = [label[:1].upper() + label[1:], _VIEWER_LABELS.get(key, zh(key))]
+    return result
+
+
+def viewer_markup(template, messages):
+    """Render English immediately and mark only authored labels for live translation."""
+    def attr(value):
+        return html.escape(value, quote=True)
+
+    def local_attr(match):
+        name, key = match.groups()
+        return f'{name}="{attr(messages[key][0])}" data-i18n-{name}="{attr(key)}"'
+
+    template = re.sub(r'\b(aria-label|title|placeholder)="\[\[msg:([^\]]+)\]\]"', local_attr, template)
+    # Option and title elements contain only text; a span would be invalid.
+    template = re.sub(r'(<(?:option|title)\b[^>]*?)>\[\[msg:([^\]]+)\]\](?=</)',
+                      lambda m: f'{m[1]} data-i18n="{attr(m[2])}">{attr(messages[m[2]][0])}', template)
+    return _MESSAGE.sub(lambda m: f'<span data-i18n="{attr(m[1])}">{attr(messages[m[1]][0])}</span>', template)
+
+
+def viewer_script(template):
+    """Compile authored messages within the JavaScript template to live lookups."""
+    def call(key):
+        return f"msg({json.dumps(key, ensure_ascii=False)})"
+    template = re.sub(r"'\[\[msg:([^\]]*)\]\]'", lambda m: call(m[1]), template)
+    return _MESSAGE.sub(lambda m: "'+" + call(m[1]) + "+'", template)

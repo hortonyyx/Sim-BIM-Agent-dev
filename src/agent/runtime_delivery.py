@@ -144,7 +144,7 @@ def finalize_building(run: Path, *, reason: str, elapsed_seconds: float) -> dict
         return {"status": "delivered", "delivery": {
             "candidate": chosen, "selection_origin": origin,
             **_delivery_scope(toolkit.manifest, delivery),
-            "report": "bim/delivery.json", "viewer": "bim/delivery.html"}}
+            "report": "bim/delivery.json", "viewer": f"bim/{chosen}/viewer.html"}}
     except (OSError, ValueError, KeyError, TypeError) as error:
         # Keep the stop reason and saved sources inspectable if handoff fails.
         return {"status": "delivery_failed", "delivery": None,
@@ -167,6 +167,13 @@ def finalize_runtime_building(engine, reason: str) -> dict:
                 "candidate": verified["candidate"], "selection_origin": "agent_selected",
                 "complete_building": True,
                 **{key: verified[key] for key in ("scope_basis", "mesh_review", "drawing_review") if key in verified},
-                "report": "bim/delivery.json", "viewer": "bim/delivery.html"}}
+                "report": "bim/delivery.json", "viewer": f"bim/{verified['candidate']}/viewer.html"}}
     return finalize_building(engine.tools.run_directory, reason=reason,
         elapsed_seconds=engine.elapsed_seconds())
+
+
+def publish_completed_model(output: Path, result: dict) -> None:
+    """Expose an explicit native finish through the same public file as DSH."""
+    if result.get("status") == "completed" and result.get("finalization", {}).get("completion_valid") is True:
+        from .viewer_publication import publish_attested_viewer
+        result["viewer"] = str(publish_attested_viewer(output / "bim", result["completion"], output))

@@ -163,7 +163,8 @@ def test_new_plan_retains_raw_input_and_full_audit_with_compact_reply(tmp_path):
     assert hashlib.sha256((run / record['plan_file']).read_bytes()).hexdigest() == record['plan_sha256']
     source = json.loads((run / result['candidate'] / 'source_model.json').read_text(encoding="utf-8"))
     assert source['generation']['provenance']['plan_input']['regularization'] == full
-    assert '几何规整清单' in (run / result['candidate'] / 'viewer.html').read_text(encoding="utf-8")
+    viewer = (run / result['candidate'] / 'viewer.html').read_text(encoding="utf-8")
+    assert '<summary>几何规整清单</summary>' not in viewer
     assert (run / result['candidate'] / 'regularization_report.json').is_file()
 
 

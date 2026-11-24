@@ -1,6 +1,7 @@
 """Real source overlays bind ordinary parametric floors to admitted drawings."""
 import copy
 import json
+from pathlib import Path
 import shutil
 
 import pytest
@@ -165,5 +166,6 @@ def test_sdk_ordinary_drawing_overlay_review_and_finish_to_are_executable(tmp_pa
         publication = session.finish_to(tmp_path / "published", candidate, reviews=[
             _review(image="plan.png", floor_id="F1"), _review("building")])
         assert publication["candidate"] == candidate
-    assert (tmp_path / "published" / "source_model.json").is_file()
+    assert Path(publication["source_model"]).is_file()
+    assert Path(publication["viewer"]) == tmp_path / "published" / "Sim-BIM.html"
     assert saved_floor_status(Toolkit(run), candidate)["complete_building"]

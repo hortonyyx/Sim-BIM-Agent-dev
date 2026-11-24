@@ -327,26 +327,23 @@ def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_
     viewer = (candidate / "viewer.html").read_text(encoding="utf-8")
     assert page == (tmp_path / "delivery.html").read_text(encoding="utf-8")
     assert result["locale"] == locale
-    assert f'lang="{locale}"' in page and f'lang="{locale}"' in viewer
+    assert f'<html lang="{locale}"' in page
+    markup = viewer.split("<script>", 1)[0]
+    assert '<html lang="en"' in markup and '<title>Sim-BIM</title>' in markup
+    assert 'id="locale"' in markup and '>Texture opacity<' in markup
+    assert "Geometry adjustments" not in markup and "几何规整清单" not in markup
     if locale == "en":
         assert "BIM candidate and verification report" in page and ">Open model</a>" in page
         assert "No height evidence bound to this opening" in page
-        assert "源 BIM 候选" not in viewer and "几何规整清单" not in page
-        assert "measure: snap vertex 1" in viewer and "Wall thickness" in viewer
-        assert ">section cuts<" in viewer and ">Texture opacity<" in viewer
     else:
         assert "BIM 候选与实际检查" in page and ">打开模型</a>" in page
         assert "未关联此开口的高度依据" in page and ">West</td>" not in page
-        assert "Source BIM candidate" not in viewer and "Opening heights" not in page
-        assert "选择第一个顶点" in viewer and "墙厚" in viewer
-        assert ">剖切<" in viewer and ">贴图透明度<" in viewer
-    # Only inspect the prose banner; embedded source JSON intentionally retains IDs.
-    banner = viewer[viewer.index("<aside "):]
-    for rendered in (page, banner):
-        assert f'Check {names["openings"]["shared"]} between {names["spaces"]["west"]} and {names["spaces"]["east"]}.' in rendered
-        assert f'Room {names["spaces"]["west"]} on F1; window {names["openings"]["high"]}' in rendered
-        assert "&lt;unconfirmed&gt;" in rendered and "images/west.png" in rendered
-        assert "Original user text: 楼层 [[msg:名称]] __TITLE__." in rendered
+    # Evidence stays in the localized report; the viewer carries the saved source as data.
+    assert f'Check {names["openings"]["shared"]} between {names["spaces"]["west"]} and {names["spaces"]["east"]}.' in page
+    assert f'Room {names["spaces"]["west"]} on F1; window {names["openings"]["high"]}' in page
+    assert "&lt;unconfirmed&gt;" in page and "images/west.png" in page
+    assert "Original user text: 楼层 [[msg:名称]] __TITLE__." in page
+    assert "Original user text" not in markup
     assert result == before
     assert result["generation"]["unresolved"] == p["unresolved"]
     assert (candidate / "source_model.json").read_bytes() == source_bytes

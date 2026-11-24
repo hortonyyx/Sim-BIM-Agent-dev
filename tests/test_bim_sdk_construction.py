@@ -89,15 +89,19 @@ def test_finish_to_requires_real_complete_handoff_and_preserves_bytes(tmp_path, 
         result = session.finish_to(target, candidate, reviews={"mesh_review": {
             "coverage": "whole_building", "summary": "Synthetic protocol test, not a quality result",
             "overlay_ids": [overlay["overlay_id"]]}})
-        assert Path(result["viewer"]).is_file()
-        assert (target / "source_model.json").read_bytes() == (run / candidate / "source_model.json").read_bytes()
-        manifest = json.loads((target / "publication.json").read_bytes())
+        assert list(target.iterdir()) == [Path(result["viewer"])]
+        assert Path(result["viewer"]) == target / "Sim-BIM.html"
+        assert Path(result["viewer"]).read_bytes() == (run / candidate / "viewer.html").read_bytes()
+        assert Path(result["source_model"]) == run / candidate / "source_model.json"
+        record = Path(result["publication_file"])
+        assert record.is_relative_to(run)
+        manifest = json.loads(record.read_bytes())
         for name, digest in manifest["public_files"].items():
             assert hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
-        assert (target / candidate / "proposal.json").exists()
-        assert (target / candidate / "report.json").exists()
+        assert (run / candidate / "proposal.json").exists()
+        assert (run / candidate / "report.json").exists()
         projection_file = projection["overlay_image"]
-        assert (target / projection_file).read_bytes() == (run / projection_file).read_bytes()
+        assert (run / projection_file).is_file()
         saved = (run / "delivery.json").read_bytes()
         with pytest.raises(FileExistsError):
             session.finish_to(target, candidate)
@@ -105,13 +109,10 @@ def test_finish_to_requires_real_complete_handoff_and_preserves_bytes(tmp_path, 
         finish = session.call("finish_bim", candidate=candidate)
         assert attest_finished_handoff(run, finish.data, candidate)
         native_delivery = (run / "delivery.json").read_bytes()
-        write_bytes = Path.write_bytes
-        def fail_staged_copy(path, raw):
-            if any(part.startswith(".failed-copy-") for part in path.parts):
-                raise OSError("synthetic publication storage failure")
-            return write_bytes(path, raw)
+        def fail_staged_copy(*args, **kwargs):
+            raise OSError("synthetic publication storage failure")
         with monkeypatch.context() as scope:
-            scope.setattr(Path, "write_bytes", fail_staged_copy)
+            scope.setattr("src.agent.sdk_delivery.publish_attested_viewer", fail_staged_copy)
             with pytest.raises(OSError, match="synthetic publication storage failure") as caught:
                 publish_finished(run, candidate, finish, tmp_path / "failed-copy")
         assert not (tmp_path / "failed-copy").exists()
