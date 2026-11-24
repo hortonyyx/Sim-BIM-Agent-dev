@@ -82,7 +82,7 @@ function applyState(next) {
   if (next.workspaceError) notice(next.workspaceError,true);
 }
 function renderLanguage() {
-  document.documentElement.lang=state.locale; document.title=t('title')+' · Sim-BIM';
+  document.documentElement.lang=state.locale;
   document.querySelectorAll('[data-t]').forEach(e=>{e.textContent=t(e.dataset.t);});
   document.querySelectorAll('[data-label]').forEach(e=>{e.setAttribute('aria-label',t(e.dataset.label));e.title=t(e.dataset.label);});
   document.querySelectorAll('[data-placeholder]').forEach(e=>{e.placeholder=t(e.dataset.placeholder);});

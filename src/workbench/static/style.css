@@ -29,8 +29,6 @@ i svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-widt
 .language button:last-child { border-radius: 0 4px 4px 0; margin-left: -1px; }
 .language button[aria-pressed=true] { color: white; background: var(--accent); border-color: var(--accent); position: relative; }
 main { padding: clamp(24px,3vw,46px) 0 48px; }
-h1 { margin: 0 0 22px; line-height: 1.12; font-size: clamp(31px,3.2vw,46px); letter-spacing: -.055em; font-weight: 700; }
-html[lang=zh-CN] h1 { letter-spacing: -.04em; }
 .workspace-cell { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; max-width: 380px; margin-left: 7px; padding-left: 22px; border-left: 1px solid var(--line); }
 .workspace-cell label { font-size: 13px; font-weight: 600; }
 .run-models { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; margin-top: 14px; }
