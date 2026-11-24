@@ -84,7 +84,8 @@ def host_config(case, auth_dir, *, resume_revisions=None):
         config.update(connection_revisions=revisions, custom_directory=str(custom_connections_directory()))
     if provider in specs:
         config.update(provider=provider, output_tokens=specs[provider]["output_tokens"],
-                      base_url=specs[provider]["base_url"])
+                      base_url=specs[provider]["base_url"],
+                      output_parameter=specs[provider].get("output_token_parameter", "max_tokens"))
     if provider == "deepseek":
         config.update(provider=provider, output_tokens=case["output_tokens"])
     worker = orchestrator_worker(case)

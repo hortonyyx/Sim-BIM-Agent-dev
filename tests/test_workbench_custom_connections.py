@@ -154,6 +154,44 @@ def test_slow_catalog_cannot_overwrite_edited_or_deleted_connection(catalog, mon
     assert custom.custom_catalog("en", ())[0]["models"] == [{"id": "new", "name": "new"}]
 
 
+def test_output_parameter_setting_freezes_effective_value(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(tmp_path))
+    provider, first = custom.save_custom({"label": "Official", "baseUrl": "https://API.OPENAI.COM/v1"})
+    assert custom.custom_catalog("en", ())[0]["outputTokenParameter"] == "auto"
+    assert custom.freeze_custom_connection(provider) == first
+    assert custom.custom_connection(provider, revision=first)["output_token_parameter"] == "max_completion_tokens"
+    custom.save_custom({"baseUrl": "https://api.openai.com.example/v1"}, provider=provider)
+    assert custom.custom_connection(provider)["output_token_parameter"] == "max_tokens"
+    for mode in ("max_completion_tokens", "max_tokens"):
+        custom.save_custom({"outputTokenParameter": mode}, provider=provider)
+        assert custom.custom_catalog("en", ())[0]["outputTokenParameter"] == mode
+        revision = custom.freeze_custom_connection(provider)
+        custom.save_custom({"label": "Another name"}, provider=provider)
+        assert custom.custom_connection(provider, revision=revision)["output_token_parameter"] == mode
+        assert custom.custom_catalog("zh-CN", ())[0]["outputTokenParameter"] == mode
+    custom.save_custom({"outputTokenParameter": "auto"}, provider=provider)
+    assert custom.custom_catalog("en", ())[0]["outputTokenParameter"] == "auto"
+    with pytest.raises(InputError, match="output token parameter"):
+        custom.save_custom({"outputTokenParameter": "max_output_tokens"}, provider=provider)
+    assert custom.custom_connection(provider, revision=first)["output_token_parameter"] == "max_completion_tokens"
+
+
+def test_legacy_connection_without_output_parameter(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(tmp_path))
+    provider, revision = custom.save_custom({"label": "Old local profile", "baseUrl": "http://localhost:8000/v1"})
+    directory = custom.custom_connections_directory()
+    index = custom._active(directory)
+    del index[provider]["outputTokenParameter"]
+    custom.save_json(directory / "connections.json", index)
+    credential = custom.custom_connection(provider)
+    del credential["output_token_parameter"]
+    custom._atomic_write(custom._blob(directory, provider, revision),
+                         custom._default_protector().protect(json.dumps(credential).encode()))
+    assert custom.freeze_custom_connection(provider) == revision
+    assert custom.custom_catalog("en", ())[0]["outputTokenParameter"] == "auto"
+    assert custom.custom_connection(provider, revision=revision)["output_token_parameter"] == "max_tokens"
+
+
 def test_run_rejects_connection_changed_in_another_tab(catalog, tmp_path, monkeypatch):
     from src.workbench import runs
     from src.workbench.server import Workbench, create_app

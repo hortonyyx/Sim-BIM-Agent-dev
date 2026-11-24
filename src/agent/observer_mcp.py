@@ -43,6 +43,11 @@ def worker_profile(args, provider, model):
         validate_output_limit(model if provider != "scripted" else "scripted-model", output)
     parameters = provider_parameters(provider, model=model, reasoning_effort=args.reasoning_effort,
                                      output_tokens=output)
+    if custom:
+        limit_field = spec.get("output_token_parameter", "max_tokens")
+        if limit_field not in ("max_tokens", "max_completion_tokens"):
+            raise ValueError("invalid custom worker output limit field")
+        parameters = {limit_field: output}
     if provider == "scripted":
         if args.script is None:
             raise ValueError("scripted workers require --script with per-task replies")

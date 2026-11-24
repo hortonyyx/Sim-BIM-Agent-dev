@@ -36,6 +36,13 @@ export function connectionForm(root, { connection, t, save, cancel }) {
   const context=makeInput('number',connection?.contextWindow ?? 128000), output=makeInput('number',connection?.outputTokens ?? 8192);
   for (const input of [context,output]) {input.min='1';input.step='1';}
   addField(pair,t('contextWindow'),context);addField(pair,t('outputTokens'),output);
+  const outputParameter=el('select');
+  for (const value of ['auto','max_tokens','max_completion_tokens']) {
+    const option=el('option','',value==='auto' ? t('automaticTokenParameter') : value);
+    option.value=value;outputParameter.append(option);
+  }
+  outputParameter.value=connection?.outputTokenParameter ?? 'auto';
+  addField(advanced,t('outputTokenParameter'),outputParameter);
   const feedback=el('p','dialog-note');feedback.setAttribute('role','status');
   form.addEventListener('input',()=>{
     if (feedback.classList.contains('error')) {feedback.textContent='';feedback.classList.remove('error');}
@@ -65,7 +72,7 @@ export function connectionForm(root, { connection, t, save, cancel }) {
     const payload={
       label:name.value.trim(),baseUrl:url.value.trim(),protocol:'openai-chat',
       modelIds:[...new Set(ids.value.split(/\r?\n/).map(id=>id.trim()).filter(Boolean))],
-      contextWindow:context.valueAsNumber,outputTokens:output.valueAsNumber
+      contextWindow:context.valueAsNumber,outputTokens:output.valueAsNumber,outputTokenParameter:outputParameter.value
     };
     if (connection) Object.assign(payload,{action:'update',provider:connection.provider,revision:connection.revision});
     else payload.action='create';

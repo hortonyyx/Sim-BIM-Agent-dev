@@ -342,7 +342,8 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         config.get('minimum_floor_elevations', 1),
         image_history=images,
         **({'provider': 'deepseek', 'output_tokens': config['output_tokens']} if config.get('provider') == 'deepseek' else {}),
-        **({'provider': config['provider'], 'output_tokens': config['output_tokens']}
+        **({'provider': config['provider'], 'output_tokens': config['output_tokens'],
+            'output_parameter': config.get('output_parameter', 'max_tokens')}
            if is_custom_provider(config.get('provider')) else {}),
     )
     serving = False

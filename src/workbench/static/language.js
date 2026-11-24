@@ -38,6 +38,8 @@ const copy = {
   modelIdsHint: ['每行填写一个模型 ID。也会自动获取服务的模型列表。', 'One model ID per line. The service catalog is also fetched automatically.'],
   tokenLimits: ['模型参数', 'Model parameters'], contextWindow: ['上下文长度（tokens）', 'Context window (tokens)'],
   outputTokens: ['最大输出（tokens）', 'Maximum output (tokens)'], saveApi: ['保存连接', 'Save connection'],
+  outputTokenParameter: ['限制输出长度的 API 参数', 'API parameter for the output limit'],
+  automaticTokenParameter: ['自动（根据 API 地址）', 'Automatic (by API host)'],
   nameRequired: ['请填写服务名称。', 'Enter a provider name.'], invalidUrl: ['请输入有效的 HTTP 或 HTTPS 基础地址。', 'Enter a valid HTTP or HTTPS base URL.'],
   limitsInvalid: ['上下文与输出上限须为正整数，且输出小于上下文。', 'Use positive integer limits. Maximum output must be less than the context window.'],
   changedOrigin: ['服务地址已更换。请重新输入密钥，或勾选清除已保存的密钥。', 'The server address changed. Enter a new key or select Clear saved key.'],

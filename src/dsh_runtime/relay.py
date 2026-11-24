@@ -57,6 +57,9 @@ def clean(value):
                 'password',
             }:
                 result[key] = '[redacted]'
+            elif key == "extra_content" and value.get("type") == "function":
+                data = encoded(item)
+                result["extra_content_sha256"] = digest(data)
             elif (
                 (key in {'encrypted_content', 'reasoning_content', 'signature', 'reasoning_text'} or
                  key == 'reasoning' and value.get('role') == 'assistant')
@@ -329,6 +332,8 @@ def downstream(obj):
     if isinstance(obj, dict):
         out = {k: downstream(v) for k, v in obj.items()}
         if out.get('type') == 'function_call':
+            out.pop('chat_extension_sha256', None)
+            out.pop('chat_original_call_id', None)
             if out.get('namespace') not in {None, TOOL_NAMESPACE}:
                 raise Gate('unexpected namespace')
             out.pop('namespace', None)
@@ -546,7 +551,8 @@ class Handler(BaseHTTPRequestHandler):
             wire_body = body
             if self.server.chat_output_tokens:
                 from .chat_protocol import chat_request
-                wire_body = chat_request(body, self.server.chat_output_tokens)
+                wire_body = chat_request(body, self.server.chat_output_tokens, self.server.chat_extensions,
+                                         self.server.chat_output_parameter)
                 save(WIRE / f'{turn:02}-chat-out.json.gz', wire_body, compressed=True)
             left = remaining(deadline)
             state.requests = turn
@@ -616,7 +622,7 @@ class Handler(BaseHTTPRequestHandler):
                         from .chat_protocol import chat_events
                         reply = json.loads(r.read())
                         save(WIRE / f'{turn:02}-chat-reply.json', reply)
-                        events = chat_events(reply, MODEL, turn)
+                        events = chat_events(reply, MODEL, turn, self.server.chat_extensions)
                     else:
                         events = provider_events(r.iter_lines())
                     for name, data in events:
@@ -799,7 +805,7 @@ def publish_budget(state):
     )
 
 def create_server(case, control, model, credential, minimum_floors=1, image_history=None, *,
-                  provider="chatgpt-subscription", output_tokens=None):
+                  provider="chatgpt-subscription", output_tokens=None, output_parameter="max_tokens"):
     endpoints = {"chatgpt-subscription": ENDPOINT, "deepseek": "https://api.deepseek.com/responses"}
     if is_custom_provider(provider) and credential.descriptor.route_id == provider:
         endpoints[provider] = credential.descriptor.base_url.rstrip("/") + "/chat/completions"
@@ -814,6 +820,10 @@ def create_server(case, control, model, credential, minimum_floors=1, image_hist
     server.credential = credential
     server.provider = provider
     server.chat_output_tokens = output_tokens if is_custom_provider(provider) else None
+    server.chat_output_parameter = output_parameter
+    if server.chat_output_tokens:
+        from .chat_protocol import CallExtensions
+        server.chat_extensions = CallExtensions(CASE / "private/dsh/chat-extensions")
     server.minimum_floors = minimum_floors
     server.endpoint = endpoints[provider]
     server.transport = PooledTransport(server.endpoint, audit)

@@ -1,6 +1,35 @@
 """Bridge stateless DSH Responses items and a configured Chat Completions API."""
 import hashlib
 import json
+import re
+
+from src.agent_runtime.openai_subscription import _atomic_write, _default_protector
+
+
+class CallExtensions:
+    """Private provider metadata bound to the exact tool call, independent of DSH's transcript."""
+    def __init__(self, directory):
+        self.directory = directory
+        self.protector = _default_protector()
+
+    def save(self, call, extra):
+        if not isinstance(extra, dict):
+            raise ValueError("invalid chat tool extension")
+        raw = json.dumps({"call": call, "extra_content": extra}, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        _atomic_write(self.directory / digest, self.protector.protect(raw))
+        return digest
+
+    def load(self, digest, call):
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("invalid chat tool extension reference")
+        raw = self.protector.unprotect((self.directory / digest).read_bytes())
+        data = json.loads(raw)
+        if hashlib.sha256(raw).hexdigest() != digest or data["call"] != call:
+            raise ValueError("chat tool extension does not match this call")
+        return data["extra_content"]
 
 
 def content_parts(content):
@@ -19,8 +48,9 @@ def content_parts(content):
     return parts
 
 
-def chat_request(body, output_tokens):
+def chat_request(body, output_tokens, extensions=None, output_parameter="max_tokens"):
     messages, images, assistant = [], [], {}
+    provider_ids = {}
     for item in body["input"]:
         kind, role = item.get("type"), item.get("role")
         if images and kind != "function_call_output":
@@ -32,8 +62,13 @@ def chat_request(body, output_tokens):
                 key = "reasoning" if item["id"].startswith("reason_") else "reasoning_content"
                 assistant[key] = reasoning
         elif kind == "function_call":
-            assistant.setdefault("tool_calls", []).append({"type": "function", "id": item["call_id"],
-                "function": {"name": item["name"], "arguments": item["arguments"]}})
+            provider_id = item.get("chat_original_call_id", item["call_id"])
+            provider_ids[item["call_id"]] = provider_id
+            call = {"type": "function", "id": provider_id,
+                    "function": {"name": item["name"], "arguments": item["arguments"]}}
+            if "chat_extension_sha256" in item:
+                call["extra_content"] = extensions.load(item["chat_extension_sha256"], call)
+            assistant.setdefault("tool_calls", []).append(call)
         elif role == "assistant":
             assistant["content"] = content_parts(item.get("content", ""))
         else:
@@ -41,14 +76,15 @@ def chat_request(body, output_tokens):
                 messages.append({"role": "assistant", "content": None, **assistant})
                 assistant = {}
             if kind == "function_call_output":
+                provider_id = provider_ids[item["call_id"]]
                 output = content_parts(item["output"])
                 if isinstance(output, list):
                     # Chat expects a text tool receipt. Supply its images as a user
                     # attachment after all parallel tool receipts, retaining call IDs.
-                    images.extend([{"type": "text", "text": "Images from tool call " + item["call_id"]},
+                    images.extend([{"type": "text", "text": "Images from tool call " + provider_id},
                                    *(p for p in output if p["type"] == "image_url")])
                     output = "\n".join(p["text"] for p in output if p["type"] == "text")
-                messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": output})
+                messages.append({"role": "tool", "tool_call_id": provider_id, "content": output})
             elif role in {"system", "developer", "user"}:
                 messages.append({"role": "system" if role == "developer" else role,
                                  "content": content_parts(item["content"])})
@@ -58,7 +94,9 @@ def chat_request(body, output_tokens):
         messages.append({"role": "assistant", "content": None, **assistant})
     if images:
         messages.append({"role": "user", "content": images})
-    request = {"model": body["model"], "messages": messages, "max_tokens": output_tokens, "stream": False}
+    if output_parameter not in ("max_tokens", "max_completion_tokens"):
+        raise ValueError("invalid Chat Completions output limit field")
+    request = {"model": body["model"], "messages": messages, output_parameter: output_tokens, "stream": False}
     if body.get("tools"):
         request["tools"] = [{"type": "function", "function": {
             key: tool[key] for key in ("name", "description", "parameters") if key in tool}} for tool in body["tools"]]
@@ -67,7 +105,7 @@ def chat_request(body, output_tokens):
     return request
 
 
-def chat_events(reply, model, turn):
+def chat_events(reply, model, turn, extensions=None):
     """Return complete tool actions only after validating the entire provider reply."""
     choice, = reply["choices"]
     msg, finish = choice["message"], choice["finish_reason"]
@@ -91,14 +129,20 @@ def chat_events(reply, model, turn):
                            "content": [{"type": "output_text", "text": msg["content"], "annotations": []}]})
         seen = set()
         for i, call in enumerate(msg.get("tool_calls") or []):
-            if call["type"] != "function" or not call.get("id") or call["id"] in seen:
+            if call["type"] != "function" or not isinstance(call.get("id"), str) or not call["id"] or call["id"] in seen:
                 raise ValueError("invalid or duplicate Chat Completions tool call")
             name, args = call["function"]["name"], call["function"]["arguments"]
             if not isinstance(name, str) or not name or not isinstance(json.loads(args), dict):
                 raise ValueError("invalid Chat Completions function")
             seen.add(call["id"])
-            output.append({"type": "function_call", "id": f"fc_{ident}_{i}", "call_id": call["id"],
-                           "name": name, "arguments": args, "status": "completed"})
+            item = {"type": "function_call", "id": f"fc_{ident}_{i}", "call_id": call["id"],
+                    "name": name, "arguments": args, "status": "completed"}
+            if not re.fullmatch(r"call_[A-Za-z0-9_-]{1,58}", call["id"]):
+                item.update(chat_original_call_id=call["id"], call_id=f"call_{ident}_{i}")
+            if "extra_content" in call:
+                original = {"type": "function", "id": call["id"], "function": {"name": name, "arguments": args}}
+                item["chat_extension_sha256"] = extensions.save(original, call["extra_content"])
+            output.append(item)
     for i, item in enumerate(output):
         common = {"output_index": i, "item_id": item["id"]}
         events.append(("response.output_item.added", {"output_index": i, "item": {

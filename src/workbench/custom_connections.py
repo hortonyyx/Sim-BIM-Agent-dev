@@ -44,7 +44,18 @@ def _open(directory, provider, revision, *, frozen=False):
     data = json.loads(_default_protector().unprotect(raw))
     if data["provider"] != provider or data["revision"] != revision:
         raise ValueError("Stored credential does not match the requested connection revision")
+    if "output_token_parameter" not in data:
+        data["output_token_parameter"] = _output_parameter(data["base_url"], "auto")
     return data
+
+
+def _output_parameter(url, setting):
+    if setting == "auto":
+        host = urlsplit(url).hostname.rstrip(".")
+        return "max_completion_tokens" if host == "api.openai.com" else "max_tokens"
+    if setting not in ("max_tokens", "max_completion_tokens"):
+        raise InputError("请选择有效的输出上限参数。", "Select a valid output token parameter.")
+    return setting
 
 
 def custom_connection(provider_id: str, *, directory: Path | None = None, revision: str | None = None) -> dict:
@@ -145,6 +156,8 @@ def save_custom(body, *, provider=None):
         provider = provider or ("custom-" + uuid.uuid4().hex)
         previous = _open(directory, provider, old["revision"]) if old else None
         data = _configuration(body, previous)
+        setting = body.get("outputTokenParameter", (old or {}).get("outputTokenParameter", "auto"))
+        data["output_token_parameter"] = _output_parameter(data["base_url"], setting)
         revision = uuid.uuid4().hex
         data.update(provider=provider, revision=revision)
         blob = _blob(directory, provider, revision)
@@ -153,6 +166,7 @@ def save_custom(body, *, provider=None):
         rows[provider] = {"provider": provider, "revision": revision, "label": data["label"],
                           "baseUrl": data["base_url"], "protocol": data["protocol"], "hasApiKey": bool(data["api_key"]),
                           "contextWindow": data["context_window"], "outputTokens": data["output_tokens"],
+                          "outputTokenParameter": setting,
                           "modelIds": data["model_ids"], "discovered": old["discovered"] if same_route else [],
                           "error": {}}
         try:
@@ -228,6 +242,7 @@ def custom_catalog(locale, busy):
         for model in row["modelIds"]:
             models.setdefault(model, {"id": model, "name": model})
         public = {k: v for k, v in row.items() if k not in {"discovered", "error"}}
+        public.setdefault("outputTokenParameter", "auto")
         entries.append({**public, "authType": "custom", "custom": True, "connected": bool(models),
                         "models": list(models.values()), "busy": provider in busy, "message": row["error"].get(locale, "")})
     return entries
