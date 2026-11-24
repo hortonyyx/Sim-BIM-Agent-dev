@@ -348,7 +348,7 @@ let inspected=null;
 const SURF=GEO.surfaces,OPENS=GEO.openings,SOURCE=GEO.source_model;
 const SOURCE_MAP={},SOURCE_BOUNDARIES={},SOURCE_SPACES={},ZONES=GEO.zones;
 const zoneFloors={Z1:[0],Z2:[1]},zoneFloor={Z1:0,Z2:1},verticalCore=()=>false;
-const NAMED_FLOORS=GEO.public_names.floors,ROOM_TYPES=GEO.room_types;
+const NAMED_FLOORS=GEO.public_names.floors,BASES=NAMED_FLOORS.map(f=>f.z_floor),ROOM_TYPES=GEO.room_types;
 """ + section("  let locale = ", "  const SURF =")
         + section("  function roleLabel(", "  // Geometry is drawn")
         + section("  const sourceFloor =", "  const _zFloorZ =")
@@ -370,18 +370,22 @@ for(const lang of ['en','zh-CN']){
 console.log(JSON.stringify(result));
 """)
     canonical_room = json.loads(payload)["public_names"]["spaces"]["Z1"]
-    for lang, room_use, area, volume, length in [("en", "Office", "Projected area", "Modeled volume", "Length"),
-                                                ("zh-CN", "办公 · Office", "投影面积", "模型体积", "长度")]:
+    for lang, room_use, volume, floor_volume, count, length in [
+        ("en", "Office", "Modeled volume", "Storey volume", "Space count", "Length"),
+        ("zh-CN", "办公 · Office", "模型体积", "本层体积", "空间数", "长度"),
+    ]:
         zone, floor, surface, window, edge = output[lang]
-        assert f'class="pick-name">{canonical_room}<' in zone and ">101<" in zone
-        assert room_use in zone and "F1 · G" in zone
-        assert area in zone and volume in zone and "16.00 <small>m²" in zone and "48.00 <small>m³" in zone
-        assert 'class="pick-name">F1<' in floor and ">G<" in floor and "48.00 <small>m³" in floor
+        assert f'class="pick-name">{canonical_room}<' in zone and '>101<' not in zone
+        assert room_use in zone and ">G<" in zone and zone.count('class="kv"') == 2
+        assert volume in zone and "48.00 <small>m³" in zone and "m²" not in zone
+        assert 'class="pick-name">G<' in floor and "F1" not in floor and floor.count('class="kv"') == 1
+        assert count in floor and ">1<" in floor and "0.00 <small>m<" in floor
+        assert floor_volume in floor and "48.00 <small>m³" in floor and "m²" not in floor
         assert 'class="pick-name">Z01_W1_Part2<' in surface and ">Z01_W1<" in surface and canonical_room in surface
-        assert "11.00 <small>m²" in surface and "m³" not in surface
+        assert ">G<" in surface and "11.00 <small>m²" in surface and "m³" not in surface
         assert 'class="pick-name">Z01_W1_Win1<' in window and "2.00 <small>m²" in window
-        assert 'class="pick-name">Z01_W1_Part2_Edge2<' in edge and ">Z01_W1_Part2<" in edge
-        assert length in edge and "4.00 <small>m<" in edge and "m²" not in edge
+        assert 'class="pick-name">Z01_W1_Part2_Edge2<' in edge and 'class="kv"' not in edge
+        assert length in edge and "4.00 <small>m<" in edge and edge.count('class="pick-metric"') == 1
 
 
 def test_fragment_and_edge_names_survive_ring_reordering_and_match_the_picked_segment():
@@ -423,10 +427,16 @@ def test_standalone_display_restores_standard_names_without_inventing_source_qua
     saved.write_text(json.dumps(model), encoding="utf-8")
     result = _display_payload(rgv.load_viewer_geometry(saved))
     assert result["source_model"] is None and result["metrics"] == {"spaces": {}, "floors": {}}
+    floor, = result["public_names"]["floors"]
+    assert floor["source_name"] is None and floor["name"] == "F1"
     assert result["public_names"]["spaces"] == {"Z1": "Z01_F1_Office_C"}
     assert result["windows"][0]["public_name"] == "Z01_W1_Win1"
     assert result["windows"][0]["parent_name"] == "Z01_W1"
     assert result["visible_wall_parts"]["w1"][0]["holes"]
+
+    model["public_names"] = {"floors": [{"id": "level-g", "name": "F9", "source_name": "Ground", "z_floor": 0}]}
+    floor, = _display_payload(model)["public_names"]["floors"]
+    assert floor["source_name"] == "Ground" and floor["name"] == "F9"
 
 
 def test_partial_archived_source_uses_bound_names_and_preserves_host_numbers():
@@ -583,6 +593,42 @@ console.log(JSON.stringify({capAll:partVisible(cap,-1,false),capUpper:partVisibl
     assert result == {"capAll": False, "capUpper": True, "capLower": False, "capExploded": True,
                       "contactAll": False, "contactSingle": True, "coreAll": True,
                       "coreSingle": False, "coreExplodedSingle": False, "stairSingle": False}
+
+
+def test_storey_filter_only_clips_geometry_extending_beyond_its_bounds(tmp_path):
+    script = rgv.app_js()
+    functions = script[script.index("  function storeyPlanes("):script.index("  function applyClipping(")]
+    result = _node_result(tmp_path, f"const THREE=require({json.dumps(str(rgv._VENDOR / 'three.min.js'))});\n" + """
+let floorIndex=0, exploded=0;
+const radius=80;
+const $=id=>({value:id==='floorSel'?floorIndex:exploded});
+const sourceFloor=i=>[{z_floor:8.4,height:3.2},{z_floor:-100.3,height:100.3},
+                      {z_floor:-103143.303,height:103143.303}][i];
+""" + functions + """
+const section=new THREE.Plane(new THREE.Vector3(1,0,0),-5);
+function planeNames(low,high){
+  const band=storeyPlanes();
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute([0,0,low,10,0,high],3));
+  return clippingForGeometry(geometry,[section],band).map(p=>p===section?'section':p===band[0]?'bottom':'top');
+}
+const planes=[[8.4,8.4],[11.6,11.6],[8.4,11.6],[0,9],[10,15],[0,20],[2,3],[19,21]].map(v=>planeNames(...v));
+// A mixed primitive still requires a section through its other triangles.
+// Its coincident cap must survive camera-space rounding when zoomed out.
+const capTolerance=storeyPlanes()[1].constant-11.6;
+const cameraError=Math.abs((Math.fround(1200+11.6)-1200)-11.6);
+floorIndex=1;const basement=planeNames(-100.3,0);
+floorIndex=2;const deepDatum=planeNames(-103143.303,0);
+exploded=0.5;const explodedCount=storeyPlanes().length;
+exploded=0;floorIndex=-1;const allCount=storeyPlanes().length;
+console.log(JSON.stringify({planes,basement,deepDatum,capTolerance,cameraError,explodedCount,allCount}));
+""")
+    assert result.pop("cameraError") <= result.pop("capTolerance") <= 0.0005
+    assert result == {
+        "planes": [["section"], ["section"], ["section"], ["section", "bottom"], ["section", "top"],
+                   ["section", "bottom", "top"], ["section", "bottom"], ["section", "top"]],
+        "basement": ["section"], "deepDatum": ["section"], "explodedCount": 0, "allCount": 0,
+    }
 
 
 def test_3d_measurement_uses_source_distance_and_constant_pixel_diameters(tmp_path):

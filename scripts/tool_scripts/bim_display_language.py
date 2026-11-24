@@ -395,9 +395,9 @@ def localize_template(template: str, locale: str, *, javascript: bool = False) -
 
 
 _VIEWER_LABELS = {
-    "Projected area": "投影面积", "Modeled volume": "模型体积", "Face area": "表面积",
-    "Length": "长度", "Parent face": "所属面", "Authored name": "原有名称", "Type": "类型",
-    "Connected spaces": "连通空间", "Elevation": "底标高", "Exterior": "室外",
+    "Modeled volume": "模型体积", "Storey volume": "本层体积", "Face area": "表面积",
+    "Length": "长度", "Parent face": "所属面", "Type": "类型", "Space count": "空间数",
+    "Elevation": "底标高", "Exterior": "室外",
     "Distance": "距离", "Select the first vertex": "选择第一个顶点",
     "Select the second vertex": "选择第二个顶点",
     "View settings": "视图设置", "Elevation groups": "高程分组", "Statistics": "统计", "Dimensions": "尺寸",

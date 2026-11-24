@@ -207,5 +207,8 @@ def legacy_viewer_names(data, parts, roles):
     for (oid, bid), label in _child_names(aperture_sides).items():
         names["opening_sides"].setdefault(oid, {})[bid] = label
     result = viewer_names({**data, "source_model": naming_source}, parts, names=names)
+    for row in result["floors"]:
+        floor = floors[row["id"]]
+        row["source_name"] = floor.get("source_name") or floor.get("name")
     result["primary_floors"] = {sid: space["floor_id"] for sid, space in spaces.items()}
     return result

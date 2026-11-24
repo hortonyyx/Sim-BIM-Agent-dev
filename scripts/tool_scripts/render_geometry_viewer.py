@@ -117,8 +117,7 @@ _APP_JS = r"""
   const NAMED_FLOORS = GEO.floors || GEO.public_names?.floors || [];
   const BASES = NAMED_FLOORS.length ? NAMED_FLOORS.map(f=>f.z_floor) : cluster((floorSurf.length ? floorSurf : SURF).map(zmin));
   const sourceFloor = i => (SOURCE?.floors||[]).find(f=>f.id===NAMED_FLOORS[i]?.id);
-  const floorName=i=>NAMED_FLOORS[i]?.name || 'F'+(i+1);
-  const floorLabel=i=>{const label=sourceFloor(i)?.name;return label && label!==floorName(i) ? floorName(i)+' · '+label : floorName(i);};
+  const floorLabel=i=>String(NAMED_FLOORS[i]?.source_name ?? '').trim() || NAMED_FLOORS[i]?.name || 'F'+(i+1);
   const _zFloorZ = {}, _zMinZ = {};
   SURF.forEach(s => { const z=s.zone||'?', mn=zmin(s); _zMinZ[z]=Math.min(_zMinZ[z]??1e9,mn);
     if(s.type==='Floor') _zFloorZ[z]=Math.min(_zFloorZ[z]??1e9,mn); });
@@ -378,8 +377,8 @@ _APP_JS = r"""
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
     mesh.userData={zone,floor:zoneFloor[zone]||0,name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
-      kind:'opening',dup,baseColor:color,sourceId:o.source_opening_id,publicName:o.public_name,
-      parentName:o.parent_name,area:faceArea(o.verts),spaceIds:[o.space_id,o.other_space_id].filter(Boolean)};
+      kind:'opening',dup,baseColor:color,publicName:o.public_name,
+      parentName:o.parent_name,area:faceArea(o.verts)};
     openingMeshes.push(mesh);root.add(mesh);
     const em=new THREE.LineSegments(edgeGeom(o.verts),new THREE.LineBasicMaterial({color}));
     em.userData={...mesh.userData};edgeSegs.push(em);root.add(em);
@@ -414,20 +413,43 @@ _APP_JS = r"""
     });
   }
   const meshActive = () => Boolean(reference && $('showMesh').checked && parseFloat($('explode').value)===0);
-  function comparisonPlanes(){
-    const p=activePlanes().slice(), f=parseInt($('floorSel').value,10), floor=sourceFloor(f);
+  function storeyPlanes(){
+    const floor=sourceFloor(parseInt($('floorSel').value,10));
     if(floor && Number.isFinite(floor.height) && parseFloat($('explode').value)===0){
-      const pad=Math.max(1e-6,Math.abs(floor.z_floor+floor.height)*2e-7);
-      p.push(new THREE.Plane(new THREE.Vector3(0,0,1),-floor.z_floor+pad),
-        new THREE.Plane(new THREE.Vector3(0,0,-1),floor.z_floor+floor.height+pad));
+      const bottom=floor.z_floor, top=bottom+floor.height;
+      // A single textured primitive can span both limits and still contain
+      // a triangle exactly on either cap. Allow for camera-space rounding
+      // when the GPU evaluates such triangles, even at ordinary BIM origins.
+      const viewTolerance=Math.min(0.0005,Math.max(0.00001,radius*4e-6));
+      const tolerance=z=>Math.max(viewTolerance,Math.abs(z)*2e-7);
+      return [new THREE.Plane(new THREE.Vector3(0,0,1),-bottom+tolerance(bottom)),
+        new THREE.Plane(new THREE.Vector3(0,0,-1),top+tolerance(top))];
     }
-    return p;
+    return [];
   }
-
-  function applyClipping(){ const p=comparisonPlanes();
-    allMeshes().forEach(m=>{m.material.clippingPlanes=p; m.material.needsUpdate=true;});
-    referenceMeshes.forEach(m=>{m.material.clippingPlanes=p; m.material.needsUpdate=true;});
-    edgeSegs.concat(logicalLines,enclosureLines,windowEdges).forEach(e=>{e.material.clippingPlanes=p; e.material.needsUpdate=true;}); }
+  let pickingPlanes=[];
+  const comparisonPlanes=()=>pickingPlanes;
+  function clippingForGeometry(geometry,sections,storey){
+    if(!storey.length) return sections;
+    if(!geometry.boundingBox) geometry.computeBoundingBox();
+    const {min,max}=geometry.boundingBox, [bottom,top]=storey;
+    // At zero explode the geometry is in model coordinates. A shader plane
+    // coincident with a slab can discard alternating fragments as the camera
+    // moves. Only clip across a storey limit if this geometry extends past it.
+    const below=min.z < -bottom.constant, above=max.z > top.constant;
+    if(below && above) return sections.concat(storey);
+    if(below) return sections.concat(bottom);
+    if(above) return sections.concat(top);
+    return sections;
+  }
+  function applyClipping(){
+    const sections=activePlanes(), storey=storeyPlanes();
+    pickingPlanes=sections.concat(storey);
+    for(const obj of allMeshes().concat(referenceMeshes,edgeSegs,logicalLines,enclosureLines,windowEdges)){
+      obj.material.clippingPlanes=clippingForGeometry(obj.geometry,sections,storey);
+      obj.material.needsUpdate=true;
+    }
+  }
 
   // ---- select-by modes + uniform-colour selection ----
   let selected=new Set(); const selGroup=new THREE.Group(); scene.add(selGroup);
@@ -598,7 +620,6 @@ _APP_JS = r"""
       .filter(h=>comparisonPlanes().every(p=>p.distanceToPoint(h.point)>=-0.0001)); return hits.length?hits[0]:null; }
   const surfaceByName=new Map(SURF.map(s=>[s.name,s]));
   const openingByName=new Map(OPENS.map(o=>[o.name,o]));
-  const sourceOpenings=new Map((SOURCE?.openings||[]).map(o=>[o.id,o]));
   function component(u){
     const key=u.name;
     const surface=surfaceByName.get(key);
@@ -625,62 +646,38 @@ _APP_JS = r"""
   function selectionFloors(mode,item,u){
     const floors=actualStoreys(u.zone,u.floor);
     if(mode==='zone' || floors.length<2) return floors;
-    let low,high;
-    if(item.a && item.b){low=Math.min(item.a.z,item.b.z);high=Math.max(item.a.z,item.b.z);}
-    else if(item.geometry){if(!item.geometry.boundingBox) item.geometry.computeBoundingBox();
-      low=item.geometry.boundingBox.min.z;high=item.geometry.boundingBox.max.z;}
-    if(!Number.isFinite(low)) return floors;
+    if(!item.geometry) return floors;
+    if(!item.geometry.boundingBox) item.geometry.computeBoundingBox();
+    const {min,max}=item.geometry.boundingBox, low=min.z, high=max.z;
     const overlap=floors.filter(i=>{const f=sourceFloor(i);return f && low<f.z_floor+f.height-0.001 && high>f.z_floor+0.001;});
     if(overlap.length) return overlap;
     const touching=floors.filter(i=>{const f=sourceFloor(i);return f && low<=f.z_floor+f.height+0.001 && high>=f.z_floor-0.001;});
     return touching.length ? touching : floors;
-  }
-  function authoredComponent(u){
-    const key=u.name;
-    const source=(u.kind==='window' || u.kind==='opening') ?
-      sourceOpenings.get(u.sourceId || SOURCE_MAP.windows?.[key] || SOURCE_MAP.openings?.[key] || key) :
-      SOURCE_BOUNDARIES[u.boundaryId || SOURCE_MAP.surfaces?.[key] || key];
-    const name=source?.display_name || source?.name || source?.label;
-    return name && !/^[ZS]\d+(?:$|[_:/.-])|[_:]|\/(?:wall|floor|roof|boundary)\//i.test(name) ? name : '';
   }
   function showInspection(mode,item,floor){inspected={mode,item,floor};renderInspection();}
   function renderInspection(){
     const el=$('sel'); el.style.display=inspected ? 'block' : 'none';
     if(!inspected){el.replaceChildren();return;}
     const {mode,item,floor}=inspected, u=item.userData || item;
-    let name, fields=[], quantities=[];
+    let name, fields=[], quantities;
     const storeys=()=>selectionFloors(mode,item,u).map(floorLabel).join(' / ');
-    if(mode==='floor' || mode==='zone'){
-      let metrics;
-      if(mode==='zone'){
-        name=spaceName(u.zone);
-        const authored=authoredSpaceName(u.zone);
-        fields=[['Authored name',authored!==name && authored!==roleLabel(roleOf(u.zone),false) && authored],
-          ['Storey',storeys()],['Function',roleLabel(roleOf(u.zone))]];
-        metrics=GEO.metrics.spaces[sourceIdOfZone(u.zone)] || {};
-      }else{
-        name=floorName(floor);
-        const source=sourceFloor(floor) || {};
-        metrics=GEO.metrics.floors[source.id] || {};
-        fields=[['Authored name',source.name!==name && source.name],['Spaces',metrics.space_count]];
-        quantities.push(['Elevation',source.z_floor,'m']);
-      }
-      quantities.push(['Projected area',metrics.area_m2,'m²'],['Modeled volume',metrics.volume_m3,'m³']);
-    }else{
+    if(mode==='zone'){
+      name=spaceName(u.zone);
+      fields=[['Storey',storeys()],['Function',roleLabel(roleOf(u.zone))]];
+      quantities=[['Modeled volume',GEO.metrics.spaces[sourceIdOfZone(u.zone)]?.volume_m3,'m³']];
+    }else if(mode==='floor'){
+      name=floorLabel(floor);
+      const metrics=GEO.metrics.floors[NAMED_FLOORS[floor]?.id] || {};
+      fields=[['Space count',metrics.space_count]];
+      quantities=[['Elevation',BASES[floor],'m'],['Storey volume',metrics.volume_m3,'m³']];
+    }else if(mode==='surface'){
       name=u.publicName;
-      if(mode==='edge'){
-        name=u.publicName+'_Edge'+u.edgeRank;
-        fields.push(['Parent face',u.publicName]);
-        quantities.push(['Length',u.a.distanceTo(u.b),'m']);
-      }else{
-        const authored=authoredComponent(u);
-        fields.push(['Authored name',authored!==name && authored],['Parent face',u.parentName!==name && u.parentName]);
-        quantities.push(['Face area',u.area,'m²']);
-      }
-      fields.push(['Type',msg(component(u))],['Room',spaceName(u.zone)],['Storey',storeys()]);
-      if(mode==='surface' && u.spaceIds?.length>1){
-        fields.push(['Connected spaces',u.spaceIds.map(id=>spaceName(zoneForSpace[id]||id)).join(' ↔ ')]);
-      }
+      fields=[['Type',msg(component(u))],['Parent face',u.parentName!==name && u.parentName],
+        ['Room',spaceName(u.zone)],['Storey',storeys()]];
+      quantities=[['Face area',u.area,'m²']];
+    }else{
+      name=u.publicName+'_Edge'+u.edgeRank;
+      quantities=[['Length',u.a.distanceTo(u.b),'m']];
     }
     el.dataset.mode=mode;
     const rows=fields.filter(([,v])=>v!==undefined && v!==null && v!==false && v!=='')
@@ -971,7 +968,7 @@ _STYLE = r"""
   .measure-label {display:block;font-size:12px;line-height:1.4;font-weight:650;color:#f5f8fc;}
   .measure-value {display:block;margin:2px 0 0;color:#ff91b9;font-size:clamp(25px,2.25vw,35px);line-height:1.08;letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
   .measure-value small {font-size:.6em;font-weight:550;color:#f5f8fc;}
-  #sel {position:absolute;bottom:clamp(12px,1.7vw,24px);right:clamp(12px,1.7vw,24px);width:min(352px,48%);max-height:52%;overflow:auto;overscroll-behavior:contain;background:var(--sheet);border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
+  #sel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);width:clamp(246px,28%,324px);max-height:calc(100% - 144px);overflow:auto;overscroll-behavior:contain;background:var(--sheet);border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
   .pick-head {display:grid;gap:3px;padding:12px 15px 8px;}
   .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
   .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
@@ -1056,7 +1053,7 @@ _STYLE = r"""
     .stage-tools .tool-row {pointer-events:auto;}
     #meas {position:absolute;top:43px;left:0;}
     #meas.has-distance {padding:7px 12px 8px;}
-    #sel {bottom:56px;width:min(320px,calc(100% - 24px));max-height:calc(100% - 102px);}
+    #sel {width:min(280px,calc(100% - 24px));max-height:calc(100% - 116px);}
     .pick-head {padding-top:9px;}
   }
   @media (max-height:530px) and (min-width:651px) { .masthead {height:46px;} }
@@ -1102,12 +1099,11 @@ def _viewer_source(source: dict) -> dict:
     """Keep model identity, counts and selection metadata without packaging the run journal."""
     result = _fields(source, ("schema_version", "source_model_sha256"))
     result["derived"] = _fields(source.get("derived", {}), ("zones", "surfaces", "windows", "openings"))
-    labels = ("name", "display_name", "label")
     for group, fields in {
         "floors": ("id", "name", "z_floor", "height"),
         "spaces": ("id", "floor_id", "role", "enclosure"),
-        "boundaries": ("id", "space_id", "enclosure", *labels),
-        "openings": ("id", "kind", *labels),
+        "boundaries": ("id", "space_id", "enclosure"),
+        "openings": ("id", "kind"),
         "connections": ("opening_id", "kind", "space_ids", "exterior", "state"),
     }.items():
         result[group] = [_fields(row, fields) for row in source.get(group, ())]
@@ -1203,7 +1199,7 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     named_floors = sorted((f for f in (geo["source_model"] or {}).get("floors", ()) if f.get("z_floor") is not None),
                           key=lambda f: (f["z_floor"], f["id"]))
     geo["public_names"] = {"floors": [
-        {"id": f["id"], "name": f"F{i}", "source_name": f.get("name") or f["id"], "z_floor": f["z_floor"]}
+        {"id": f["id"], "name": f"F{i}", "source_name": f.get("name"), "z_floor": f["z_floor"]}
         for i, f in enumerate(named_floors, 1)]}
     _selection_names(data, geo)
     from src.agent.geometry.viewer_metrics import viewer_metrics
