@@ -8,3 +8,9 @@
 - Chrome 验收覆盖桌面和窄屏、拖放三种素材、同名文件排序、纯文字组、刷新恢复、草稿冲突和切换语言；测试工作区与实际项目分开。工作台测试覆盖从 HTTP 导入到冻结与生产配置。DeepSeek 的 DSH 执行用本地模型响应验证工具调用、续跑和七项交付摘要，实际账号验证为模型目录查询。此轮未用账号生成新的整栋案例。
 - 最终快速套件通过 856 项。开发版浏览器入口返回 HTTP 200。中英文交付在实际结果路由的沙箱内验证了楼层筛选、三维点选、下载 PNG、打开图纸回叠和查看源记录。
 - 候选包已从 `26959502` 构建并含 254 个文件。原桌面目录的 Python 进程为 Windows Low 完整性，实际不能向普通项目目录或用户级验收目录写入。桌面更新器已将旧安装恢复到 `c12b75a7`，在 LocalLow 的隔离验收通过；记录在 `%USERPROFILE%/AppData/LocalLow/Sim-BIM-Agent/installation-verification/fc70710f97c345a79634b00459773f12/report.json`。新增快捷方式使用工作库的 Python，保留原安装权限。
+
+## 自定义 API 与独立启动
+
+开发提交 `9140652d`，domain-v189 / runtime-v63。桌面快捷方式已实开，新进程读到六个 ChatGPT 模型与 DeepSeek Flash。另在模型设置中可添加多个 OpenAI 兼容的 Chat Completions 服务，获取模型列表或填写模型 ID。所选主控和 worker 在提交时锁定各自连接的版本。密钥由 Windows 用户凭据保护，仅服务进程按冻结版本读取。
+
+从工作台提交了一张合成平面图。主控读图期间结束原工作台 HTTP 进程，后台继续调用独立 worker、生成一层两间模型并交付。再次启动工作台后，同一工作区返回完成状态，HTML 报告和查看器均可取回。测试服务还核验了工具签名、多轮调用 ID、图像和输出上限字段。该测试使用本地可重复的模型响应。验证记录为 `D:/Sim-BIM-Agent/cache/workbench-standalone-custom-20261124/workbench-standalone-e2e-9ae8sbc5/proof.json`。另一次 DSH 验证覆盖删除当前连接后按冻结配置续跑，以及两个不同型号的 worker，见 `D:/Sim-BIM-Agent/cache/workbench-custom-models-d46dyp49/verification.json`。
