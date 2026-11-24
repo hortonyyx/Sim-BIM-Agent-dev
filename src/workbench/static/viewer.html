@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sim-BIM</title>
+  <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+  <style>html,body,iframe{height:100%;width:100%;border:0;margin:0;display:block}</style>
+</head>
+<body>
+  <iframe title="Sim-BIM" sandbox="allow-scripts allow-downloads"></iframe>
+  <script src="/static/viewer-draft.js"></script>
+  <script>
+    if (!SimBimViewerDraft.host(document.querySelector('iframe'), location.hash.slice(1))) location.replace('/');
+    window.addEventListener('hashchange', () => location.reload());
+  </script>
+</body>
+</html>

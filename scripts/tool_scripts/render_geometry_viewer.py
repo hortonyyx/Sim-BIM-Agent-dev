@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -23,6 +24,7 @@ from pathlib import Path
 from scripts.tool_scripts.bim_display_language import (
     room_role, room_type_labels, viewer_markup, viewer_messages, viewer_script,
 )
+from scripts.tool_scripts.bim_viewer_annotations import ANNOTATION_CSS, ANNOTATION_JS, ANNOTATION_MARKUP
 from scripts.tool_scripts.bim_viewer_inspection import project_storey_names, public_inspection
 
 _VENDOR = Path(__file__).resolve().parent / "vendor"
@@ -57,10 +59,11 @@ _APP_JS = r"""
   const ENC_REGIONS = GEO.enclosure_regions || [];
   const ZONES = (GEO.zones || []).slice().sort((a, b) => b.length - a.length);
   const SOURCE = GEO.source_model || null;
+  const viewerDraft = SimBimViewerDraft.create(GEO.draft_model_id);
   const SOURCE_MAP = SOURCE ? (SOURCE.derived || {}) : {};
   const SOURCE_SPACES = Object.fromEntries(((SOURCE && SOURCE.spaces) || []).map(s=>[s.id,s]));
   const SOURCE_BOUNDARIES = Object.fromEntries(((SOURCE && SOURCE.boundaries) || []).map(b=>[b.id,b]));
-  let confidenceView=false;
+  let confidenceView=false, editView=false;
   let modelOpacity=1;
   const GRADE_COLORS=[0xb3bac4,0x40145f,0x74399e,0xa46ec7,0xcfabe4,0xf2e6f7];
   const GRADE_LABELS=['Unassessed','Assumed','Indirect support','Partial support','Strong support','Direct evidence'];
@@ -240,9 +243,10 @@ _APP_JS = r"""
   compass.name='ground-compass';
   compass.position.set(center.x-.12*size.x,bb.min.y-2.65*compassRadius,bb.min.z+.002*compassRadius);
   compass.scale.setScalar(compassRadius);
-  // A positive building north-axis angle is clockwise from north to building +Y.
-  const hasNorth=Number.isFinite(GEO.north_axis_deg);
-  compass.rotation.z=hasNorth ? THREE.MathUtils.degToRad(GEO.north_axis_deg) : 0;
+  // Model north_axis runs from true north to +Y; the control shows north clockwise from +Y.
+  const wrapBearing=angle=>((angle%360)+360)%360;
+  const snapBearing=angle=>wrapBearing(Math.round(angle/5)*5);
+  const sourceBearing=Number.isFinite(GEO.north_axis_deg) ? wrapBearing(-GEO.north_axis_deg) : null;
   const compassInk=document.createElement('canvas');compassInk.width=compassInk.height=256;
   const pen=compassInk.getContext('2d');
   pen.translate(128,128);
@@ -257,9 +261,124 @@ _APP_JS = r"""
     map:new THREE.CanvasTexture(compassInk),transparent:true,depthWrite:false,side:THREE.DoubleSide
   }));
   compass.add(rose);
-  const northLabel=label(hasNorth?'N':'N / +Y','#16478b',.76);
-  northLabel.position.set(0,1.27,.04);compass.add(northLabel);
+  const northLabel=label('N','#16478b',.76), modelNorthLabel=label('N / +Y','#16478b',.76);
+  for(const marker of [northLabel,modelNorthLabel]){
+    marker.position.set(0,1.27,.04);compass.add(marker);
+  }
   scene.add(compass);
+  const northHandle=$('northHandle'), northForm=$('northForm'), northInput=$('northBearing');
+  let confirmedBearing=viewerDraft.state.northAngle ?? sourceBearing, compassDrag=null;
+  let northSaveTimer=0;
+  function syncCompassStorage(){
+    $('northStorageHint').hidden=viewerDraft.persistent;
+    $('northSaveStatus').hidden=viewerDraft.persistent || !northSaveTimer || !northForm.hidden;
+  }
+  function showBearing(bearing){
+    compass.rotation.z=-THREE.MathUtils.degToRad(bearing ?? 0);
+    northLabel.visible=bearing!==null;modelNorthLabel.visible=bearing===null;
+  }
+  showBearing(confirmedBearing);
+  function cancelCompassEdit(){
+    if(compassDrag && northHandle.hasPointerCapture(compassDrag.id)) northHandle.releasePointerCapture(compassDrag.id);
+    compassDrag=null;
+    northForm.hidden=true;northHandle.setAttribute('aria-expanded','false');
+    showBearing(confirmedBearing);
+  }
+  function openCompassEdit(){
+    if(!northForm.hidden) return;
+    if(editView) editMarkers.cancel();
+    northForm.hidden=false;northHandle.setAttribute('aria-expanded','true');
+    syncCompassStorage();
+    northInput.value=snapBearing(confirmedBearing ?? 0);$('northApply').disabled=false;
+    showBearing(Number(northInput.value));positionCompassControls();
+  }
+  window.addEventListener('viewer-draft-change',()=>{
+    syncCompassStorage();
+    const next=viewerDraft.state.northAngle ?? sourceBearing;
+    if(next===confirmedBearing) return;
+    confirmedBearing=next;cancelCompassEdit();
+  });
+  northHandle.onclick=openCompassEdit; // Keyboard activation also opens the calibration.
+  northInput.oninput=()=>{
+    const value=northInput.valueAsNumber;
+    $('northApply').disabled=!Number.isFinite(value);
+    if(Number.isFinite(value)) showBearing(snapBearing(value));
+  };
+  northInput.onchange=()=>{if(Number.isFinite(northInput.valueAsNumber)) northInput.value=snapBearing(northInput.valueAsNumber);};
+  northInput.onkeydown=e=>{
+    if(e.key==='Enter'){e.preventDefault();$('northApply').focus();}
+  };
+  $('northApply').onclick=()=>{
+    if(!Number.isFinite(northInput.valueAsNumber)) return;
+    confirmedBearing=snapBearing(northInput.valueAsNumber);
+    clearTimeout(northSaveTimer);
+    northSaveTimer=setTimeout(()=>{northSaveTimer=0;syncCompassStorage();},4500);
+    viewerDraft.update({northAngle:confirmedBearing});
+    cancelCompassEdit();syncCompassStorage();northHandle.focus({preventScroll:true});
+  };
+  $('northCancel').onclick=()=>{cancelCompassEdit();northHandle.focus({preventScroll:true});};
+  document.addEventListener('pointerdown',e=>{
+    if(!northForm.hidden && !northForm.contains(e.target) && !northHandle.contains(e.target)) cancelCompassEdit();
+  },true);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape' && !northForm.hidden){cancelCompassEdit();northHandle.focus({preventScroll:true});}
+  });
+  const compassRay=new THREE.Raycaster(), pointerNdc=new THREE.Vector2(), floorHit=new THREE.Vector3();
+  const compassPlane=new THREE.Plane(new THREE.Vector3(0,0,1),-compass.position.z);
+  function groundBearing(e){
+    const rect=viewport.getBoundingClientRect();
+    pointerNdc.set((e.clientX-rect.left)/rect.width*2-1,1-(e.clientY-rect.top)/rect.height*2);
+    compassRay.setFromCamera(pointerNdc,camera);
+    if(Math.abs(compassRay.ray.direction.z)<.025 || !compassRay.ray.intersectPlane(compassPlane,floorHit)) return null;
+    return THREE.MathUtils.radToDeg(Math.atan2(floorHit.x-compass.position.x,floorHit.y-compass.position.y));
+  }
+  northHandle.onpointerdown=e=>{
+    if(e.button!==0) return;
+    openCompassEdit();
+    const rect=northHandle.getBoundingClientRect();
+    const atCentre=Math.hypot(e.clientX-rect.left-rect.width/2,e.clientY-rect.top-rect.height/2)<5;
+    compassDrag={id:e.pointerId,x:e.clientX,y:e.clientY,initial:Number(northInput.value),
+                 startAngle:atCentre?null:groundBearing(e)};
+    northHandle.setPointerCapture(e.pointerId);e.preventDefault();
+  };
+  northHandle.onpointermove=e=>{
+    if(!compassDrag || e.pointerId!==compassDrag.id) return;
+    const dx=e.clientX-compassDrag.x, dy=e.clientY-compassDrag.y;
+    if(Math.hypot(dx,dy)<3) return;
+    const worldAngle=groundBearing(e);
+    // Edge-on views flatten the ground dial. A horizontal drag still adjusts its bearing.
+    const angle=worldAngle===null ? compassDrag.initial+dx*2 :
+      (compassDrag.startAngle===null ? worldAngle : compassDrag.initial+worldAngle-compassDrag.startAngle);
+    northInput.value=snapBearing(angle);$('northApply').disabled=false;showBearing(Number(northInput.value));
+  };
+  northHandle.onpointerup=e=>{
+    if(compassDrag?.id!==e.pointerId) return;
+    compassDrag=null;northHandle.releasePointerCapture(e.pointerId);
+  };
+  northHandle.onpointercancel=cancelCompassEdit;
+  const compassScreen=new THREE.Vector3();
+  let compassLayout='';
+  function positionCompassControls(){
+    const w=viewport.clientWidth,h=viewport.clientHeight;
+    compassScreen.copy(compass.position).project(camera);
+    const x=(compassScreen.x+1)*w/2,y=(1-compassScreen.y)*h/2;
+    const hidden=confidenceView || measuring || Math.abs(compassScreen.z)>1 || x<0 || x>w || y<0 || y>h;
+    if(northHandle.hidden!==hidden) northHandle.hidden=hidden;
+    if(hidden){if(!northForm.hidden) cancelCompassEdit();return;}
+    const depth=-compassScreen.copy(compass.position).applyMatrix4(camera.matrixWorldInverse).z;
+    const diameter=Math.max(30,Math.min(100,compassRadius*h/(depth*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))+8));
+    const px=Math.round(x),py=Math.round(y),d=Math.round(diameter);
+    const layout=[px,py,d,w,h,northForm.hidden,viewerDraft.persistent,locale].join('|');
+    if(compassLayout===layout) return;
+    compassLayout=layout;
+    northHandle.style.cssText='left:'+px+'px;top:'+py+'px;width:'+d+'px;height:'+d+'px';
+    if(!northForm.hidden){
+      const above=py-d/2-northForm.offsetHeight-6;
+      const top=above>50?above:py+d/2+6;
+      northForm.style.left=Math.max(8,Math.min(px-northForm.offsetWidth/2,w-northForm.offsetWidth-8))+'px';
+      northForm.style.top=Math.max(8,Math.min(top,h-northForm.offsetHeight-8))+'px';
+    }
+  }
 
   // ---- clip planes (section cuts) ----
   const AX = [
@@ -543,7 +662,13 @@ _APP_JS = r"""
     for(const m of allPickables()){
       const u=m.userData;
       const color=confidenceView ? GRADE_COLORS[spatialRecord(mode,u)?.grade || 0] : u.baseColor;
-      m.material.color.setHex(selected.has(m) && (!confidenceView || !m.isMesh) ? SEL_COLOR : color);
+      const highlighted=editView && editMarkers.highlighted.has(m);
+      const inspectedColor=selected.has(m) && (!confidenceView || !m.isMesh) ? SEL_COLOR : color;
+      m.material.color.setHex(highlighted ? 0xe43c44 : inspectedColor);
+      if(!confidenceView && m.isMesh && (u.kind==='opening' || u.kind==='enclosure-region')){
+        const alpha=u.kind==='opening' ? m.modelOpacity : ENCLOSURE_OPACITY;
+        m.material.opacity=highlighted ? Math.max(alpha,.74) : alpha;
+      }
     }
     updateLegend(mode);
   }
@@ -845,6 +970,14 @@ _APP_JS = r"""
     const reason=el.querySelector('.confidence-reason');
     if(reason) reason.ontoggle=()=>{if(inspected && reason.isConnected) inspected.reasonOpen=reason.open;};
   }
+  function pickedFloor(hit){
+    const mesh=hit.object,u=mesh.userData;
+    const floors=actualStoreys(u.zone,u.floor), active=Number($('floorSel').value);
+    const z=hit.point.z-mesh.position.z;
+    return floors.includes(active) ? active : (floors.find(i=>{const f=sourceFloor(i);
+      return f && z>=f.z_floor-0.001 && z<f.z_floor+f.height-0.001;
+    }) ?? floors[floors.length-1]);
+  }
   function handleClick(ev){
     if(measuring){ const r=renderer.domElement.getBoundingClientRect();
       const p=snapPick(ev.clientX-r.left, ev.clientY-r.top); if(!p) return;
@@ -853,20 +986,18 @@ _APP_JS = r"""
       renderMeasurement();
       return; }
     const mode=$('colorBy').value;
+    if(editView){editMarkers.pickTarget(pick(ev),mode,ev.ctrlKey || ev.metaKey);return;}
     if(mode==='edge'){ edgePick(ev); return; }
     const hit=pick(ev); if(!hit){ clearSelection(); return; }
     const o=hit.object;
     let sel, floor;
     if(mode==='floor'){
-      const floors=actualStoreys(o.userData.zone,o.userData.floor), active=Number($('floorSel').value);
-      const z=hit.point.z-o.position.z;
-      floor=floors.includes(active) ? active : (floors.find(i=>{const f=sourceFloor(i);
-        return f && z>=f.z_floor-0.001 && z<f.z_floor+f.height-0.001;
-      }) ?? floors[floors.length-1]);
+      floor=pickedFloor(hit);
       sel=allPickables().filter(m=>actualStoreys(m.userData.zone,m.userData.floor).includes(floor));
     }else if(mode==='zone') sel=allPickables().filter(m=>m.userData.zone===o.userData.zone); else sel=[o];
     setSelection(sel); showInspection(mode,o,floor,hit.point.clone().sub(o.position).toArray());
   }
+""" + ANNOTATION_JS + r"""
   // click vs orbit-drag: only a near-stationary press is a click
   let downXY=null;
   renderer.domElement.addEventListener('pointerdown', e=>{ if(e.button===0) downXY=[e.clientX,e.clientY]; });
@@ -976,41 +1107,89 @@ _APP_JS = r"""
   const fs=$('floorSel'); BASES.forEach((b,i)=>{
     if(!SURF.some(s=>onFloor({zone:s.zone,floor:zoneFloor[s.zone]},i))) return;
     const o=document.createElement('option'); o.value=i; o.textContent=floorLabel(i); fs.appendChild(o);});
-  const viewTabs=[$('modelTab'),$('confidenceTab')];
-  function setViewMode(confidence){
-    if(confidence===confidenceView) return;
+  const viewTabs=[$('modelTab'),$('confidenceTab'),$('editTab')];
+  let restoreEdge=false, modelComparisonMode, previewNoticeTimer;
+  function syncEditPanel(){
+    const draft=viewerDraft.state, input=$('editInstructions');
+    if(input.value!==draft.instructions) input.value=draft.instructions;
+    const count=draft.notes.length;
+    $('noteCount').textContent=locale==='en' ? count+(count===1?' note':' notes') : count+' 条批注';
+    $('rebuild').disabled=!count && !draft.instructions.trim();
+    $('draftStorageStatus').hidden=viewerDraft.persistent;
+  }
+  function setViewMode(active){
+    if(active.getAttribute('aria-selected')==='true') return;
+    const confidence=active===$('confidenceTab'), edit=active===$('editTab');
     const opacity=$('opacity');
     if(confidence) modelOpacity=Number(opacity.value);
-    opacity.value=confidence ? '0.75' : String(modelOpacity);
-    confidenceView=confidence;clearOutlines();
+    if(confidenceView || confidence) opacity.value=confidence ? '0.75' : String(modelOpacity);
+    cancelCompassEdit();
+    if(edit || editView){
+      editMarkers.cancel();clearSelection();clearMeasure();
+      const by=$('colorBy'), edge=by.querySelector('option[value="edge"]');
+      if(edit){restoreEdge=by.value==='edge';if(restoreEdge) by.value='surface';}
+      edge.hidden=edit;edge.disabled=edit;
+      if(!edit && restoreEdge) by.value='edge';
+      // Edit picks BIM faces. Keep them available whenever the reference mesh is overlaid.
+      const meshMode=$('meshMode');
+      if(edit){modelComparisonMode=meshMode.value;meshMode.value='blend';}
+      else meshMode.value=modelComparisonMode;
+      meshMode.disabled=edit;
+    }
+    confidenceView=confidence;editView=edit;clearOutlines();
     renderer.setTransparentSort(confidence ? sortConfidenceFaces : null);
     showRangeValue(opacity);
     applyOpacity();
-    const active=viewTabs[confidence?1:0];
     for(const tab of viewTabs){
       tab.setAttribute('aria-selected',String(tab===active));tab.tabIndex=tab===active?0:-1;
     }
     $('stage').setAttribute('aria-labelledby',active.id);
+    $('editPanel').hidden=!edit;
+    $('measure').hidden=edit;
+    $('editHint').hidden=true;
+    $('viewerNotice').hidden=true;
     $('meshControls').hidden=confidence || !reference;
     $('layerControls').hidden=confidence;
     $('sectionControls').hidden=confidence;
-    refreshColors();applyFilter();selectionOutlines();
+    refreshColors();applyFilter();selectionOutlines();editMarkers.sync();syncEditPanel();
   }
   for(const tab of viewTabs){
-    tab.onclick=()=>setViewMode(tab===viewTabs[1]);
+    tab.onclick=()=>setViewMode(tab);
     tab.onkeydown=event=>{
       if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
       event.preventDefault();
-      const next=event.key==='Home' ? 0 : event.key==='End' ? 1 : Number(tab===viewTabs[0]);
-      viewTabs[next].focus();setViewMode(next===1);
+      const n=viewTabs.length;
+      const next=event.key==='Home'?0:event.key==='End'?n-1:(viewTabs.indexOf(tab)+(event.key==='ArrowRight'?1:-1)+n)%n;
+      viewTabs[next].focus();setViewMode(viewTabs[next]);
     };
   }
-  $('colorBy').onchange=clearSelection;
-  fs.onchange=()=>{clearSelection();clearMeasure();applyFilter();};
+  $('colorBy').onchange=()=>{
+    if(editView){restoreEdge=false;editMarkers.cancel();}
+    clearSelection();if(editView) editMarkers.sync();
+  };
+  fs.onchange=()=>{if(editView) editMarkers.cancel();clearSelection();clearMeasure();applyFilter();if(editView) editMarkers.sync();};
+  $('editInstructions').oninput=e=>viewerDraft.update({instructions:e.target.value});
+  window.addEventListener('viewer-draft-change',event=>{
+    syncEditPanel();
+    if(editView && event.detail?.notesChanged!==false) editMarkers.sync();
+  });
+  $('rebuild').onclick=()=>{
+    if(editMarkers.pending()){$('editHint').hidden=false;return;}
+    $('editHint').hidden=true;
+    $('revisionPreview').showModal();
+  };
+  $('cancelRebuild').onclick=()=>$('revisionPreview').close();
+  $('confirmRebuild').onclick=()=>{
+    $('revisionPreview').close();
+    setViewMode($('modelTab'));$('modelTab').focus();
+    const notice=$('viewerNotice');notice.hidden=false;
+    clearTimeout(previewNoticeTimer);
+    previewNoticeTimer=setTimeout(()=>{notice.hidden=true;},5000);
+  };
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
   $('showOpen').onchange=applyFilter; $('showLogical').onchange=applyFilter; $('showEnclosure').onchange=applyFilter;
   $('showMesh').onchange=applyFilter; $('meshMode').onchange=applyFilter; $('meshOpacity').oninput=applyFilter;
-  $('opacity').oninput=applyOpacity;
+  $('opacity').oninput=()=>{applyOpacity();if(editView) refreshColors();};
   $('explode').oninput=applyExplode; $('explodeMode').onchange=applyExplode;
   function showRangeValue(input){
     $(input.id+'Value').value=Math.round(Number(input.value)*100)+'%';
@@ -1039,10 +1218,12 @@ _APP_JS = r"""
     }
     Array.from(fs.options).filter(o=>Number(o.value)>=0).forEach(o=>{o.textContent=floorLabel(Number(o.value));});
     updateStats();updateLegend($('colorBy').value);renderInspection();renderMeasurement();applyFilter();
+    syncEditPanel();editMarkers.sync();
   }
   $('locale').onchange=e=>applyLocale(e.target.value);
   applyLocale('en');
   applyOpacity(); refreshColors(); applyExplode(); defaultView();
+  if(location.hash==='#edit') setViewMode($('editTab'));
   new ResizeObserver(()=>{
     const w=viewport.clientWidth,h=viewport.clientHeight;
     if(!w || !h) return;
@@ -1050,7 +1231,8 @@ _APP_JS = r"""
     if(!cameraMoved) defaultView();
     sizeMeasureMarkers();
   }).observe(viewport);
-  (function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+  (function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera);
+    positionCompassControls();if(editView) editMarkers.frame(); })();
 })();
 """
 
@@ -1060,6 +1242,7 @@ _PANEL_HTML = r"""
   <div class="view-tabs" role="tablist" aria-label="[[msg:Viewer mode]]">
     <button type="button" role="tab" id="modelTab" aria-selected="true" aria-controls="stage">[[msg:Model]]</button>
     <button type="button" role="tab" id="confidenceTab" aria-selected="false" aria-controls="stage" tabindex="-1">[[msg:Confidence]]</button>
+    <button type="button" role="tab" id="editTab" aria-selected="false" aria-controls="stage" tabindex="-1">[[msg:Edit]]</button>
   </div>
   <div class="head-actions">
     <select id="locale" aria-label="[[msg:Language]]"><option value="en" lang="en">English</option><option value="zh-CN" lang="zh-CN">中文</option></select>
@@ -1069,6 +1252,19 @@ _PANEL_HTML = r"""
 <main class="viewer">
   <section class="stage" id="stage" role="tabpanel" aria-labelledby="modelTab">
     <div id="app"></div>
+    <button type="button" id="northHandle" title="[[msg:Adjust north]]" aria-label="[[msg:Adjust north]]" aria-controls="northForm" aria-expanded="false" hidden></button>
+    <div id="northForm" role="group" aria-label="[[msg:Adjust north]]" hidden>
+      <label for="northBearing">[[msg:North bearing]]</label>
+      <div class="north-values">
+        <div class="north-number"><input type="number" id="northBearing" step="5" aria-describedby="northReference"><span aria-hidden="true">°</span></div>
+        <button type="button" id="northCancel" title="[[msg:Cancel north adjustment]]" aria-label="[[msg:Cancel north adjustment]]"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        <button type="button" id="northApply" title="[[msg:Confirm north bearing]]" aria-label="[[msg:Confirm north bearing]]"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg></button>
+      </div>
+      <small id="northReference">[[msg:Clockwise from model +Y]]</small>
+      <small id="northStorageHint" hidden>[[msg:Changes are available in this tab only.]]</small>
+    </div>
+    <div id="northSaveStatus" role="status" hidden>[[msg:Changes are available in this tab only.]]</div>
+""" + ANNOTATION_MARKUP + r"""
     <div class="view-filters">
       <label class="filter" for="colorBy"><span>[[msg:select by]]</span><select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select></label>
       <label class="filter" for="floorSel"><span>[[msg:楼层]]</span><select id="floorSel"><option value="-1">[[msg:all floors]]</option></select></label>
@@ -1082,6 +1278,20 @@ _PANEL_HTML = r"""
       </div>
     </div>
     <div id="sel" aria-live="polite"></div>
+    <section id="editPanel" aria-labelledby="editHeading" hidden>
+      <div class="edit-heading"><h2 id="editHeading"><label for="editInstructions">[[msg:Overall changes]]</label></h2><span id="noteCount"></span></div>
+      <textarea id="editInstructions" rows="3" placeholder="[[msg:Describe changes to the model…]]"></textarea>
+      <p id="editHint" role="status" hidden>[[msg:Confirm the object note or click empty space to discard it.]]</p>
+      <p id="draftStorageStatus" role="status" hidden>[[msg:Changes are available in this tab only.]]</p>
+      <button type="button" id="rebuild">[[msg:Rebuild]]</button>
+    </section>
+    <dialog id="revisionPreview" aria-labelledby="previewTitle" aria-describedby="previewSummary">
+      <h2 id="previewTitle">[[msg:Preview rebuild?]]</h2>
+      <p id="previewSummary">[[msg:Return to Model with the current geometry. Your notes stay in Edit for the next round.]]</p>
+      <div class="preview-actions"><button type="button" id="cancelRebuild" autofocus>[[msg:Cancel]]</button>
+        <button type="button" id="confirmRebuild">[[msg:Confirm preview]]</button></div>
+    </dialog>
+    <div id="viewerNotice" role="status" hidden>[[msg:Preview complete. Your notes are in Edit.]]</div>
   </section>
   <aside id="panel">
     <div class="panel-scroll">
@@ -1136,6 +1346,23 @@ _STYLE = r"""
   :root {color-scheme:light;--ink:#19212e;--muted:#586575;--line:#d9dee6;--blue:#244edc;--sheet:#fff;font:14px/1.45 "Work Sans","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;color:var(--ink);background:white;}
   * {box-sizing:border-box;}
   [hidden] {display:none!important;}
+  #northHandle {position:absolute;transform:translate(-50%,-50%);border:0;border-radius:50%;padding:0;background:transparent;touch-action:none;cursor:grab;}
+  #northHandle:is(:hover,:focus-visible,[aria-expanded="true"]) {outline:2px solid #5479d7;outline-offset:1px;background:#446bde0d;}
+  #northHandle:active {cursor:grabbing;}
+  #northForm {position:absolute;z-index:6;display:grid;gap:7px;width:176px;padding:12px;border:1px solid #c4cddd;border-radius:8px;background:#fff;box-shadow:0 4px 18px #1a32521c;}
+  #northForm label {color:var(--ink);font-weight:650;font-size:13px;}
+  #northReference {color:var(--muted);font-size:11px;}
+  #northStorageHint {font-size:11px;color:#805b16;}
+  #northSaveStatus {position:absolute;right:20px;bottom:24px;z-index:4;max-width:240px;border:1px solid #d7c498;border-radius:6px;padding:7px 11px;background:#fffaf0;color:#704f15;font-size:12px;pointer-events:none;}
+  .north-values {display:flex;gap:5px;align-items:center;}
+  .north-number {display:flex;align-items:center;flex:1;min-width:0;border:1px solid #bdc7d3;border-radius:4px;height:30px;background:white;overflow:hidden;}
+  .north-number:focus-within {outline:2px solid #7190ef;}
+  .north-number input {min-width:0;width:100%;height:100%;border:0;padding:0 0 0 6px;font-variant-numeric:tabular-nums;}
+  .north-number input:focus-visible {outline:0;}
+  .north-number span {padding:0 5px 0 1px;color:var(--muted);}
+  #northForm button {width:30px;height:30px;padding:5px;}
+  #northApply {background:var(--blue);color:white;border-color:var(--blue);}
+  #northApply:disabled {opacity:.4;cursor:default;}
   html,body {height:100%;margin:0;}
   body {display:flex;flex-direction:column;overflow:hidden;}
   button,select,input {font:inherit;}
@@ -1162,6 +1389,7 @@ _STYLE = r"""
   .stage {position:relative;isolation:isolate;min-width:0;min-height:0;overflow:hidden;background:#f4f6f8;}
   #app {position:absolute;inset:0;}
   #app canvas {display:block;width:100%;height:100%;touch-action:none;}
+""" + ANNOTATION_CSS + r"""
   .view-filters {position:absolute;left:clamp(12px,1.7vw,26px);top:clamp(12px,1.7vw,24px);align-items:stretch;max-width:calc(100% - 24px);}
   .filter {min-width:0;display:flex;align-items:center;gap:5px;background:#fff;border:1px solid #c6cfda;border-radius:5px;padding-left:10px;box-shadow:0 1px 3px #2236550c;}
   .filter>span {white-space:nowrap;font-size:12px;color:var(--muted);}
@@ -1180,6 +1408,25 @@ _STYLE = r"""
   .measure-value small {font-size:.6em;font-weight:550;color:#f5f8fc;}
   #sel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);width:clamp(246px,28%,324px);max-height:calc(100% - 144px);overflow:auto;overscroll-behavior:contain;background:var(--sheet);border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
   .pick-head {display:grid;gap:3px;padding:12px 15px 8px;}
+  #editPanel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);width:clamp(210px,23%,274px);
+    padding:14px;background:white;border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
+  .edit-heading,.preview-actions {display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .edit-heading h2,#revisionPreview h2 {margin:0;font-size:15px;font-weight:650;}
+  #noteCount {font-size:12px;color:var(--muted);white-space:nowrap;}
+  #editInstructions {display:block;width:100%;min-height:70px;resize:vertical;max-height:23vh;margin:11px 0;padding:8px 9px;box-sizing:border-box;
+    font:inherit;line-height:1.45;color:var(--ink);border:1px solid #c6cfda;border-radius:5px;}
+  #editInstructions::placeholder {color:#667385;}
+  #editPanel p {font-size:12px;color:var(--muted);margin:0 0 9px;}
+  #rebuild,#confirmRebuild {background:var(--blue);border-color:var(--blue);color:white;}
+  #rebuild {width:100%;justify-content:center;}
+  #rebuild:disabled {background:#e8ecf2;border-color:#e8ecf2;color:#606c7d;cursor:default;}
+  #revisionPreview {width:min(365px,85vw);padding:20px 22px;border:1px solid #bbc6d5;border-radius:9px;color:var(--ink);box-shadow:0 12px 45px #1822353d;}
+  #revisionPreview::backdrop {background:#17233550;}
+  #revisionPreview h2 {font-size:18px;}
+  #previewSummary {font-size:14px;color:var(--muted);margin:9px 0 18px;line-height:1.5;}
+  .preview-actions {justify-content:flex-end;}
+  #viewerNotice {position:absolute;bottom:24px;left:50%;transform:translateX(-50%);border-radius:6px;
+    background:#243047;color:white;font-size:13px;padding:8px 13px;pointer-events:none;}
   .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
   .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
   .pick-fields {padding:0 15px 8px;}
@@ -1298,7 +1545,8 @@ __PANEL__
 
 def app_js(locale: str = "zh-CN") -> str:
     """The viewer app script (for embedding + standalone syntax checking)."""
-    return viewer_script(_APP_JS)
+    draft = Path(__file__).resolve().parents[2] / "src/workbench/static/viewer-draft.js"
+    return draft.read_text(encoding="utf-8") + "\n" + viewer_script(_APP_JS)
 
 
 def discover_roles(bg_path: Path) -> dict:
@@ -1458,6 +1706,13 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
             memberships[zone] = indices
     geo["room_names"] = room_names
     geo["floor_memberships"] = memberships
+    # Older display-only models lack a canonical source digest. Derive an identity
+    # from their selectable geometry so replacing a file cannot bind stale notes.
+    identity = source.get("source_model_sha256")
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
+        geometry = {k: geo[k] for k in ("zones", "surfaces", "windows", "openings", "enclosure_regions", "roles", "source_model")}
+        identity = hashlib.sha256(json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    geo["draft_model_id"] = identity
     # Replace placeholders in the trusted template once, so an input name or
     # evidence containing another placeholder is preserved literally.
     values = {

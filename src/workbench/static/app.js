@@ -140,6 +140,10 @@ function renderRun() {
     let url;
     try {url=new URL(run[key],location.origin);} catch {continue;}
     if (url.origin!==location.origin) continue;
+    if (key==='viewer' && url.pathname.endsWith('/Sim-BIM.html')) {
+      const host=new URL('/static/viewer.html',location.origin);
+      host.hash=url.pathname;url=host;
+    }
     const link=el('a','link-button',t(key)); link.href=url.href;
     if (key==='download') link.download='Sim-BIM.html';
     else { link.target='_blank'; link.rel='noopener'; }

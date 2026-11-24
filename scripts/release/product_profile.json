@@ -22,6 +22,8 @@
     "src/workbench/static/language.js",
     "src/workbench/static/dom.js",
     "src/workbench/static/preview.js",
+    "src/workbench/static/viewer.html",
+    "src/workbench/static/viewer-draft.js",
     "src/workbench/static/mark.svg",
     "src/agent/data/room_types.json",
     "src/agent_runtime/model_profiles.json",
