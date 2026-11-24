@@ -13,6 +13,7 @@ import portalocker
 
 from scripts.tool_scripts.bim_agent_inputs import read_building_input
 from src.agent.bim_inputs import validate_png
+from src.agent_runtime.providers import is_custom_provider
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BRIEF = {
@@ -149,7 +150,8 @@ def ordered(available, keys):
 
 
 def selection(value):
-    if (not isinstance(value, dict) or value.get("provider") not in ("chatgpt-subscription", "deepseek")
+    if (not isinstance(value, dict)
+            or (value.get("provider") not in ("chatgpt-subscription", "deepseek") and not is_custom_provider(value.get("provider")))
             or not isinstance(value.get("model"), str) or not value["model"].strip()):
         raise InputError("请选择有效模型。", "Select a valid model.")
     return {"provider": value["provider"], "model": value["model"]}

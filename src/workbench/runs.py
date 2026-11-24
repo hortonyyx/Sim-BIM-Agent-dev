@@ -17,6 +17,8 @@ import uuid
 
 import portalocker
 from src.agent_runtime.output_limits import default_output_tokens
+from src.agent_runtime.providers import is_custom_provider
+from .custom_connections import freeze_custom_connection
 from .storage import (DEFAULT_BRIEF, ROOT, InputError, inside, locked, read_json, read_project,
                       revision_check, save_json)
 
@@ -84,8 +86,18 @@ def freeze(root, target, draft):
     return materials, blocks
 
 
-def configuration(directory, draft, materials, blocks):
+def configuration(directory, draft, materials, blocks, *, connections=None):
     route = draft["coordinator"]
+    revisions = {}
+    custom = {}
+    for choice in [route, *draft["workers"]]:
+        provider = choice["provider"]
+        if is_custom_provider(provider) and provider not in revisions:
+            entry = (connections or {}).get(provider)
+            if not entry:
+                raise InputError("模型连接已更新，请刷新后重试。", "The model connection changed. Refresh and try again.", 409)
+            revisions[provider] = freeze_custom_connection(provider, expected_revision=entry["revision"])
+            custom[provider] = entry
     case = {"case_id": directory.name, "mode": "orchestrator", "runtime": "dsh", "output": "production",
             "materials": materials, "blocks": blocks, "locale": draft["locale"],
             "scope": draft["taskBrief"].strip() or DEFAULT_BRIEF[draft["locale"]],
@@ -93,8 +105,14 @@ def configuration(directory, draft, materials, blocks):
             "output_tokens": default_output_tokens(route["model"]), "image_history_batches": 3,
             "max_candidates": 256,
             "limits": {"model_calls": 100, "tool_calls": 500, "seconds": 5400, "tokens": None, "time_budget_mode": "wall"}}
+    if revisions:
+        case["connection_revisions"] = revisions
+    if route["provider"] in custom:
+        entry = custom[route["provider"]]
+        case.update(context_tokens=entry["contextWindow"], output_tokens=entry["outputTokens"])
     if draft["workers"]:
-        case["worker"] = {"output_tokens": max(default_output_tokens(w["model"]) for w in draft["workers"])}
+        builtin_limits = [default_output_tokens(w["model"]) for w in draft["workers"] if w["provider"] not in custom]
+        case["worker"] = {"output_tokens": max(builtin_limits or [custom[w["provider"]]["outputTokens"] for w in draft["workers"]])}
     return {"schema_version": 1, "approval_required_before_launch": True, "maximum_seconds_per_case": 5400,
             "batch_id": directory.name, "input_root": str(directory / "inputs"),
             "run_root": str(directory), "cases": [case]}
@@ -118,7 +136,8 @@ def begin(root, revision, catalog):
             prepared = Path(staging) / "run"
             prepared.mkdir()
             materials, blocks = freeze(root, prepared, draft)
-            save_json(prepared / "case.json", configuration(directory, draft, materials, blocks))
+            save_json(prepared / "case.json", configuration(directory, draft, materials, blocks,
+                      connections={entry["provider"]: entry for entry in catalog}))
             started = {"id": identity, "status": "running", "revision": revision, "message": ""}
             save_json(prepared / "status.json", started)
             prepared.rename(directory)

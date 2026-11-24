@@ -14,6 +14,7 @@ from src.agent.runtime_configuration import (
 )
 from src.agent.bim_inputs import admitted_png_paths
 from src.agent_runtime.estimation import get_model_profile
+from src.agent_runtime.providers import is_custom_provider
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
 from src.agent_runtime.run_paths import resolve_run_output
 from . import launcher
@@ -56,25 +57,45 @@ def installed_executable(configured: str | None) -> Path:
     return executable
 
 
-def host_config(case, auth_dir):
+def host_config(case, auth_dir, *, resume_revisions=None):
     limits = case["limits"]
     coordinator_limits = {"wall_seconds": limits["seconds"], "model_calls": limits["model_calls"],
                           "tool_calls": limits["tool_calls"], "candidates": case["max_candidates"]}
     model = case["model"]
+    provider = case.get("provider", "chatgpt-subscription")
+    choices = case.get("workers") or []
+    selected = {p for p in (provider, *(r["provider"] for r in choices)) if is_custom_provider(p)}
+    revisions = case.get("connection_revisions", resume_revisions) or {}
+    if not isinstance(revisions, dict) or set(revisions) - selected:
+        raise ValueError("connection revisions must refer to selected custom model providers")
+    specs = {}
+    if selected:
+        from src.workbench.connections import custom_connection, custom_connections_directory, freeze_custom_connection
+        revisions = {p: revisions[p] if p in revisions else freeze_custom_connection(p) for p in sorted(selected)}
+        specs = {p: custom_connection(p, revision=r) for p, r in revisions.items()}
+    context_window = specs[provider]["context_window"] if provider in specs else get_model_profile(model, strict=True).context_window_tokens
     config = {"runtime": "dsh", "model": model, "reasoning_effort": "high",
               "image_kind": case["image_kind"], "floor_images": case.get("floor_plan_images"),
               "chatgpt_auth_dir": str(auth_dir), "limits": coordinator_limits,
               "dsh_executable": str(installed_executable(case.get("dsh_executable"))),
-              "context_window": case.get("context_tokens") or get_model_profile(model, strict=True).context_window_tokens,
+              "context_window": case.get("context_tokens") or context_window,
               "image_history_batches": case.get("image_history_batches")}
-    provider = case.get("provider", "chatgpt-subscription")
+    if specs:
+        config.update(connection_revisions=revisions, custom_directory=str(custom_connections_directory()))
+    if provider in specs:
+        config.update(provider=provider, output_tokens=specs[provider]["output_tokens"],
+                      base_url=specs[provider]["base_url"])
     if provider == "deepseek":
         config.update(provider=provider, output_tokens=case["output_tokens"])
     worker = orchestrator_worker(case)
     if worker is not None:
-        choices = case.get("workers")
+        default_output = case["output_tokens"]
+        if provider in specs and choices and "output_tokens" not in worker:
+            from src.agent_runtime.output_limits import default_output_tokens
+            default_output = max((default_output_tokens(r["model"]) for r in choices
+                                  if not is_custom_provider(r["provider"])), default=specs[provider]["output_tokens"])
         pool = {"model": choices[0]["model"] if choices else worker.get("model", model),
-                "output_tokens": worker.get("output_tokens", case["output_tokens"]),
+                "output_tokens": worker.get("output_tokens", default_output),
                 "reasoning_effort": worker.get("reasoning_effort", "high"),
                 "max_concurrent": worker.get("max_concurrent", 1)}
         if worker.get("background"):
@@ -115,14 +136,15 @@ def launch(case, *, resume=False):
     output = resolve_run_output(Path(case["output"]) if run_root else ROOT / case["output"],
                                 repository_root=ROOT, run_root=run_root)
     credentials = SubscriptionCredentials(Path(case["chatgpt_auth_dir"]) if case.get("chatgpt_auth_dir") else None)
-    config = host_config(case, credentials.directory)
+    frozen_config = launcher.read(output / "config.json") if resume else {}
+    config = host_config(case, credentials.directory, resume_revisions=frozen_config.get("connection_revisions"))
     primary = resolve_case_input(case)
     auxiliary, declaration = resolve_supplemental_inputs(case)
     mesh = primary if case["input_kind"] == "mesh" else None
     materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
     materials.update({key: case[key] for key in ("blocks", "locale") if key in case})
     if resume:
-        if launcher.read(output / "config.json") != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
+        if frozen_config != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
             raise ValueError("requested DSH configuration or task differs from the frozen run")
         verify_resume_inputs(launcher.read(output / "private/dsh/work/bim/inputs.json"), materials)
     elif output.exists():
@@ -137,7 +159,8 @@ def launch(case, *, resume=False):
         name = route["provider"]
         if name not in connections:
             connections[name] = model_connection(name, route["model"], auth_dir=credentials.directory,
-                                                 credentials_file=config.get("credentials_file"))
+                                                 credentials_file=config.get("credentials_file"),
+                                                 revision=config.get("connection_revisions", {}).get(name))
     subscription = connections.get("chatgpt-subscription")
     if subscription:
         catalog = {m.slug for m in asyncio.run(subscription.subscription.list_models())}

@@ -10,8 +10,11 @@ DISABLED = [
     'compaction-basic', 'llm-deepseek', 'llm-deepseek-account', 'session-telemetry-otel',
 ]
 def make_patch(base_url, model, image_directory=None, *, worker_args=None, context_window=1050000,
-               worker_wall_seconds=None, display_name="GPT Sol subscription relay"):
-    max_tokens=128000
+               worker_wall_seconds=None, display_name="GPT Sol subscription relay", max_tokens=128000):
+    # Keep classic profiles byte-identical, while quoting arbitrary catalog IDs as YAML scalars.
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", model) or display_name == "Custom model API":
+        model = json.dumps(model, ensure_ascii=False)
     profile = f"""- id: agent-default-model
   config:
     provider: siwc-relay

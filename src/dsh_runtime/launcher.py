@@ -14,6 +14,7 @@ import time
 from src.agent.runtime_entry import prepare_inputs
 from src.agent.runtime_tools import frozen_bim_client
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
+from src.agent_runtime.providers import is_custom_provider
 from . import relay
 from .profile import make_patch
 ROOT = Path(__file__).resolve().parents[2]
@@ -183,6 +184,9 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
                        '--model-calls', str(worker['model_calls']), '--tool-calls', str(worker['tool_calls'])]
         if routes:
             worker_args += ['--routes', json.dumps(routes)]
+        if config.get('connection_revisions'):
+            worker_args += ['--connection-revisions', json.dumps(config['connection_revisions']),
+                            '--custom-directory', config['custom_directory']]
         if worker_provider == 'deepseek' or any(r['provider'] == 'deepseek' for r in routes):
             if config.get('credentials_file'):
                 worker_args += ['--credentials-file', config['credentials_file']]
@@ -195,6 +199,8 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
             worker_args.append('--background')
     patch.write_text(make_patch(url, config['model'], images, worker_args=worker_args,
                                 context_window=config.get('context_window', 1050000),
+                                **({'display_name': 'Custom model API', 'max_tokens': config['output_tokens']}
+                                   if is_custom_provider(config.get('provider')) else {}),
                                 **({'display_name': 'DeepSeek official API'} if config.get('provider') == 'deepseek' else {}),
                                 worker_wall_seconds=config['limits']['wall_seconds'] if worker_args else None), encoding='utf-8')
     exe = Path(config['dsh_executable'])
@@ -318,10 +324,12 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
     if not policy_file.exists():
         relay.save(policy_file, delivery_policy)
     if credential is None:
-        if config.get('provider') == 'deepseek':
+        if config.get('provider') == 'deepseek' or is_custom_provider(config.get('provider')):
             from .model_routes import ApiCredential, model_connection
-            credential = ApiCredential(model_connection('deepseek', config['model'],
-                                        credentials_file=config.get('credentials_file')))
+            provider = config['provider']
+            credential = ApiCredential(model_connection(provider, config['model'], credentials_file=config.get('credentials_file'),
+                                       custom_directory=config.get('custom_directory'),
+                                       revision=config.get('connection_revisions', {}).get(provider)))
         else:
             credential = (SubscriptionCredentials.legacy_project_registration() if config.get('subscription_store') == 'legacy-project'
                           else SubscriptionCredentials(Path(config['chatgpt_auth_dir'])) if config.get('chatgpt_auth_dir')
@@ -334,6 +342,8 @@ def run(case, resume=False, *, credential=None, host=execute_host, image_history
         config.get('minimum_floor_elevations', 1),
         image_history=images,
         **({'provider': 'deepseek', 'output_tokens': config['output_tokens']} if config.get('provider') == 'deepseek' else {}),
+        **({'provider': config['provider'], 'output_tokens': config['output_tokens']}
+           if is_custom_provider(config.get('provider')) else {}),
     )
     serving = False
     try:

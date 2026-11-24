@@ -382,10 +382,11 @@ class MeshWorkerTools:
             "low_output_limit_reason": self.low_output_limit_reason,
             "pricing": self.pricing.model_dump(mode="json") if self.pricing is not None else None}
 
-    def _token_budget_contract(self):
+    def _token_budget_contract(self, worker=None):
         # Match Runtime's configured output allowance without changing the
         # immutable configuration or lowering the requested model parameters.
-        output = self.parameters.get("max_tokens", self.parameters.get("max_completion_tokens"))
+        parameters = self.worker_profiles[worker]["parameters"] if worker else self.parameters
+        output = parameters.get("max_tokens", parameters.get("max_completion_tokens"))
         minimum = output + 1 if type(output) is int and output > 0 else None
         return {"output_token_limit": output, "minimum_task_tokens": minimum,
             "minimum_task_tokens_basis": "Necessary lower bound only: configured output allowance plus "
@@ -393,8 +394,8 @@ class MeshWorkerTools:
                 "can require more; the shared runtime still checks and reserves the full request.",
             "tokens_meaning": _TOKEN_BUDGET_MEANING}
 
-    def _new_task_budget_rejection(self, task):
-        contract = self._token_budget_contract()
+    def _new_task_budget_rejection(self, task, worker=None):
+        contract = self._token_budget_contract(worker)
         tokens = task["budget"].get("tokens")
         minimum = contract["minimum_task_tokens"]
         if tokens is None or minimum is None or tokens >= minimum:
@@ -476,7 +477,15 @@ class MeshWorkerTools:
         else:
             if child.events:
                 raise ValueError("task ID belongs to a different existing task")
-            rejected = self._new_task_budget_rejection(task)
+            worker = task.get("worker") if self.worker_profiles else None
+            if self.worker_profiles:
+                if worker is None:
+                    count = sum(ref.source_id == "mesh-worker-admission" for event in self.store.events
+                                for ref in event.source_refs)
+                    worker = tuple(self.worker_profiles)[count % len(self.worker_profiles)]
+                elif worker not in self.worker_profiles:
+                    raise ValueError("unknown model for this worker pool")
+            rejected = self._new_task_budget_rejection(task, worker)
             if rejected is not None:
                 return rejected
             now = time.time()
@@ -489,14 +498,6 @@ class MeshWorkerTools:
                 return {"task_id": task["task_id"], "status": "root_time_budget_exhausted", "result": None}
             timing = {"started_epoch": now, "deadline_epoch": deadline,
                       "time_budget_seconds": deadline - now if deadline is not None else None}
-            worker = task.get("worker")
-            if self.worker_profiles:
-                if worker is None:
-                    count = sum(ref.source_id == "mesh-worker-admission" for event in self.store.events
-                                for ref in event.source_refs)
-                    worker = tuple(self.worker_profiles)[count % len(self.worker_profiles)]
-                elif worker not in self.worker_profiles:
-                    raise ValueError("unknown model for this worker pool")
             packet = prepare_mesh_worker_packet(self.run_directory, child.task_directory / "bim",
                 task_id=task["task_id"], question=task["question"], notes=task.get("notes", ()),
                 candidate=task.get("candidate"), observation_ids=task.get("observation_ids", ()), timing=timing,
@@ -544,6 +545,8 @@ class MeshWorkerTools:
         profile = self.worker_profiles.get(record.get("worker"), {})
         route = profile.get("route", self.route)
         parameters = profile.get("parameters", self.parameters)
+        if route.get("context_window"):
+            limits = limits.model_copy(update={"context_tokens": route["context_window"]})
         model = profile["route"]["model"] if profile else self.model
         adapter_factory = profile.get("adapter_factory", self.adapter_factory)
         async with AsyncExitStack() as stack:

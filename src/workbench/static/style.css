@@ -128,6 +128,24 @@ dialog::backdrop { background: rgb(18 27 43 / .36); }
 .connection-head h3, .model-group h3 { font-size: 16px; }
 .connection .hint { margin-bottom: 7px; }
 .connection .dialog-actions { justify-content: flex-start; margin-top: 10px; }
+.settings-footer { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.connection-head h3, .connection .endpoint { overflow-wrap: anywhere; }
+.endpoint { font-family: "IBM Plex Mono", Consolas, monospace; }
+.delete-connection { color: var(--alert); font-size: 13px; }
+.delete-connection i { width: 15px; height: 15px; }
+.dialog-note:empty { display: none; }
+.connection-form { display: grid; gap: 12px; }
+.connection-form input[type=url], .connection-form input[type=number] {
+  width: 100%; padding: 9px 12px; color: var(--ink); border: 1px solid #bac3d0; background: var(--paper);
+}
+.connection-form .form-hint { margin: -6px 0 0; }
+.connection-form .clear-key { padding: 0; margin-top: -6px; }
+.connection-form .dialog-note, .connection-form .dialog-actions { margin: 0; }
+.connection-form .dialog-field { font-weight: 580; }
+.connection-form .dialog-field :is(input,select,textarea) { font-weight: 400; }
+.connection-form input[readonly] { background: #f5f7fa; color: var(--muted); }
+.advanced-fields summary { cursor: pointer; font-weight: 580; }
+.parameter-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 10px; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; cursor: pointer; overflow-wrap: anywhere; }
 .check-row input { accent-color: var(--accent); margin-top: 2px; }
 .preview-dialog { width: min(860px,calc(100% - 30px)); }

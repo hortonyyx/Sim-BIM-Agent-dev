@@ -6,6 +6,14 @@
       "group": "targeted",
       "reason": "Local web submission, ordered material copies, immutable run snapshots, model selections and locale"
     },
+    "tests/test_workbench_custom_connections.py": {
+      "group": "targeted",
+      "reason": "Custom provider management, authenticated model discovery and protected immutable connection revisions"
+    },
+    "tests/test_workbench_custom_protocol.py": {
+      "group": "targeted",
+      "reason": "Custom Chat Completions transport, vision messages, tool calls and worker routing"
+    },
     "tests/test_orchestrator_product.py": {
       "group": "targeted",
       "reason": "Unified material admission, host choice, worker routing and shared budgets"

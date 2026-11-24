@@ -19,6 +19,7 @@ import time
 import httpx
 from src.agent_runtime.responses import build_responses_body, ENDPOINT, TOOL_NAMESPACE
 from src.agent_runtime.openai_subscription import SubscriptionCredentials
+from src.agent_runtime.providers import is_custom_provider
 from .handoff import attest_response_input
 from .transport import PooledTransport, classify_failure, public_error, response_ids
 MODEL = 'gpt-6.1-sol'
@@ -57,7 +58,8 @@ def clean(value):
             }:
                 result[key] = '[redacted]'
             elif (
-                key in {'encrypted_content', 'reasoning_content', 'signature', 'reasoning_text'}
+                (key in {'encrypted_content', 'reasoning_content', 'signature', 'reasoning_text'} or
+                 key == 'reasoning' and value.get('role') == 'assistant')
                 and item is not None
             ):
                 data = encoded(item)
@@ -190,7 +192,7 @@ class Session:
             tools=tools,
             parameters={'max_tokens': 128000, 'reasoning_effort': 'high'},
         )
-        if provider == "deepseek":
+        if provider == "deepseek" or is_custom_provider(provider):
             # DeepSeek supports flat function definitions and full reasoning items
             # in stateless history. The ChatGPT-only namespace and include fields
             # would hide the callable tools from DeepSeek.
@@ -541,6 +543,11 @@ class Handler(BaseHTTPRequestHandler):
                 save(WIRE / f'{turn:02}-projection.json', projection)
                 audit('image_history_projection', turn=turn, **projection)
             save(WIRE / f'{turn:02}-out.json.gz', body, compressed=True)
+            wire_body = body
+            if self.server.chat_output_tokens:
+                from .chat_protocol import chat_request
+                wire_body = chat_request(body, self.server.chat_output_tokens)
+                save(WIRE / f'{turn:02}-chat-out.json.gz', wire_body, compressed=True)
             left = remaining(deadline)
             state.requests = turn
             self.server.transport.turn = turn
@@ -556,18 +563,20 @@ class Handler(BaseHTTPRequestHandler):
                 turn=turn,
                 model=MODEL,
                 body_sha256=digest(encoded(body)),
-                bytes=len(encoded(body)),
+                bytes=len(encoded(wire_body)),
+                **({'wire_sha256': digest(encoded(wire_body)), 'provider': self.server.provider}
+                   if self.server.chat_output_tokens else {}),
                 upstream=self.server.endpoint,
             )
             started = time.time()
             with self.server.transport.stream(
                 'POST',
                 self.server.endpoint,
-                content=encoded(body),
+                content=encoded(wire_body),
                 timeout=httpx.Timeout(left, connect=min(20, left)),
                 headers={
-                    'Authorization': 'Bearer ' + token,
-                    'Accept': 'text/event-stream',
+                    **({'Authorization': 'Bearer ' + token} if token else {}),
+                    'Accept': 'application/json' if self.server.chat_output_tokens else 'text/event-stream',
                     'Content-Type': 'application/json',
                 },
             ) as r:
@@ -603,7 +612,14 @@ class Handler(BaseHTTPRequestHandler):
                 proposals = set()
                 done = {}
                 with gzip.open(WIRE / f'{turn:02}-events.jsonl.gz', 'wb', compresslevel=1) as log:
-                    for name, data in provider_events(r.iter_lines()):
+                    if self.server.chat_output_tokens:
+                        from .chat_protocol import chat_events
+                        reply = json.loads(r.read())
+                        save(WIRE / f'{turn:02}-chat-reply.json', reply)
+                        events = chat_events(reply, MODEL, turn)
+                    else:
+                        events = provider_events(r.iter_lines())
+                    for name, data in events:
                         remaining(deadline)
                         if data == '[DONE]':
                             self.wfile.write(b'data: [DONE]\n\n')
@@ -785,6 +801,8 @@ def publish_budget(state):
 def create_server(case, control, model, credential, minimum_floors=1, image_history=None, *,
                   provider="chatgpt-subscription", output_tokens=None):
     endpoints = {"chatgpt-subscription": ENDPOINT, "deepseek": "https://api.deepseek.com/responses"}
+    if is_custom_provider(provider) and credential.descriptor.route_id == provider:
+        endpoints[provider] = credential.descriptor.base_url.rstrip("/") + "/chat/completions"
     if provider not in endpoints:
         raise ValueError("unsupported DSH relay provider")
     configure(case, control, model)
@@ -794,6 +812,8 @@ def create_server(case, control, model, credential, minimum_floors=1, image_hist
                            output_tokens=output_tokens)
     server.mutex = threading.Lock()
     server.credential = credential
+    server.provider = provider
+    server.chat_output_tokens = output_tokens if is_custom_provider(provider) else None
     server.minimum_floors = minimum_floors
     server.endpoint = endpoints[provider]
     server.transport = PooledTransport(server.endpoint, audit)

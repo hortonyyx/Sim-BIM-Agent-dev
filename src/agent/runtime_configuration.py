@@ -20,7 +20,7 @@ from src.agent_runtime.output_limits import validate_output_limit
 from src.agent_runtime.accounting import require_cny_price_schedule
 from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.run_paths import resolve_run_output
-from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, SUBSCRIPTION_PROVIDERS, LIVE_PROVIDERS, provider_parameters, validate_provider_model, is_deepseek_route
+from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, SUBSCRIPTION_PROVIDERS, LIVE_PROVIDERS, provider_parameters, validate_provider_model, is_deepseek_route, is_custom_provider
 from src.agent.runtime_roles.config import load_roles
 
 
@@ -92,14 +92,19 @@ def orchestrator_worker(case: dict) -> dict | None:
         if not isinstance(route, dict) or set(route) != {"provider", "model"}:
             raise ValueError("each worker choice needs a provider and model")
         provider, model = route["provider"], route["model"]
-        if choices and provider not in (CHATGPT_SUBSCRIPTION, "deepseek"):
+        if choices and provider not in (CHATGPT_SUBSCRIPTION, "deepseek") and not is_custom_provider(provider):
             raise ValueError("worker provider is unavailable on this DSH connection")
         if not isinstance(model, str) or not model.strip() or (provider, model) in seen:
             raise ValueError("each worker model must be a distinct nonempty model ID")
         seen.add((provider, model))
         validate_provider_model(provider, model)
-        get_model_profile(model, strict=True)
-        validate_output_limit(model, output, reason=case.get("low_output_limit_reason"))
+        if not is_custom_provider(provider):
+            get_model_profile(model, strict=True)
+            # The custom coordinator's output cap belongs to its own model.
+            if is_custom_provider(case["provider"]) and "output_tokens" not in worker:
+                from src.agent_runtime.output_limits import default_output_tokens
+                output = default_output_tokens(model)
+            validate_output_limit(model, output, reason=case.get("low_output_limit_reason"))
         provider_parameters(provider, model=model, output_tokens=output, temperature=case.get("temperature"),
                             thinking=case.get("thinking", True),
                             reasoning_effort=worker.get("reasoning_effort", case.get("reasoning_effort")))
@@ -119,7 +124,8 @@ def validate_host(case: dict) -> None:
             raise ValueError("dsh_executable requires the dsh runtime")
         return
     limits = case["limits"]
-    if case["provider"] not in (CHATGPT_SUBSCRIPTION, "deepseek") or case.get("reasoning_effort", "high") != "high":
+    if (case["provider"] not in (CHATGPT_SUBSCRIPTION, "deepseek") and not is_custom_provider(case["provider"])
+            or case.get("reasoning_effort", "high") != "high"):
         raise ValueError("the DSH product route requires ChatGPT subscription or official DeepSeek with high reasoning effort")
     if limits.get("tokens") is not None or limits.get("money_cny") is not None:
         raise ValueError("DSH supports model call, tool call and wall time budgets; set tokens to null")
@@ -322,7 +328,8 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
             raise ValueError("unsupported reasoning_history")
         if mode not in NATIVE_MODES and case.get("reasoning_history", "all") != "all":
             raise ValueError("reasoning_history currently supports single_model only")
-        if case.get("provider") not in LIVE_PROVIDERS:
+        custom = is_custom_provider(case["provider"]) and mode == "orchestrator" and case.get("runtime", "dsh") == "dsh"
+        if case.get("provider") not in LIVE_PROVIDERS and not custom:
             raise ValueError("live configuration requires a reviewed provider")
         if is_deepseek_route(case["provider"], case.get("model")) and case.get("reasoning_history", "all") != "all":
             raise ValueError("DeepSeek requires reasoning_history=all")
@@ -337,10 +344,12 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         provider_parameters(case["provider"], model=model, output_tokens=case.get("output_tokens"),
             temperature=case.get("temperature"), thinking=case.get("thinking", True),
             reasoning_effort=case.get("reasoning_effort"))
-        get_model_profile(model, strict=True)
+        if not custom:
+            get_model_profile(model, strict=True)
         if low_output_limit_reason is not None:
             case["low_output_limit_reason"] = low_output_limit_reason
-        validate_output_limit(model, case.get("output_tokens"), reason=case.get("low_output_limit_reason"))
+        if not custom:
+            validate_output_limit(model, case.get("output_tokens"), reason=case.get("low_output_limit_reason"))
         orchestrator_worker(case)
         if role_configurations is not None:
             coordinator = role_configurations["coordinator"]
@@ -395,7 +404,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
             raise ValueError("floor_plan_images must use admitted input filenames")
         providers = ({role.provider for role in role_configurations.values()}
                      if role_configurations is not None else {case["provider"]})
-        uses_workbench_key = case.get("runtime") == "dsh" and case["provider"] == "deepseek"
+        uses_workbench_key = case.get("runtime") == "dsh" and (case["provider"] == "deepseek" or custom)
         if providers != {CHATGPT_SUBSCRIPTION} and not uses_workbench_key and (
                 not isinstance(case.get("credentials_file"), str) or not case["credentials_file"].strip()):
             raise ValueError("each case requires an explicit read-only credentials_file")

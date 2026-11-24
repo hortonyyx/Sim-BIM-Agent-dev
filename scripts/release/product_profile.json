@@ -16,6 +16,7 @@
   "resources": [
     "src/workbench/static/index.html",
     "src/workbench/static/app.js",
+    "src/workbench/static/connection-form.js",
     "src/workbench/static/style.css",
     "src/workbench/static/language.js",
     "src/workbench/static/dom.js",

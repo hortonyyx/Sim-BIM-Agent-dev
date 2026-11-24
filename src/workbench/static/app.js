@@ -1,12 +1,14 @@
 import { byId as $, element as el, icon, button } from './dom.js';
 import { tr, totals, catalogCount } from './language.js';
 import { previewAsset } from './preview.js';
+import { connectionForm } from './connection-form.js';
 
 const state = { workspace: null, locale: 'zh-CN', project: {blocks:[],revision:0}, connections: [], run: null };
 let fields = {taskBrief:'',coordinator:null,workers:[]};
 let draft = [], editing = null, saveTimer, runTimer, pollToken = 0, busy = false, loaded = false;
 let work = Promise.resolve(), previewController, dialogType, drag = null;
 let connectionsTimer, connectionsEpoch=0;
+const pendingConnections=new Set();
 const t = key=>tr(state.locale,key);
 const same = (a,b)=>JSON.stringify(a) === JSON.stringify(b);
 const modelKey = selection=>selection ? JSON.stringify([selection.provider,selection.model]) : '';
@@ -18,6 +20,7 @@ const dirtyBlock = ()=>Boolean(editing || draft.length || $('caption').value.tri
 const fmtName = a=>a.name ?? a.id;
 const allModels = ()=>state.connections.flatMap(c=>(c.models ?? []).map(m=>({provider:c.provider,model:m.id,label:fmtName(m),connection:c})));
 const mark = (word, value)=>word+' · '+value;
+const connectionStatus = conn=>t(conn.custom ? 'savedConnection' : conn.connected ? 'connected' : 'disconnected');
 
 async function request(path, data) {
   const options = data === undefined ? {} : data instanceof FormData ? {method:'POST',body:data} :
@@ -158,8 +161,9 @@ function watchConnections(force=false) {
         document.querySelectorAll('.connection').forEach(row=>{
           const c=state.connections.find(conn=>conn.provider===row.dataset.provider);
           if (!c) return;
-          row.querySelector('.count').textContent=t(c.connected?'connected':'disconnected');
+          row.querySelector('.count').textContent=connectionStatus(c);
           row.querySelector('.catalog-count').textContent=c.busy?t('statusPending'):catalogCount(state.locale,c.models?.length ?? 0);
+          row.querySelectorAll('.dialog-actions button').forEach(b=>b.disabled=Boolean(c.busy || pendingConnections.has(c.provider)));
           const note=row.querySelector('.dialog-note');
           if (c.message) {note.textContent=c.message;note.classList.add('error');}
           else if (!c.busy && c.connected) {note.textContent='';note.classList.remove('error');}
@@ -181,6 +185,10 @@ async function saveProject(blocks, force = false) {
 function queueSave() {
   clearTimeout(saveTimer);
   if (state.workspace) saveTimer=setTimeout(()=>enqueue(()=>saveProject()).catch(()=>{}),550);
+}
+function saveModelSelection() {
+  renderModels();renderRun();
+  if (state.workspace) enqueue(()=>saveProject()).catch(()=>{});
 }
 function newDialog(type,title) {
   if ($('dialog').open) $('dialog').close();
@@ -223,22 +231,49 @@ function workspaceDialog() {
 }
 function settingsDialog() {
   const root=newDialog('settings',t('settings'));
+  const isSettingsOpen=()=>$('dialog').open && (dialogType==='settings' || dialogType==='connection-form');
+  async function changeConnection(payload) {
+    let result;
+    if (payload.provider) pendingConnections.add(payload.provider);
+    try {result=await request('connections',payload);}
+    catch (error) {
+      if (error.status===409) {
+        const latest=await request('state');
+        state.connections=latest.connections;renderModels();renderRun();watchConnections(latest.busy);
+      }
+      throw error;
+    } finally {if (payload.provider) pendingConnections.delete(payload.provider);}
+    if (result.connections) state.connections=result.connections;
+    renderModels();renderRun();watchConnections(Boolean(result.busy || payload.action==='login'));
+    return result;
+  }
+  function editConnection(connection) {
+    dialogType='connection-form'; $('dialog-title').textContent=t(connection?'editApi':'addApi');
+    connectionForm(root,{
+      connection,t,cancel:display,
+      save:async payload=>{
+        const form=root.querySelector('form');
+        await changeConnection(payload);
+        if (isSettingsOpen() && root.contains(form)) display();
+      }
+    });
+  }
   function display() {
+    dialogType='settings';$('dialog-title').textContent=t('settings');
     root.replaceChildren();
     for (const conn of state.connections) {
       const box=el('section','connection'), head=el('div','connection-head'), note=el('p','dialog-note');
-      head.append(el('h3','',conn.label),el('span','count',t(conn.connected?'connected':'disconnected'))); box.append(head);
+      head.append(el('h3','',conn.label),el('span','count',connectionStatus(conn))); box.append(head);
       const oauth=conn.authType==='oauth' || conn.provider==='chatgpt-subscription';
-      if (!oauth) box.append(el('p','hint',t('usage')));
+      if (conn.custom) box.append(el('p','hint endpoint',conn.baseUrl));
+      else if (!oauth) box.append(el('p','hint',t('usage')));
       box.append(el('p','hint catalog-count',conn.busy ? t('statusPending') : catalogCount(state.locale,conn.models?.length ?? 0)));
       const actions=el('div','dialog-actions');
       async function connectionAction(action,extra={}) {
         actions.querySelectorAll('button').forEach(b=>b.disabled=true); note.textContent=t('statusPending'); note.classList.remove('error');
         try {
-          const result=await request('connections',{provider:conn.provider,action,...extra});
-          if (result.connections) state.connections=result.connections;
-          renderModels(); renderRun(); watchConnections(Boolean(result.busy || action==='login'));
-          if (dialogType!=='settings' || !$('dialog').open) return;
+          const result=await changeConnection({provider:conn.provider,action,...extra});
+          if (!isSettingsOpen() || dialogType!=='settings') return;
           display();
           const target=[...root.querySelectorAll('.connection')].find(e=>e.dataset.provider===conn.provider);
           if (target && (result.message || action==='login')) target.querySelector('.dialog-note').textContent=action==='login' ? t('loginLaunched') : result.message;
@@ -246,7 +281,9 @@ function settingsDialog() {
         finally {actions.querySelectorAll('button').forEach(b=>b.disabled=false);}
       }
       box.dataset.provider=conn.provider;
-      if (oauth) {
+      if (conn.custom) {
+        actions.append(button(t('edit'),()=>editConnection(conn),{glyph:'edit'}));
+      } else if (oauth) {
         actions.append(button(t('connect'),()=>connectionAction('login')));
       } else {
         const label=el('label','dialog-field',t(conn.connected?'replaceKey':'key')),input=el('input');
@@ -257,9 +294,16 @@ function settingsDialog() {
         }));
       }
       if (conn.message) {note.textContent=conn.message; note.classList.add('error');}
-      actions.append(button(t('refresh'),()=>connectionAction('refresh'),{style:'button accent-outline'})); box.append(actions,note);root.append(box);
+      actions.append(button(t('refresh'),()=>connectionAction('refresh'),{style:'button accent-outline'}));
+      if (conn.custom) actions.append(button(t('deleteApi'),()=>{
+        if (window.confirm(mark(t('deleteApiConfirm'),conn.label))) connectionAction('delete',{revision:conn.revision});
+      },{glyph:'trash',style:'text-button delete-connection'}));
+      if (conn.busy || pendingConnections.has(conn.provider)) actions.querySelectorAll('button').forEach(b=>b.disabled=true);
+      box.append(actions,note);root.append(box);
     }
     if (!state.connections.length) root.append(el('p','hint',t('browserOffline')));
+    const footer=el('div','settings-footer');
+    footer.append(button(t('addApi'),()=>editConnection(null),{glyph:'plus',style:'button accent-outline'}));root.append(footer);
   }
   display();
 }
@@ -279,7 +323,7 @@ function workerDialog() {
   }
   for (const [key,m] of selected) if (!known.has(key)) option(root,key,mark(m.model,t('selectionMissing')));
   const actions=el('div','dialog-actions');
-  actions.append(button(t('settings'),settingsDialog),button(t('done'),()=>{fields.workers=[...selected.values()];queueSave();$('dialog').close();renderModels();renderRun();},{style:'button primary'}));root.append(actions);
+  actions.append(button(t('settings'),settingsDialog),button(t('done'),()=>{fields.workers=[...selected.values()];$('dialog').close();saveModelSelection();},{style:'button primary'}));root.append(actions);
 }
 
 function resetDraft() {
@@ -411,7 +455,7 @@ function initialize() {
   $('settings').onclick=settingsDialog; $('workspace').onclick=workspaceDialog; $('workers').onclick=workerDialog;
   $('coordinator').onchange=e=>{
     if (e.target.value==='settings') {renderModels();settingsDialog();return;}
-    fields.coordinator=e.target.value ? parseModel(e.target.value) : null;queueSave();renderRun();
+    fields.coordinator=e.target.value ? parseModel(e.target.value) : null;saveModelSelection();
   };
   document.querySelectorAll('[data-lang]').forEach(b=>{b.onclick=()=>act(()=>setLanguage(b.dataset.lang));});
   $('dialog-close').onclick=()=>$('dialog').close();

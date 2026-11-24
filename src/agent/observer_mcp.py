@@ -23,16 +23,26 @@ from src.agent_runtime.connections import validate_connection_model
 from src.dsh_runtime.model_routes import model_connection
 from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.output_limits import validate_output_limit
-from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, provider_parameters
+from src.agent_runtime.providers import CHATGPT_SUBSCRIPTION, provider_parameters, is_custom_provider
 from src.agent_runtime.store import EventStore
 from src.harness_contracts import RunLifecyclePayload
 
 
 def worker_profile(args, provider, model):
-    runtime_model_profile(provider, model)
-    validate_output_limit(model if provider != "scripted" else "scripted-model", args.output_tokens)
+    custom = is_custom_provider(provider)
+    revision = args.connection_revisions.get(provider)
+    output = args.output_tokens
+    if custom:
+        from src.workbench.connections import custom_connection
+        if not revision:
+            raise ValueError("custom worker requires a frozen connection")
+        spec = custom_connection(provider, directory=args.custom_directory, revision=revision)
+        output = spec["output_tokens"]
+    else:
+        runtime_model_profile(provider, model)
+        validate_output_limit(model if provider != "scripted" else "scripted-model", output)
     parameters = provider_parameters(provider, model=model, reasoning_effort=args.reasoning_effort,
-                                     output_tokens=args.output_tokens)
+                                     output_tokens=output)
     if provider == "scripted":
         if args.script is None:
             raise ValueError("scripted workers require --script with per-task replies")
@@ -49,8 +59,11 @@ def worker_profile(args, provider, model):
             raise ValueError("--script requires the scripted provider")
         auth_directory = args.chatgpt_auth_dir or os.environ.get("SIM_BIM_CHATGPT_AUTH_DIR")
         connection = model_connection(provider, model, auth_dir=auth_directory,
-                                      credentials_file=args.credentials_file, protected_key=args.protected_key)
+                                      credentials_file=args.credentials_file, protected_key=args.protected_key,
+                                      custom_directory=args.custom_directory, revision=revision)
         route = connection.descriptor.model_route(model)
+        if custom:
+            route.update(connection_revision=revision, context_window=spec["context_window"])
         catalog_lock = asyncio.Lock()
         verified = False
 
@@ -146,7 +159,9 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", required=True, type=Path, help="admitted parent BIM workspace")
     p.add_argument("--store", required=True, type=Path, help="persistent worker-pool journal directory")
-    p.add_argument("--provider", choices=(CHATGPT_SUBSCRIPTION, "deepseek", "scripted"), default=CHATGPT_SUBSCRIPTION)
+    p.add_argument("--provider", default=CHATGPT_SUBSCRIPTION)
+    p.add_argument("--custom-directory", type=Path)
+    p.add_argument("--connection-revisions", type=json.loads, default={})
     p.add_argument("--model", required=True)
     p.add_argument("--chatgpt-auth-dir", type=Path)
     p.add_argument("--routes", type=json.loads, help="ordered model choices frozen by the launcher")

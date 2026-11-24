@@ -204,7 +204,8 @@ class Runtime:
                 or self.reconnect_consumed_before_seconds < 0):
             raise ValueError("inherited reconnect consumption must be finite and nonnegative")
         validate_output_limit(self.model, self.parameters.get("max_tokens",
-            self.parameters.get("max_completion_tokens")), reason=self.low_output_limit_reason)
+            self.parameters.get("max_completion_tokens")), reason=self.low_output_limit_reason,
+            profile=self._custom_profile())
         self.started = time.monotonic()
         now = time.time()
         self.started_epoch = now if self.start_epoch is None else self.start_epoch
@@ -489,7 +490,7 @@ class Runtime:
         self.cny_pricing = (require_cny_price_schedule(self.model,
             route_id=self.versions.remote_model.route_id)
             if self.store.budget_limit.money_cny is not None or self.limits.money_cny is not None else None)
-        profile_minimum = get_model_profile(self.model).recommended_min_output_tokens or 1
+        profile_minimum = (self._custom_profile() or get_model_profile(self.model)).recommended_min_output_tokens or 1
         minimum = self.limits.min_output_tokens
         if self.low_output_limit_reason is None:
             minimum = max(minimum, profile_minimum)
@@ -658,11 +659,18 @@ class Runtime:
             self._context_calibration_cursor = event.sequence
         return self._context_calibration
 
+    def _custom_profile(self):
+        from .providers import is_custom_provider
+        if is_custom_provider(self.versions.remote_model.route_id):
+            from .estimation import custom_chat_profile
+            return custom_chat_profile(self.model)
+        return None
+
     def _effective_model_profile(self):
         if self.versions.remote_model.route_id == "opencode-go":
             from .opencode_go import model_profile
             return model_profile(self.model)
-        return get_model_profile(self.model, strict=self.strict_model_profile)
+        return self._custom_profile() or get_model_profile(self.model, strict=self.strict_model_profile)
 
     def _context_output_headroom(self):
         if self.versions.remote_model.route_id != "paratera":
@@ -727,7 +735,7 @@ class Runtime:
         estimate = estimate_chat_request({"model": self.model,
                 "messages": (messages if self.versions.remote_model.route_id == "glm-subscription-anthropic"
                     else reasoning_history_messages(messages, self.reasoning_history, sources)),
-                "tools": self.specs, **self.parameters},
+                "tools": self.specs, **self.parameters}, profile=self._custom_profile(),
                 strict=self.strict_model_profile)
         # Shared-window compaction compares input occupancy with an input
         # threshold. A budget upper bound is not a context occupancy estimate.
@@ -762,7 +770,7 @@ class Runtime:
             messages=messages, message_sources=sources, tools=tools,
             tool_source=self.tool_source, parameters=parameters, versions=self.versions,
             image_originals=self.originals, reasoning_history=self.reasoning_history,
-            strict_model_profile=self.strict_model_profile))
+            strict_model_profile=self.strict_model_profile, model_profile=self._custom_profile()))
 
     async def _model_call(self, messages, sources, *, purpose, tools, context_event_id=None):
         parameters = dict(self.parameters)
@@ -2494,7 +2502,7 @@ class Runtime:
             "agent_version": self.versions.agent_version.identifier if self.versions.agent_version else None,
             "output_limit_policy": validate_output_limit(self.model,
                 self.parameters.get("max_tokens", self.parameters.get("max_completion_tokens")),
-                reason=self.low_output_limit_reason),
+                reason=self.low_output_limit_reason, profile=self._custom_profile()),
             **({"subscription_output_policy": {
                 "local_reservation_tokens": self.parameters["max_tokens"],
                 "service_output_cap": None, "enforcement": "local_reservation_only",

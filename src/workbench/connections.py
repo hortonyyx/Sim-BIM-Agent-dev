@@ -13,6 +13,10 @@ from src.agent_runtime.estimation import get_model_profile
 from src.agent_runtime.openai_subscription import SubscriptionCredentials, _atomic_write, _default_protector
 from src.agent_runtime.providers import validate_provider_model
 from .storage import ROOT, InputError, app_data, read_json, save_json
+from .custom_connections import (
+    custom_catalog, custom_connection, custom_connections_directory, delete_custom,
+    freeze_custom_connection, is_custom_provider, refresh_custom, save_custom,
+)
 
 PROVIDERS = {"chatgpt-subscription": ("ChatGPT", "oauth"), "deepseek": ("DeepSeek API", "apiKey")}
 
@@ -83,10 +87,42 @@ class Connections:
                      "connected": self.configured(provider) and provider in self.models,
                      "models": self.models.get(provider, []), "busy": provider in self.busy,
                      "message": self.errors.get(provider, {}).get(locale, "")}
-                    for provider, (label, auth) in PROVIDERS.items()]
+                    for provider, (label, auth) in PROVIDERS.items()] + custom_catalog(locale, self.busy)
+
+    def manage(self, body):
+        """Apply an action from the local settings form; return state via view()."""
+        provider = body.get("provider")
+        action = body.get("action", "refresh")
+        if action == "create":
+            provider, revision = save_custom(body)
+            return self._refresh_custom(provider, revision)
+        if is_custom_provider(provider):
+            if action == "update":
+                return self._refresh_custom(provider, changes=body)
+            if action == "delete":
+                return delete_custom(provider, body.get("revision"))
+            if action == "refresh":
+                return self._refresh_custom(provider, body.get("revision"))
+            raise InputError("无效的连接操作。", "Invalid connection action.")
+        return self.refresh(provider, action, body.get("apiKey"))
+
+    def _refresh_custom(self, provider, revision=None, *, changes=None):
+        with self.guard:
+            if provider in self.busy:
+                raise InputError("正在更新连接。", "The connection is being updated.", 409)
+            self.busy.add(provider)
+        try:
+            if changes is not None:
+                _, revision = save_custom(changes, provider=provider)
+            refresh_custom(provider, revision)
+        finally:
+            with self.guard:
+                self.busy.discard(provider)
 
     def refresh(self, provider, action="refresh", api_key=None):
-        if provider not in PROVIDERS or action not in {"refresh", "login", "configure"}:
+        if action == "refresh" and is_custom_provider(provider):
+            return self._refresh_custom(provider)
+        if not isinstance(provider, str) or provider not in PROVIDERS or action not in ("refresh", "login", "configure"):
             raise InputError("无效的连接操作。", "Invalid connection action.")
         if (action == "login" and provider != "chatgpt-subscription") or (action == "configure" and provider != "deepseek"):
             raise InputError("此连接不支持该操作。", "This action is unavailable for this connection.")
@@ -128,11 +164,12 @@ class Connections:
             fetch()
 
     def warm(self):
-        for provider in PROVIDERS:
-            if self.configured(provider):
-                def refresh(p=provider):
-                    try:
-                        self.refresh(p)
-                    except InputError:
-                        pass
-                threading.Thread(target=refresh, daemon=True).start()
+        providers = [provider for provider in PROVIDERS if self.configured(provider)]
+        providers += [row["provider"] for row in custom_catalog("en", ())]
+        for provider in providers:
+            def refresh(p=provider):
+                try:
+                    self.refresh(p)
+                except InputError:
+                    pass
+            threading.Thread(target=refresh, daemon=True).start()

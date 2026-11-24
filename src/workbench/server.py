@@ -164,7 +164,7 @@ def create_app(workbench=None, *, warm=True):
             project = await run_in_threadpool(update_project, service.root(body["workspace"]), body)
             response = {"project": client_project(project)}
         elif action == "connections":
-            await run_in_threadpool(service.connections.refresh, body.get("provider"), body.get("action"), body.get("apiKey"))
+            await run_in_threadpool(service.connections.manage, body)
             response = {"connections": service.connections.view(service.prefs["locale"])}
         elif action == "runs":
             result = await run_in_threadpool(begin, service.root(body["workspace"]), body.get("revision"),
