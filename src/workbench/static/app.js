@@ -476,10 +476,17 @@ function initialize() {
   $('task-brief').oninput=e=>{fields.taskBrief=e.target.value;queueSave();renderRun();};
   $('task-brief').onblur=()=>{if (dirtyFields()) enqueue(()=>saveProject()).catch(()=>{});};
   $('add').onclick=submitBlock;
-  $('run').onclick=()=>act(async()=>{
-    await saveProject(); const result=await request('runs',{workspace:state.workspace,revision:state.project.revision});
-    state.run=result.run;notice('');watchRun();
-  });
+  $('run').onclick=()=>{
+    // Capture the catalog shown at click time, before any queued save or background refresh.
+    const providers=new Set([fields.coordinator,...fields.workers].map(route=>route?.provider));
+    const connectionRevisions=Object.fromEntries(state.connections
+      .filter(conn=>conn.custom && providers.has(conn.provider)).map(conn=>[conn.provider,conn.revision]));
+    act(async()=>{
+      await saveProject();
+      const result=await request('runs',{workspace:state.workspace,revision:state.project.revision,connectionRevisions});
+      state.run=result.run;notice('');watchRun();
+    });
+  };
   enqueue(async()=>applyState(await request('state'))).catch(()=>{});
 }
 initialize();

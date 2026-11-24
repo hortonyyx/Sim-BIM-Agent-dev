@@ -85,3 +85,18 @@ def test_custom_connection_freeze_and_worker_options(tmp_path, monkeypatch):
     assert all(s == revision for s in selected)
     monkeypatch.setattr(connections, "freeze_custom_connection", lambda p: pytest.fail("old run used active connection"))
     assert product.host_config(case, tmp_path, resume_revisions=config["connection_revisions"]) == config
+
+
+@pytest.mark.parametrize("provider,root_limit,child_limit,requires_usage", [
+    ("custom-" + "a" * 32, None, None, False),
+    ("custom-" + "a" * 32, 4000, None, True),
+    ("custom-" + "a" * 32, None, 4000, True),
+    ("chatgpt-subscription", None, None, True),
+])
+def test_unreported_usage_retains_real_limits(provider, root_limit, child_limit, requires_usage):
+    from src.agent_runtime.loop import Runtime
+    def budget(tokens):
+        return SimpleNamespace(total_limit=SimpleNamespace(tokens=tokens, money_usd=None, money_cny=None))
+    context = SimpleNamespace(versions=SimpleNamespace(remote_model=SimpleNamespace(route_id=provider)),
+                              task_budget=budget(child_limit), budget=budget(root_limit))
+    assert Runtime._missing_required_usage(context, SimpleNamespace(kind="unavailable")) is requires_usage

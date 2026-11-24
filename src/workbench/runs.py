@@ -118,13 +118,20 @@ def configuration(directory, draft, materials, blocks, *, connections=None):
             "run_root": str(directory), "cases": [case]}
 
 
-def begin(root, revision, catalog):
+def begin(root, revision, catalog, connection_revisions):
     with locked(root):
         draft = read_project(root)
         revision_check(draft, revision)
         allowed = {(c["provider"], m["id"]) for c in catalog if c["connected"] for m in c["models"]}
-        for route in [draft["coordinator"], *draft["workers"]]:
-            if route and (route["provider"], route["model"]) not in allowed:
+        routes = [r for r in [draft["coordinator"], *draft["workers"]] if r]
+        selected_custom = {r["provider"] for r in routes if is_custom_provider(r["provider"])}
+        indexed = {entry["provider"]: entry for entry in catalog}
+        if (not isinstance(connection_revisions, dict) or set(connection_revisions) != selected_custom
+                or any(p not in indexed or indexed[p]["revision"] != connection_revisions[p] for p in selected_custom)):
+            raise InputError("所选模型连接已更改，请刷新并确认后重试。",
+                             "A selected model connection changed. Refresh and review it before running.", 409)
+        for route in routes:
+            if (route["provider"], route["model"]) not in allowed:
                 raise InputError("该模型当前不可用，请刷新连接。", "This model is unavailable. Refresh the connection.")
         previous = latest(root)
         if previous and previous["status"] == "running" and previous.get("revision") == revision:
@@ -137,7 +144,7 @@ def begin(root, revision, catalog):
             prepared.mkdir()
             materials, blocks = freeze(root, prepared, draft)
             save_json(prepared / "case.json", configuration(directory, draft, materials, blocks,
-                      connections={entry["provider"]: entry for entry in catalog}))
+                      connections=indexed))
             started = {"id": identity, "status": "running", "revision": revision, "message": ""}
             save_json(prepared / "status.json", started)
             prepared.rename(directory)

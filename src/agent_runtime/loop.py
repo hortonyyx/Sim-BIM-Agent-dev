@@ -666,6 +666,17 @@ class Runtime:
             return custom_chat_profile(self.model)
         return None
 
+    def _missing_required_usage(self, usage):
+        if reported_tokens(usage) is not None:
+            return False
+        from .providers import is_custom_provider
+        if not is_custom_provider(self.versions.remote_model.route_id):
+            return True
+        # Some compatible servers omit usage on a successful completion. The
+        # existing ledger still records the request, duration and unknown usage.
+        return any(getattr(b.total_limit, dimension) is not None
+                   for b in (self.task_budget, self.budget) for dimension in ("tokens", "money_usd", "money_cny"))
+
     def _effective_model_profile(self):
         if self.versions.remote_model.route_id == "opencode-go":
             from .opencode_go import model_profile
@@ -1050,7 +1061,7 @@ class Runtime:
                 truncation = None
                 if parsed.finish_reason == "length":
                     blocked = reason
-                    if reported_tokens(parsed.event_payload.usage) is None:
+                    if self._missing_required_usage(parsed.event_payload.usage):
                         blocked = blocked or "token_usage_unavailable"
                     if self._remaining() <= 0:
                         blocked = blocked or self._scoped_budget_reason("time", task=True)
@@ -1085,7 +1096,7 @@ class Runtime:
                             continue
                         return None, self._failure_stop_reason(failure)
                     return None, parsed.protocol_error
-                if reported_tokens(parsed.event_payload.usage) is None:
+                if self._missing_required_usage(parsed.event_payload.usage):
                     return None, "token_usage_unavailable"
                 if self._remaining() <= 0:
                     return None, "time_budget_exhausted"
@@ -1856,7 +1867,7 @@ class Runtime:
                         self.store, echo_fields=self._effective_echo_fields())
                     if parsed.finish_reason == "length":
                         truncation = self._record_truncation(event, blocked=reason or (
-                            "token_usage_unavailable" if reported_tokens(usage) is None else None))
+                            "token_usage_unavailable" if self._missing_required_usage(usage) else None))
                         if reason:
                             return reason
                         if truncation.payload.action == "stop":
@@ -1877,7 +1888,7 @@ class Runtime:
                                 category="empty_response", retryable=True, usage_received=True,
                                 service_error_type="empty_response"))
                         continue
-                    if reported_tokens(usage) is None:
+                    if self._missing_required_usage(usage):
                         return "token_usage_unavailable"
                     reservation = next(r for r in self.budget.ledger.reservations if r.reservation_id == reservation_id)
                     if request.payload.logical_purpose == "context_summary" or reservation.purpose == "context_summary":

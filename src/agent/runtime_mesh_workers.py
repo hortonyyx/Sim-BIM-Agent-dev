@@ -624,7 +624,7 @@ class MeshWorkerTools:
             result = hydrate_mesh_worker_answer(receipt["answer"], record["packet"], child, child.task_directory / "bim")
         outcome = {"task_id": child.task_id, "status": receipt["status"], "result": result,
             **({"worker": record["worker"]} if "worker" in record else {}),
-            "runtime": {key: receipt.get(key) for key in ("status", "model_calls", "tool_calls", "reported_tokens",
+            "runtime": {key: receipt.get(key) for key in ("status", "model_calls", "tool_calls", "reported_tokens", "usage_complete",
                 "elapsed_seconds", "budget_available", "root_budget_available")},
             "answer": receipt.get("answer"), "source_basis": record["packet"].get("source_snapshot"),
             "evidence_catalog": mesh_worker_evidence_catalog(record["packet"], child, child.task_directory / "bim"),

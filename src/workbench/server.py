@@ -168,7 +168,8 @@ def create_app(workbench=None, *, warm=True):
             response = {"connections": service.connections.view(service.prefs["locale"])}
         elif action == "runs":
             result = await run_in_threadpool(begin, service.root(body["workspace"]), body.get("revision"),
-                                            service.connections.view(service.prefs["locale"]))
+                                            service.connections.view(service.prefs["locale"]),
+                                            body.get("connectionRevisions", {}))
             response = {"run": result}
         else:
             raise InputError("未找到。", "Not found.", 404)

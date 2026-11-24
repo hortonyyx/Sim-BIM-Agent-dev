@@ -154,6 +154,38 @@ def test_slow_catalog_cannot_overwrite_edited_or_deleted_connection(catalog, mon
     assert custom.custom_catalog("en", ())[0]["models"] == [{"id": "new", "name": "new"}]
 
 
+def test_run_rejects_connection_changed_in_another_tab(catalog, tmp_path, monkeypatch):
+    from src.workbench import runs
+    from src.workbench.server import Workbench, create_app
+    from tests.test_workbench import png
+
+    base, _ = catalog
+    root = tmp_path / "project"
+    app = Workbench()
+    origin = "http://127.0.0.1"
+    monkeypatch.setattr(app.connections, "configured", lambda provider: False)
+    with TestClient(create_app(app, warm=False), base_url=origin, headers={"Origin": origin}) as client:
+        first = client.post("/api/connections", json={"action": "create", "label": "My server", "baseUrl": base}).json()["connections"][-1]
+        provider = first["provider"]
+        client.post("/api/workspace", json={"path": str(root)}).raise_for_status()
+        block = client.post("/api/blocks", data={"workspace": str(root), "revision": 0},
+                            files={"files": ("plan.png", png("white"))}).json()["project"]["blocks"][0]
+        draft = client.post("/api/project", json={"workspace": str(root), "revision": 1, "taskBrief": "Build",
+            "blocks": [{"id": block["id"], "caption": "", "assetIds": [block["assets"][0]["id"]]}],
+            "coordinator": {"provider": provider, "model": "lab/vision-v1:local"}, "workers": []}).json()["project"]
+        current = client.post("/api/connections", json={"action": "update", "provider": provider,
+            "revision": first["revision"], "baseUrl": base.replace("127.0.0.1", "localhost")}).json()["connections"][-1]
+        run = {"workspace": str(root), "revision": draft["revision"]}
+        for revisions in ({}, {provider: first["revision"]}):
+            assert client.post("/api/runs", json={**run, "connectionRevisions": revisions}).status_code == 409
+        assert not (root / "runs").exists()
+        monkeypatch.setattr(runs.subprocess, "Popen", lambda *args, **kwargs: None)
+        response = client.post("/api/runs", json={**run, "connectionRevisions": {provider: current["revision"]}})
+        response.raise_for_status()
+        config = json.loads((root / "runs" / response.json()["run"]["id"] / "case.json").read_bytes())
+        assert config["cases"][0]["connection_revisions"] == {provider: current["revision"]}
+
+
 @pytest.mark.parametrize("url", ["https://llm.example.net/reverse/proxy/v1", "http://localhost:8000/v1",
                                   "http://[::1]:8080/v1", "http://192.168.1.42:1234/v1"])
 def test_compatible_base_urls(url):
