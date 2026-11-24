@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from tests.sim_inspection_fixtures import synthetic_inspection
 from pathlib import Path
 
 import pytest
@@ -80,7 +81,7 @@ async def _native_mesh_worker_handoff(tmp_path, time_budget_mode):
         _response("p4", "read_mesh_worker", {"task_id": "facade", "view_ids": ["mesh_001", "overlay_001"]}),
         _response("p5", "view_mesh"),
         _response("p6", "overlay_mesh_candidate", {"candidate": "candidate_01", "observation": "mesh_001"}),
-        _response("p7", "finish_bim", {"candidate": "candidate_01", "reviews_json": json.dumps({
+        _response("p7", "finish_bim", {"candidate": "candidate_01", "inspection_json": json.dumps(synthetic_inspection()), "reviews_json": json.dumps({
             "mesh_review": {"coverage": "whole_building", "summary": "Synthetic plumbing only; fidelity not evaluated.",
                             "overlay_ids": ["overlay_001"]}})}),
     ]

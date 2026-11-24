@@ -38,3 +38,13 @@
 电脑端点选卡固定在模型视口左侧中间。楼层选择器、楼层卡和其他对象的楼层字段统一显示项目层名；历史空间与构件的完整标准名保留。空间卡展示楼层、功能与体积；楼层卡展示底标高、空间数与本层体积；表面卡展示构件类型、所属关系及面片面积；边线卡展示长度。置信度视图及其对象级证据协议处于方案讨论阶段。
 
 开发提交 `7955bac3`，domain-v193 / runtime-v64，已更新同一利苑单文件，SHA-256 为 `98864f91b70005d5acfa024346528c74b204a861c4420ef7c8e070d2ff944836`。三个电脑分辨率的双语点选、逐层切换和 PNG 导出记录见 `D:/Sim-BIM-Agent/cache/sim-bim-floor-review-20261124/delivered-qa.json`。单个跨层贴图部件内的层界三角片另有 4 个镜距/视角的对照，见 `D:/Sim-BIM-Agent/cache/floor-clip-20261124/final-primitive.json`。
+
+## 空间置信度与构件属性
+
+开发提交 `cd3260a1`，登记 domain-v194 / runtime-v65。新建模任务交付前逐项检查空间、边界面和开口的五档空间评估、双语理由及引用。工作区的 `candidate_*/sim_inspection.json` 与 `source_model.json` 的模型摘要绑定，包含各侧材料、共享构件厚度及来源。HTML 按当前选取层级着色，省略内部引用。旧档未评估对象显示灰色。
+
+工作台默认折叠墙体、横向分隔、屋面、玻璃组件四组候选，各组可多选或自填毫米数值。在真实 Windows DSH 上用本地脚本主控和 worker，从浏览器完成存草稿、刷新、Run、自动打开及下载同一 HTML。两间房、12 个边界、2 个开口均有评估。楼板采用输入的 161.5 mm 并标为 inference，任务明确指定的石材标为 from user。证据见 `D:/Sim-BIM-Agent/cache/sim-bim-confidence-20261124/interactive-w0gyo51l/verification.json`。
+
+利苑查看器沿用 `D:/Sim-BIM-Agent/cases/lee-garden-six-full-dsh-sol61-fixed-20261106/private/dsh/work/bim/candidate_03` 的原几何。根据 23/F 原图、立面纹理、剖切及存档推理重新标注了 249/266 个空间、1,617/2,102 个边界面、354/405 个开口。其余对象保留未评估。办公窗带标为观察到的玻璃，24 mm 总厚度标为推断。回顾规则和完整属性存放在 `D:/Sim-BIM-Agent/cache/sim-bim-confidence-20261124/lee-review/`。公开单文件摘要为 `128417279ab9ee8363ce8959cc7a396acef900fa426f7b312493fd244951602b`，浏览器双语点选记录见同级证据目录的 `lee-verification.json`。
+
+默认离线检查 862 项通过。一对多楼板、双侧墙面材料、局部实测厚度、旧档独立墙厚读数、交付失败回滚及并发读取均有专项覆盖。单模型与分工主控也分别通过真实 MCP 工具的本地脚本验收。产品投影已在缓存中构建并核对资源，桌面安装版按约定留待成熟版本同步。另一次扩展工具回归中，历史校准报告的语言断言和参数化测试桩的 regularization 校验在本轮之前的提交上同样失败。

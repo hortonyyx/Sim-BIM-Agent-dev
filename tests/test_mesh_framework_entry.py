@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+from tests.sim_inspection_fixtures import synthetic_inspection
 from pathlib import Path
 
 from src.agent import runtime_entry
@@ -46,7 +47,7 @@ async def _exercise(tmp_path):
         _response('p3', 'delegate_mesh_workers', {'tasks': tasks}),
         _response('p4', 'read_mesh_worker', {'task_id': 'compare', 'view_ids': ['section_001']}),
         _response('p5', 'overlay_mesh_candidate', {'candidate': 'candidate_01', 'observation': 'mesh_001'}),
-        _response('p6', 'finish_bim', {'candidate': 'candidate_01', 'reviews_json': json.dumps({
+        _response('p6', 'finish_bim', {'candidate': 'candidate_01', 'inspection_json': json.dumps(synthetic_inspection()), 'reviews_json': json.dumps({
             'mesh_review': {'coverage': 'whole_building', 'summary': 'Synthetic plumbing only; no fidelity verdict.',
                             'overlay_ids': ['overlay_001']}})}),
     ]

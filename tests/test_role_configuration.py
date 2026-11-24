@@ -204,6 +204,18 @@ def test_role_context_overrides_survive_configuration_cli(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["single_model", "role_division"])
+def test_component_thickness_candidates_reach_each_production_cli(tmp_path, mode):
+    from src.agent.runtime_entry import parser as single_parser
+    from src.agent.runtime_roles.entry import parser as role_parser
+
+    selected = case(mode)
+    selected["thickness_candidates_mm"] = {"wall": [160.5, 100, 160.5]}
+    argv = argv_for(load(tmp_path, selected)["cases"][0])
+    parsed = (role_parser if mode == "role_division" else single_parser)().parse_args(argv[3:])
+    assert parsed.thickness_candidates_mm == {"wall": [100, 160.5]}
+
+
+@pytest.mark.parametrize("mode", ["single_model", "role_division"])
 @pytest.mark.parametrize("explicit_null", [False, True])
 def test_automatic_context_configuration_does_not_invent_a_ceiling(tmp_path, mode, explicit_null):
     selected = case(mode)

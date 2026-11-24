@@ -219,10 +219,21 @@ def _assert_complete_pipeline(fixture, result, *, two_floors):
 @pytest.mark.parametrize(("case_name", "two_floors"), [("sm21", True), ("sm24", False)])
 def test_scripted_role_pipeline_runs_real_frozen_mcp(tmp_path, case_name, two_floors):
     fixture = make_fixture(case_name, tmp_path)
+    fixture.args.thickness_candidates_mm = {"glazing": [24.5]}
     result = asyncio.run(
         execute(fixture.args, adapter_factory=fixture.adapter_factory)
     )
     _assert_complete_pipeline(fixture, result, two_floors=two_floors)
+    bim = fixture.output / "bim"
+    manifest = json.loads((bim / "inputs.json").read_bytes())
+    assert manifest["thickness_candidates_mm"] == {"glazing": [24.5]}
+    assert "sim_inspection" in (fixture.output / "task.txt").read_text(encoding="utf-8")
+    delivery = json.loads((bim / "delivery.json").read_bytes())
+    inspection = json.loads((bim / delivery["sim_inspection"]).read_bytes())
+    assert inspection["spatial"]["spaces"] and inspection["source_model_sha256"] == delivery["source_model_sha256"]
+    fixture.args.thickness_candidates_mm = {"glazing": [12]}
+    with pytest.raises(ValueError, match="differ from the admitted run"):
+        _resume(fixture)
 
 
 def test_cross_storey_conflict_stops_without_claiming_a_complete_building(tmp_path):

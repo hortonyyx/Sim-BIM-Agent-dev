@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+from tests.sim_inspection_fixtures import synthetic_inspection
 from pathlib import Path
 import re
 
@@ -87,7 +88,7 @@ def test_build_views_and_finish_preserve_actual_review_policy(tmp_path, strict):
             reviews.append(_review("reference", image="section.png", view_id=reference.data["view_id"]))
         # These explicit fixture judgments exercise binding only. Production
         # callers must actually inspect the returned images before supplying them.
-        result = bim.finish_to(output, saved.candidate, reviews=reviews)
+        result = bim.finish_to(output, saved.candidate, reviews=reviews, inspection=synthetic_inspection())
         assert Path(result["source_model"]).read_bytes() == source
         assert json.loads(Path(saved.receipt_file).read_bytes())["automatic_review"] is False
     assert declaration == original and drawing == _drawing()

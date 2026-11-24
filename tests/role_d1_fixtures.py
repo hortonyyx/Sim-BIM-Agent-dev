@@ -21,6 +21,7 @@ from src.agent.runtime_roles.entry import parser
 from src.agent.runtime_roles.readers import validate_plan_artifact
 from src.agent.runtime_roles.trial import canonical_plan_sha256
 from src.agent_runtime.adapter import ScriptedAdapter
+from tests.sim_inspection_fixtures import synthetic_inspection
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -333,7 +334,8 @@ class D1Fixture:
                     (
                         "finish-final-candidate",
                         "finish_bim",
-                        {"candidate": _latest_candidate(run), "architectural_review": REVIEW},
+                        {"candidate": _latest_candidate(run), "architectural_review": REVIEW,
+                         "inspection_json": json.dumps(synthetic_inspection())},
                     )
                 ),
                 lambda: response(

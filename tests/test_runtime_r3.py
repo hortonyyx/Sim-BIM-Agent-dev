@@ -25,6 +25,7 @@ from src.agent.runtime_tools import FrozenBimTools, local_observer_role
 from src.agent_runtime.adapter import ScriptedAdapter
 from src.agent_runtime.loop import RunLimits
 from src.agent_runtime.store import EventStore
+from tests.sim_inspection_fixtures import synthetic_inspection
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +101,8 @@ async def _scenario(tmp_path, monkeypatch, actions, *, model_calls=20, preparati
             calls = []
             for index, command in enumerate(commands):
                 arguments = dict(command.get("arguments", {}))
+                if command["tool"] == "finish_bim":
+                    arguments.setdefault("inspection_json", json.dumps(synthetic_inspection()))
                 if command["tool"] == "assemble_plan_bim":
                     toolkit = runner.Toolkit(out / "bim")
                     arguments["floors_json"] = json.dumps([
@@ -463,5 +466,7 @@ def test_floor_scope_configuration_and_input_rejection(tmp_path):
         runtime_entry.prepare_inputs(tmp_path / "bad", **kwargs, floor_plan_images=["unknown.png"])
     run, _, _ = runtime_entry.prepare_inputs(tmp_path / "hint", **kwargs)
     hint = json.loads((run / "inputs.json").read_bytes())
+    assert hint["spatial_assessment_policy"] == "object_evidence_v1"
+    assert hint["thickness_candidates_mm"] == {}
     assert hint["floor_plan_images"] == ["1f_view.png"]
     assert hint["floor_scope_source"] == "input_filename_hint"

@@ -114,6 +114,10 @@ def built_case(tmp_path_factory):
         image_kind="drawings", floor_plan_images=["F1.png", "F2.png"],
         max_candidates=20, process_reviews=True)
     toolkit = Toolkit(run)
+    # This fixture exercises archived drawing-review policies, including runs that
+    # predate both inspection sidecars and the drawing-review requirement.
+    del toolkit.manifest["spatial_assessment_policy"], toolkit.manifest["thickness_candidates_mm"]
+    _write(run / "inputs.json", toolkit.manifest)
     assert toolkit.manifest["drawing_review_policy"] == POLICY
     assert (run.parent / "guide.txt").read_text(encoding="utf-8") == guide
     assert (run.parent / "task.txt").read_text(encoding="utf-8") == task
