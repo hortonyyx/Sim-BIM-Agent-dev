@@ -211,3 +211,85 @@ def test_recover_unreadable_workspace_and_reject_stale_language(workbench):
     stale = client.post("/api/preferences", json={"locale": "en", "workspace": str(root), "revision": 0})
     assert stale.status_code == 409
     assert read_json(other / "project.json")["locale"] == "zh-CN"
+
+
+def test_live_trace_projects_native_events_and_resumes_partial_rows(workbench):
+    client, root = workbench
+    identity = "run-20261125-130000-abcd0000"
+    directory = root / "runs" / identity
+    session = directory / "production/private/dsh/session"
+    session.mkdir(parents=True)
+    (directory / "input.json").write_text(json.dumps({"locale": "en", "coordinator": COORD}))
+    (directory / "status.json").write_text(json.dumps({"status": "running", "id": identity}))
+    path = "/api/run/trace"
+    params = {"id": identity}
+    line = lambda row: json.dumps(row).encode() + b"\n"
+    log = session / "events.jsonl"
+    call = {"type": "tool_call", "tool": "mcp__sim_bim_workers__delegate_workers", "callId": "call-1",
+            "input": {"tasks": [{"task_id": "read-plan", "question": "PRIVATE prompt"}]}}
+    result = line({"type": "tool_result", "callId": "call-1", "status": "completed",
+                   "result": json.dumps({"status": "error", "error": "PRIVATE diagnostic"})})
+    log.write_bytes(line({"type": "session", "cwd": "PRIVATE path"})
+                    + line({"type": "status", "phase": "step_start", "turn": 1, "step": 2})
+                    + line({"type": "thinking", "text": "PRIVATE reasoning"})
+                    + line(call) + result[:-4])
+    first = client.get(path, params=params).json()
+    assert first["run"]["status"] == "running" and first["meta"]["model"] == COORD["model"]
+    assert [e["kind"] for e in first["events"]] == ["session", "step", "tool"]
+    called = first["events"][-1]
+    assert called["workers"] == ["read-plan"] and called["step"] == 2
+    params["cursor"] = first["cursor"]
+    idle = client.get(path, params=params).json()
+    assert idle["cursor"] == first["cursor"] and not idle["events"] and not idle["more"]
+    with log.open("ab") as file:
+        file.write(result[-4:] + line({"type": "text", "text": "Public. <think>PRIVATE</think> sk-abcdefghijklmnop"}))
+    retry = session / "attempt-002"
+    retry.mkdir()
+    (retry / "events.jsonl").write_bytes(line({"type": "status", "phase": "step_start", "turn": 1, "step": 1}))
+    worker = directory / "production/private/workers"
+    worker.mkdir()
+    (worker / "events.jsonl").write_bytes(line({"event_id": "w1", "task_id": "read-plan",
+        "parent_task": {"kind": "known", "task_id": "observer_pool"},
+        "occurred_at": {"kind": "known", "value": "2026-11-25T00:00:00Z"},
+        "payload": {"event_type": "adapter_request", "final_request_body": "PRIVATE",
+                    "versions": {"remote_model": {"remote_alias": "flash-real"}}}}))
+    control = directory / "production/control"
+    control.mkdir()
+    (control / "relay.jsonl").write_bytes(line({"event": "automatic_request_recovery", "attempt": 1,
+                                                "prior_turn": 3, "backoff_seconds": 5, "failure": "PRIVATE"}))
+    second = client.get(path, params=params).json()
+    assert second["run"]["status"] == "running"
+    returned, message, resumed, child, recovery = second["events"]
+    assert returned["id"] == called["id"] and returned["status"] == "failed"
+    assert message["text"].startswith("Public.") and "sk-" not in message["text"]
+    assert resumed["attempt"] == 2 and resumed["id"] != first["events"][1]["id"]
+    assert child["model"] == "flash-real" and child["task"] == "read-plan" and child["time"] == 1795564800
+    assert recovery["result"] == {"prior_turn": 3, "backoff_seconds": 5}
+    assert "PRIVATE" not in json.dumps([first, second])
+    assert not client.get(path, params={"id": identity, "cursor": second["cursor"]}).json()["events"]
+    assert client.get(path, params={"id": identity, "cursor": "garbage"}).status_code == 400
+    assert client.get(path, params={"id": "../runs"}).status_code == 404
+    assert client.get("/api/runs").json()["runs"] == [
+        {"id": identity, "status": "running", "started_at": first["meta"]["started_at"]}]
+
+
+def test_live_trace_paginates_host_rows_without_duplicate_text(workbench, monkeypatch):
+    from src.workbench import trace
+    client, root = workbench
+    identity = "run-20261125-130001-abcd0001"
+    directory = root / "runs" / identity
+    session = directory / "production/private/dsh/session"
+    session.mkdir(parents=True)
+    (directory / "input.json").write_text(json.dumps({"locale": "en", "coordinator": COORD}))
+    (directory / "status.json").write_text(json.dumps({"status": "completed", "id": identity}))
+    (session / "events.jsonl").write_text("".join(json.dumps({"type": "text", "text": str(i)}) + "\n" for i in range(5)))
+    monkeypatch.setattr(trace, "_BATCH", 2)
+    all_rows, cursor = [], None
+    for more in (True, True, False):
+        params = {"id": identity, **({"cursor": cursor} if cursor else {})}
+        page = client.get("/api/run/trace", params=params).json()
+        assert page["more"] is more
+        all_rows.extend(page["events"])
+        cursor = page["cursor"]
+    assert [e["text"] for e in all_rows] == list("01234")
+    assert len({e["id"] for e in all_rows}) == 5

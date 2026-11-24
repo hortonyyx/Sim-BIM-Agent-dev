@@ -9,7 +9,6 @@ let fields = {taskBrief:'',coordinator:null,workers:[],thicknessCandidatesMm:{}}
 let draft = [], editing = null, saveTimer, runTimer, pollToken = 0, busy = false, loaded = false;
 let work = Promise.resolve(), previewController, dialogType, drag = null;
 let connectionsTimer, connectionsEpoch=0;
-let openWhenComplete = null;
 const pendingConnections=new Set();
 const t = key=>tr(state.locale,key);
 const thickness = thicknessPicker($('thickness-groups'), t, candidates => {
@@ -69,7 +68,6 @@ function act(action) {
   return enqueue(action).catch(()=>{}).finally(()=>{busy=false; render();});
 }
 function applyState(next) {
-  if (next.workspace!==state.workspace) openWhenComplete=null;
   Object.assign(state,next);
   state.project ??= {blocks:[],revision:0};
   fields={taskBrief:state.project.taskBrief ?? '',coordinator:state.project.coordinator ?? null,
@@ -133,6 +131,8 @@ function renderRun() {
   const panel=$('run-status'); panel.hidden=!run; panel.replaceChildren();
   if (!run) return;
   panel.classList.toggle('error',run.status==='failed'); panel.append(el('strong','',t(active && !alreadyRunning ? 'previousRunning' : run.status)));
+  const activity=el('a','link-button',t('activity'));
+  activity.href=activityUrl(run.id); panel.append(activity);
   if (run.message) {
     const details=el('details','hint'); details.append(el('summary','',t('diagnostic')),el('p','',run.message)); panel.append(details);
   }
@@ -142,18 +142,18 @@ function renderRun() {
     if (url.origin!==location.origin) continue;
     if (key==='viewer' && url.pathname.endsWith('/Sim-BIM.html')) {
       const host=new URL('/static/viewer.html',location.origin);
-      host.hash=url.pathname;url=host;
+      host.searchParams.set('lang',state.locale);host.hash=url.pathname;url=host;
     }
     const link=el('a','link-button',t(key)); link.href=url.href;
     if (key==='download') link.download='Sim-BIM.html';
-    else { link.target='_blank'; link.rel='noopener'; }
     link.append(icon(key==='download'?'download':'external')); panel.append(link);
-    if (key==='viewer' && run.status==='completed' && openWhenComplete?.id===run.id && !busy) {
-      const submitted=openWhenComplete; openWhenComplete=null;
-      if (submitted.workspace===state.workspace && submitted.revision===state.project.revision &&
-          !dirtyBlock() && !dirtyFields() && !$('dialog').open) location.assign(url.href);
-    }
   }
+}
+function activityUrl(id, follow=false) {
+  const url=new URL('/static/run.html',location.origin);
+  url.searchParams.set('id',id);url.searchParams.set('lang',state.locale);
+  if (follow) url.hash='live';
+  return url.href;
 }
 function watchRun() {
   clearTimeout(runTimer); const epoch=++pollToken, id=state.run?.id;
@@ -524,8 +524,8 @@ function initialize() {
     act(async()=>{
       await saveProject();
       const result=await request('runs',{workspace:state.workspace,revision:state.project.revision,connectionRevisions});
-      openWhenComplete={id:result.run.id,workspace:state.workspace,revision:state.project.revision};
-      state.run=result.run;notice('');watchRun();
+      state.run=result.run;notice('');
+      location.assign(activityUrl(result.run.id, result.run.status==='running'));
     });
   };
   enqueue(async()=>applyState(await request('state'))).catch(()=>{});

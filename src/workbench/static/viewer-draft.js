@@ -94,7 +94,10 @@ const SimBimViewerDraft = (() => {
     if (window.parent === window) {
       // A result served by the workbench has an opaque origin, even in its own tab.
       // Enter the same local host that the workbench normally opens for this result.
-      location.replace('/static/viewer.html#' + location.pathname);
+      const hostUrl = new URL('/static/viewer.html', location.href);
+      if (new URLSearchParams(location.search).get('lang') === 'zh-CN') hostUrl.searchParams.set('lang', 'zh-CN');
+      hostUrl.hash = location.pathname;
+      location.replace(hostUrl.href);
       return direct;
     }
     direct.dispose();
@@ -146,7 +149,9 @@ const SimBimViewerDraft = (() => {
       };
       notify();
     });
-    frame.src = path;
+    const viewerUrl = new URL(path, location.href);
+    if (new URLSearchParams(location.search).get('lang') === 'zh-CN') viewerUrl.searchParams.set('lang', 'zh-CN');
+    frame.src = viewerUrl.href;
     return true;
   }
   return {create, host};

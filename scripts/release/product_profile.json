@@ -23,6 +23,8 @@
     "src/workbench/static/dom.js",
     "src/workbench/static/preview.js",
     "src/workbench/static/viewer.html",
+    "src/workbench/static/run.html",
+    "src/workbench/static/run.js",
     "src/workbench/static/viewer-draft.js",
     "src/workbench/static/mark.svg",
     "src/agent/data/room_types.json",

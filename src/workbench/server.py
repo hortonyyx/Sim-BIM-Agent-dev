@@ -25,6 +25,7 @@ from src.agent.geometry.thickness_options import PRESETS_MM
 
 from .connections import Connections
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
+from .trace import run_history, trace_page
 from .storage import (LOCALES, InputError, add_block, app_data, client_project, inside, locked, new_project,
                       open_project, persist, read_json, read_project, revision_check, save_json, update_project, workspace_path)
 
@@ -182,6 +183,13 @@ def create_app(workbench=None, *, warm=True):
             raise InputError("未找到运行。", "Run not found.", 404)
         return JSONResponse({"run": await run_in_threadpool(status_at, path)})
 
+    async def run_trace(request):
+        path = run_dir(service.root(), request.query_params.get("id"))
+        return JSONResponse(await run_in_threadpool(trace_page, path, request.query_params.get("cursor")))
+
+    async def history(_):
+        return JSONResponse({"runs": await run_in_threadpool(run_history, service.root())})
+
     async def asset(request):
         root = service.root()
         identity = request.path_params["asset_id"]
@@ -234,6 +242,7 @@ def create_app(workbench=None, *, warm=True):
 
     app = Starlette(lifespan=lifespan, exception_handlers={InputError: input_error, ValueError: malformed, KeyError: malformed},
         routes=[Route("/", home), Route("/api/state", state), Route("/api/run", run_status),
+                Route("/api/run/trace", run_trace), Route("/api/runs", history),
                 Route("/api/assets/{asset_id}", asset), Route("/api/{action}", api, methods=["POST"]),
                 Route("/results/{tag}/{run_id}/{file:path}", output),
                 Mount("/static", app=StaticFiles(directory=STATIC))])

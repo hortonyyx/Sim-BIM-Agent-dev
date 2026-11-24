@@ -1221,7 +1221,7 @@ _APP_JS = r"""
     syncEditPanel();editMarkers.sync();
   }
   $('locale').onchange=e=>applyLocale(e.target.value);
-  applyLocale('en');
+  applyLocale(new URLSearchParams(location.search).get('lang')==='zh-CN' ? 'zh-CN' : 'en');
   applyOpacity(); refreshColors(); applyExplode(); defaultView();
   if(location.hash==='#edit') setViewMode($('editTab'));
   new ResizeObserver(()=>{
