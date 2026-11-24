@@ -152,14 +152,14 @@ async def domain_fingerprints(root=ROOT):
             raw_catalogs[mode] = tools
             catalogs[mode] = _hash(tools)
             projections = tools
-            guides = {f"images={kind}": build_guide(images=kind, mesh=mesh)
+            guides = {f"images={kind}": build_guide(images=kind, mesh=mesh, sim_inspection=True)
                       for kind in (None, "drawings", "mesh_views", "photos", "unknown")}
             modes[f"single_model/{mode}"] = _fingerprint(projections, guides, tasks)
             if mode.startswith("coordinator"):
                 for host in ("dsh", "native"):
                     modes[f"orchestrator/{host}/{mode}"] = _fingerprint(
                         [*projections, *observer_tool_specs(dsh=host == "dsh")],
-                        build_guide(images="drawings", mesh=mesh, orchestrator=True), tasks)
+                        build_guide(images="drawings", mesh=mesh, orchestrator=True, sim_inspection=True), tasks)
             else:
                 modes[f"orchestrator/{mode}"] = _fingerprint(projections, OBSERVER_GUIDANCE, tasks)
             if mode == "coordinator_mesh":

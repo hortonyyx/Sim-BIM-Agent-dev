@@ -37,6 +37,37 @@ def png(color):
     return out.getvalue()
 
 
+def test_kickoff_migrates_only_unchanged_legacy_text_and_freezes_empty(workbench, tmp_path):
+    from src.workbench.storage import LEGACY_DEFAULT_BRIEFS, read_project
+    client, root = workbench
+    draft = client.get("/api/state").json()["project"]
+    assert draft["taskBrief"] == ""
+    path = root / "project.json"
+    for auto in LEGACY_DEFAULT_BRIEFS:
+        for raw, expected in [(auto, ""), (auto + " Two podium floors.", auto + " Two podium floors."),
+                              (auto + "\r\n\r\nTwo podium floors.\nA roof terrace.", "Two podium floors.\nA roof terrace.")]:
+            path.write_text(json.dumps({**draft, "schema": "sim-bim-workbench.v1", "taskBrief": raw}), encoding="utf-8")
+            assert client.get("/api/state").json()["project"]["taskBrief"] == expected
+    auto = next(iter(sorted(LEGACY_DEFAULT_BRIEFS)))
+    old_client = dict(workspace=str(root), revision=draft["revision"], blocks=[], taskBrief=auto,
+                      coordinator=COORD, workers=[])
+    assert client.post("/api/project", json=old_client).json()["project"]["taskBrief"] == ""
+    # Once typed deliberately in the new form, even the old boilerplate is user input.
+    saved = client.post("/api/project", json={**old_client, "revision": 1, "schema": draft["schema"]}).json()["project"]
+    assert read_project(root)["taskBrief"] == saved["taskBrief"] == auto
+    block = client.post("/api/blocks", data={"workspace": str(root), "revision": 2, "caption": ""},
+                        files=[("files", ("plan.png", png("white"), "image/png"))]).json()["project"]["blocks"][0]
+    client.post("/api/project", json={**old_client, "schema": draft["schema"], "revision": 3, "taskBrief": "",
+        "blocks": [{"id": block["id"], "assetIds": [a["id"] for a in block["assets"]]}]}).raise_for_status()
+    work = tmp_path / "run"
+    project = read_project(root)
+    materials, blocks = runs.freeze(root, work, project)
+    config = runs.configuration(work, project, materials, blocks)
+    config_path = work / "case.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    assert load_configuration(config_path)["cases"][0]["scope"] == read_json(work / "input.json")["taskBrief"] == ""
+
+
 def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_path):
     client, root = workbench
     images = [png(color) for color in ["red", "green", "blue"]]
@@ -71,6 +102,8 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
     assert state["project"]["thicknessCandidatesMm"] == expected
     assert frozen["thicknessCandidatesMm"] == case["thickness_candidates_mm"] == expected
     assets = frozen["blocks"][0]["assets"]
+    assert frozen["blocks"][0]["number"] == 1
+    assert [a["number"] for a in assets] == [1, 2, 3]
     assert [a["name"] for a in assets] == ["Plan.png"] * 3
     assert [(directory / a["path"]).read_bytes() for a in assets] == images[::-1]
     assert len({a["file"].casefold() for a in assets}) == 3
@@ -79,7 +112,10 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
         orchestrator=True, blocks=case["blocks"], locale=case["locale"],
         thickness_candidates_mm=case["thickness_candidates_mm"])
     assert "first, typical, roof" in task and "Keep the entrance." in task and "English" in guide
-    assert all(a["file"] in task for a in assets)
+    numbered = json.loads(task.split("User material blocks in submitted order:\n", 1)[1].splitlines()[0])
+    assert numbered[0]["number"] == 1
+    assert [(a["number"], a["tool_filename"]) for a in numbered[0]["files"]] == [
+        (i, a["file"]) for i, a in enumerate(assets, 1)]
     assert read_json(run / "inputs.json")["blocks"] == frozen["blocks"]
     assert read_json(run / "inputs.json")["locale"] == "en"
     assert read_json(run / "inputs.json")["thickness_candidates_mm"] == expected

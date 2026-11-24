@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from scripts.tool_scripts.bim_agent_guidance import build_guide
+from scripts.tool_scripts.bim_agent_guidance import SIM_BIM_DELIVERY_GUIDE, build_guide
 from src.agent.runtime_roles.readers import READER_TOOL_NAMES
 from src.agent.roles import room_types_reference
 from .plan_format import READER_PLAN_EXAMPLE
@@ -254,7 +254,7 @@ when a reader can. Preserve unresolved evidence; check_openings reuses unchanged
 
 
 ROLE_GUIDANCE = {
-    "coordinator": COORDINATOR_GUIDANCE,
+    "coordinator": COORDINATOR_GUIDANCE + "\n" + SIM_BIM_DELIVERY_GUIDE,
     "plan_reader": PLAN_READER_GUIDANCE,
     "elevation_reader": ELEVATION_READER_GUIDANCE,
 }

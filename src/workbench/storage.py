@@ -17,9 +17,12 @@ from src.agent.geometry.thickness_options import normalize_candidates
 from src.agent_runtime.providers import is_custom_provider
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BRIEF = {
-    "zh-CN": "根据所附资料生成整栋建筑的轻量 BIM 和可交互 HTML。保留有依据的楼层、空间、边界、门窗和连接关系，并注明推断及待确认之处。",
-    "en": "Build a lightweight BIM and interactive HTML viewer for the whole building using the attached materials. Preserve supported floors, spaces, boundaries, openings and connections. Identify assumptions and unresolved questions.",
+LOCALES = ("zh-CN", "en")
+LEGACY_DEFAULT_BRIEFS = {
+    "根据所附资料生成整栋建筑的轻量 BIM 和可交互 HTML。保留有依据的楼层、空间、边界、门窗和连接关系，并注明推断及待确认之处。",
+    "Build a lightweight BIM and interactive HTML viewer for the whole building using the attached materials. Preserve supported floors, spaces, boundaries, openings and connections. Identify assumptions and unresolved questions.",
+    "根据提供的建筑资料生成可查看的完整轻量 BIM。保留可观察的楼层、空间、边界、开口和连接，注明推断及尚未解决的问题。",
+    "Generate a complete, viewable lightweight BIM from the supplied building materials. Preserve the observable floors, spaces, boundaries, openings and connections. Identify assumptions and unresolved questions.",
 }
 KINDS = {".png": "image", ".glb": "mesh", ".json": "declaration"}
 
@@ -77,23 +80,33 @@ def workspace_path(value):
 
 
 def new_project(locale):
-    return {"schema": "sim-bim-workbench.v1", "revision": 0, "locale": locale, "blocks": [],
-            "taskBrief": DEFAULT_BRIEF[locale], "coordinator": None, "workers": [], "thicknessCandidatesMm": {}}
+    return {"schema": "sim-bim-workbench.v2", "revision": 0, "locale": locale, "blocks": [],
+            "taskBrief": "", "coordinator": None, "workers": [], "thicknessCandidatesMm": {}}
+
+
+def legacy_kickoff(value):
+    first, _, rest = value.partition("\n")
+    if first.removesuffix("\r") in LEGACY_DEFAULT_BRIEFS:
+        return rest.lstrip("\r\n")
+    return value
 
 
 def read_project(root):
     data = read_json(inside(root, "project.json"))
-    if not isinstance(data, dict) or data.get("schema") != "sim-bim-workbench.v1":
+    if not isinstance(data, dict) or data.get("schema") not in ("sim-bim-workbench.v1", "sim-bim-workbench.v2"):
         raise InputError("该目录中的 project.json 属于其他项目。", "This folder already contains a different project.json.")
     invalid = InputError("工作区的 project.json 已损坏。", "The workspace project.json is damaged.")
     try:
         data["thicknessCandidatesMm"] = normalize_candidates(data.get("thicknessCandidatesMm"))
     except ValueError as exc:
         raise invalid from exc
-    if (data.get("locale") not in DEFAULT_BRIEF or type(data.get("revision")) is not int
+    if (data.get("locale") not in LOCALES or type(data.get("revision")) is not int
             or not isinstance(data.get("blocks"), list) or not isinstance(data.get("taskBrief"), str)
             or not isinstance(data.get("workers"), list) or "coordinator" not in data):
         raise invalid
+    if data["schema"] == "sim-bim-workbench.v1":
+        data["taskBrief"] = legacy_kickoff(data["taskBrief"])
+        data["schema"] = "sim-bim-workbench.v2"
     for block in data["blocks"]:
         if (not isinstance(block, dict) or not isinstance(block.get("id"), str) or not isinstance(block.get("assets"), list)
                 or not isinstance(block.get("caption"), str) or Path(block["id"]).name != block["id"]):
@@ -178,6 +191,8 @@ def update_project(root, payload):
                 raise InputError("请为素材组添加文件或填写说明。", "Add a file or a caption to the block.")
         data["blocks"] = selected
         data["taskBrief"] = str_field(payload.get("taskBrief"))
+        if payload.get("schema") != "sim-bim-workbench.v2":
+            data["taskBrief"] = legacy_kickoff(data["taskBrief"])
         if "thicknessCandidatesMm" in payload:
             try:
                 data["thicknessCandidatesMm"] = normalize_candidates(payload["thicknessCandidatesMm"])

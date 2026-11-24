@@ -45,11 +45,11 @@
         <div class="composer-actions"><button id="add" type="button" class="button accent-outline"><i data-icon="plus"></i><span id="add-label"></span></button></div>
       </section>
       <section class="library region" aria-labelledby="library-heading">
-        <div class="section-heading"><h2 id="library-heading" data-t="library">素材栏</h2><span id="counts" class="count"></span></div>
+        <div class="section-heading"><h2 id="library-heading" data-t="library">素材</h2><span id="counts" class="count"></span></div>
         <div id="blocks"></div>
         <section class="brief-section" aria-labelledby="brief-heading">
-          <h2 id="brief-heading"><label for="task-brief" data-t="brief">总任务说明</label></h2>
-          <textarea id="task-brief" rows="4"></textarea>
+          <h2 id="brief-heading"><label for="task-brief" data-t="brief">建筑概况</label></h2>
+          <textarea id="task-brief" rows="5" data-placeholder="kickoffExample"></textarea>
           <details id="thickness-options" class="thickness-options">
             <summary data-t="thicknessCandidates">候选厚度（mm）</summary>
             <div id="thickness-groups"></div>
@@ -64,7 +64,7 @@
               <button class="select-button" id="workers" type="button"><span class="value" id="workers-value"></span><i data-icon="chevron"></i></button>
             </div>
           </div>
-          <button id="run" type="button" class="button primary"><i data-icon="play"></i><span data-t="run">开始建模</span></button>
+          <button id="run" type="button" class="button primary"><i data-icon="play"></i><span data-t="run">运行</span></button>
           <p id="run-hint" class="hint" aria-live="polite"></p>
           <div id="run-status" class="run-status" aria-live="polite" hidden></div>
         </section>

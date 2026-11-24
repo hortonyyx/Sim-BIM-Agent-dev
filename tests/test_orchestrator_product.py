@@ -5,7 +5,7 @@ from PIL import Image
 import pytest
 
 from src.agent.runtime_configuration import argv_for, load_configuration
-from src.dsh_runtime.product import host_config, verify_resume_inputs
+from src.dsh_runtime.product import host_config, matches_frozen_scope, verify_resume_inputs
 from src.dsh_runtime.relay import native_name
 
 
@@ -24,6 +24,21 @@ def project(tmp_path, **extra):
                               approval_required_before_launch=True, input_root=str(tmp_path),
                               run_root=str(tmp_path / "runs"), cases=[case])))
     return path
+
+
+@pytest.mark.parametrize("notes", [{}, {"Ground.png": "Ground floor"}])
+def test_dsh_only_admits_exact_legacy_auto_scope_for_omitted_kickoff(tmp_path, notes):
+    config = project(tmp_path, materials={"images": "images", "image_notes": notes})
+    case = load_configuration(config)["cases"][0]
+    legacy = "Deliver a simulation-ready Sim-BIM for the supplied building. Use the detail supported by the evidence."
+    suffix = "\nUser-supplied image descriptions:\n" + json.dumps(notes, sort_keys=True) if notes else ""
+    assert case["scope"] == suffix and matches_frozen_scope(case, legacy + suffix)
+    assert not matches_frozen_scope(case, legacy + suffix + " extra")
+    value = json.loads(config.read_bytes())
+    value["cases"][0].update(scope="", _scope_was_omitted=True)
+    config.write_text(json.dumps(value), encoding="utf-8")
+    explicit = load_configuration(config)["cases"][0]
+    assert matches_frozen_scope(explicit, suffix) and not matches_frozen_scope(explicit, legacy + suffix)
 
 
 def test_dsh_is_default_and_worker_allowance_is_inside_whole_case(tmp_path, monkeypatch):

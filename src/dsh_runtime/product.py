@@ -140,6 +140,14 @@ def publish_result(output: Path, terminal: dict, directory: Path) -> None:
     print(json.dumps({"status": "delivered", "viewer": str(viewer)}, ensure_ascii=False))
 
 
+def matches_frozen_scope(case, frozen_scope):
+    if frozen_scope == case["scope"]:
+        return True
+    # Older configurations with no scope prefixed any admitted image notes with this exact text.
+    legacy_default = "Deliver a simulation-ready Sim-BIM for the supplied building. Use the detail supported by the evidence."
+    return case.get("_scope_was_omitted") is True and frozen_scope == legacy_default + case["scope"]
+
+
 def launch(case, *, resume=False, delivery_directory=None):
     if case.get("mode") != "orchestrator" or case.get("runtime") != "dsh":
         raise ValueError("select an orchestrator case using the dsh runtime")
@@ -156,7 +164,7 @@ def launch(case, *, resume=False, delivery_directory=None):
     materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
     materials.update({key: case[key] for key in ("blocks", "locale", "thickness_candidates_mm") if key in case})
     if resume:
-        if frozen_config != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
+        if frozen_config != config or not matches_frozen_scope(case, (output / "shared/task.txt").read_text(encoding="utf-8")):
             raise ValueError("requested DSH configuration or task differs from the frozen run")
         verify_resume_inputs(launcher.read(output / "private/dsh/work/bim/inputs.json"), materials)
         terminal_path = output / "control/terminal.json"

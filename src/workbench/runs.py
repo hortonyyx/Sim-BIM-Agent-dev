@@ -20,7 +20,7 @@ from src.agent.viewer_publication import VIEWER_FILENAME
 from src.agent_runtime.output_limits import default_output_tokens
 from src.agent_runtime.providers import is_custom_provider
 from .custom_connections import freeze_custom_connection
-from .storage import (DEFAULT_BRIEF, ROOT, InputError, inside, locked, read_json, read_project,
+from .storage import (ROOT, InputError, inside, locked, read_json, read_project,
                       revision_check, save_json)
 
 RUN_ID = re.compile(r"run-\d{8}-\d{6}-[a-f0-9]{8}\Z")
@@ -49,9 +49,9 @@ def freeze(root, target, draft):
     counts = Counter(a["name"].casefold() for a in files)
     used = set(counts)
     declarations = []
-    for b in draft["blocks"]:
+    for block_number, b in enumerate(draft["blocks"], start=1):
         assets = []
-        for a in b["assets"]:
+        for file_number, a in enumerate(b["assets"], start=1):
             original = a["name"]
             alias = original
             if counts[original.casefold()] > 1:
@@ -66,7 +66,7 @@ def freeze(root, target, draft):
             shutil.copyfile(inside(root, a["path"]), dest)
             with dest.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            assets.append({"id": a["id"], "name": original, "kind": a["kind"],
+            assets.append({"id": a["id"], "number": file_number, "name": original, "kind": a["kind"],
                            "file": alias, "path": rel.as_posix(), "sha256": digest})
             if a["kind"] == "image":
                 materials["images"] = "images"
@@ -74,7 +74,7 @@ def freeze(root, target, draft):
                 materials["mesh"] = (Path(group) / alias).as_posix()
             else:
                 declarations.append((b["id"], alias, dest))
-        blocks.append({"id": b["id"], "caption": b["caption"], "assets": assets})
+        blocks.append({"id": b["id"], "number": block_number, "caption": b["caption"], "assets": assets})
     if len(declarations) == 1:
         materials["building_input"] = "declarations/" + declarations[0][1]
     elif declarations:
@@ -103,7 +103,7 @@ def configuration(directory, draft, materials, blocks, *, connections=None):
     case = {"case_id": directory.name, "mode": "orchestrator", "runtime": "dsh", "output": "production",
             "materials": materials, "blocks": blocks, "locale": draft["locale"],
             "thickness_candidates_mm": draft.get("thicknessCandidatesMm", {}),
-            "scope": draft["taskBrief"].strip() or DEFAULT_BRIEF[draft["locale"]],
+            "scope": draft["taskBrief"].strip(),
             **route, "workers": draft["workers"], "reasoning_effort": "high",
             "output_tokens": default_output_tokens(route["model"]), "image_history_batches": 3,
             "max_candidates": 256,

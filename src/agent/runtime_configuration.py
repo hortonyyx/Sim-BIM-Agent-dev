@@ -58,7 +58,8 @@ def admit_project_materials(case: dict) -> None:
     notes = materials.get("image_notes", {})
     if not isinstance(notes, dict) or any(not isinstance(note, str) or not note.strip() for note in notes.values()):
         raise ValueError("materials.image_notes maps admitted PNG names to descriptions")
-    case.setdefault("scope", "Deliver a simulation-ready Sim-BIM for the supplied building. Use the detail supported by the evidence.")
+    case["_scope_was_omitted"] = "scope" not in case
+    case.setdefault("scope", "")
 
 
 def orchestrator_worker(case: dict) -> dict | None:
@@ -250,8 +251,7 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
     cases = value.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError("configuration needs at least one case")
-    string_fields = ("case_id", "mode", "provider", "model", "input_kind", "image_kind",
-                     "input", "output", "scope")
+    string_fields = ("case_id", "mode", "provider", "model", "input_kind", "image_kind", "input", "output")
     for index, case in enumerate(cases):
         if not isinstance(case, dict):
             raise ValueError(f"cases[{index}] must be a JSON object")
@@ -265,6 +265,8 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
         for name in string_fields:
             if not isinstance(case.get(name), str) or not case[name].strip():
                 raise ValueError(f"cases[{index}].{name} must be a nonempty string")
+        if not isinstance(case.get("scope"), str) or (case["mode"] != "orchestrator" and not case["scope"].strip()):
+            raise ValueError(f"cases[{index}].scope must be text, nonempty for this mode")
         for name in ("output_tokens", "max_candidates"):
             if type(case.get(name)) is not int or case[name] <= 0:
                 raise ValueError(f"cases[{index}].{name} must be a positive integer")

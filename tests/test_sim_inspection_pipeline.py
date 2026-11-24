@@ -28,15 +28,21 @@ def _grade(value, en, zh, refs=()):
 
 
 @pytest.mark.parametrize("orchestrator", [False, True])
-def test_initial_task_and_inspection_reference_share_spatial_scale(tmp_path, orchestrator):
-    _, _, task = _run(tmp_path, orchestrator=orchestrator)
-    assert task.count(SPATIAL_GRADE_SCALE) == 1
+def test_system_and_reference_share_spatial_scale_separately_from_kickoff(tmp_path, orchestrator):
+    from scripts.tool_scripts.run_bim_agent import run_guide
+    from src.agent.runtime_roles.guidance import get_role_guide
+    run, guide, task = _run(tmp_path, orchestrator=orchestrator)
+    assert guide.count(SPATIAL_GRADE_SCALE) == run_guide(run).count(SPATIAL_GRADE_SCALE) == 1
+    assert SPATIAL_GRADE_SCALE in get_role_guide("coordinator")
+    assert SPATIAL_GRADE_SCALE not in get_role_guide("plan_reader")
+    assert SPATIAL_GRADE_SCALE not in task and "solid oak core" in task
+    assert "solid oak core" not in guide
     assert SPATIAL_GRADE_SCALE in REFERENCES["sim_inspection"]
 
 
 def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
-    run, _, task = _run(tmp_path)
-    assert "sim_inspection" in task and "180" in task
+    run, guide, task = _run(tmp_path)
+    assert "sim_inspection" in guide and "180" in task
     with BimSession(run) as bim:
         assert "inspection_json" in bim.describe("finish_bim")["inputSchema"]["properties"]
         candidate = bim.call("build_parametric_bim", plan_json=rotated_plan()).require_ok()["candidate"]
@@ -184,7 +190,7 @@ def test_dsh_initial_messages_and_resume_bind_candidates(tmp_path, monkeypatch):
     shared.mkdir(parents=True)
     images.mkdir()
     Image.new("RGB", (20, 20), "white").save(images / "plan.png")
-    (shared / "task.txt").write_text("Use the submitted plan.", encoding="utf-8")
+    (shared / "task.txt").write_text("", encoding="utf-8")
     (case / "config.json").write_text(json.dumps({"limits": {"candidates": 5, "wall_seconds": 300}}))
     monkeypatch.setattr(agent_registry, "release_records", lambda _, **kw: {"domain": {}, "runtime": {}})
     monkeypatch.setattr(agent_registry, "source_commit", lambda _: "fixture")
@@ -194,9 +200,16 @@ def test_dsh_initial_messages_and_resume_bind_candidates(tmp_path, monkeypatch):
     manifest = json.loads((run / "inputs.json").read_bytes())
     monkeypatch.setattr(relay, "CASE", case)
     initial, specs = relay.cfg()
-    prompt = initial[1]["content"][0]["text"]
-    assert "sim_inspection" in prompt and '"glazing": [24]' in prompt
-    assert SPATIAL_GRADE_SCALE in prompt
+    guide, prompt = initial[0]["content"], initial[1]["content"][0]["text"]
+    assert initial[0]["role"] == "system" and initial[1]["role"] == "user"
+    assert "sim_inspection" in guide and '"glazing": [24]' in prompt
+    assert SPATIAL_GRADE_SCALE in guide and SPATIAL_GRADE_SCALE not in prompt
+    assert "Task kickoff" not in prompt and "plan.png" in prompt and manifest["scope"] == ""
+    # Empty kickoff cannot be used to attribute a user material declaration.
+    with pytest.raises(ValueError, match="evidence reference 'brief'"):
+        apply_rules(Toolkit(run), {"floors": [], "spaces": [], "boundaries": [{"id": "face", "space_id": "z"}], "openings": []}, _empty(),
+            {"rules": [{"kind": "boundary", "ids": ["face"], "material": {
+                "en": "Oak", "zh": "橡木", "source": "from user", "source_refs": ["brief"]}}]})
     assert manifest["spatial_assessment_policy"] == "object_evidence_v1"
     assert {s["function"]["name"] for s in specs} >= {"record_sim_inspection", "finish_bim"}
     verify_resume_inputs(manifest, materials)

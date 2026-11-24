@@ -222,6 +222,9 @@ def execute_host(case, session, config, url, nonce, attempt, resume):
     from .completion import DELIVERY_MARKER
     prompt = (DELIVERY_MARKER if resume == 'delivery' else relay.RESUME_MARKER if resume else
               (case / 'shared/task.txt').read_text(encoding='utf-8'))
+    if not prompt.strip():
+        # DSH needs a nonempty initial turn even when the optional kickoff is blank.
+        prompt = read(case / 'shared/initial-messages.json')[1]['content'][0]['text']
     env['SIM_BIM_LOCAL_TRANSPORT_RECEIPT'] = str(out / 'local-fetch.json')
     started = time.time()
     proc = None

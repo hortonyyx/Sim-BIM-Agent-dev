@@ -13,10 +13,9 @@ let openWhenComplete = null;
 const pendingConnections=new Set();
 const t = key=>tr(state.locale,key);
 const thickness = thicknessPicker($('thickness-groups'), t, candidates => {
-  if (candidates) { fields.thicknessCandidatesMm=candidates; queueSave(); }
-  else clearTimeout(saveTimer);
+  fields.thicknessCandidatesMm=candidates; queueSave();
   renderRun();
-});
+}, renderRun);
 const same = (a,b)=>JSON.stringify(a) === JSON.stringify(b);
 const modelKey = selection=>selection ? JSON.stringify([selection.provider,selection.model]) : '';
 const parseModel = key=>{ const [provider,model]=JSON.parse(key); return {provider,model}; };
@@ -67,13 +66,13 @@ function enqueue(action) {
 function act(action) {
   if (busy) return;
   busy=true; render();
-  enqueue(action).catch(()=>{}).finally(()=>{busy=false; render();});
+  return enqueue(action).catch(()=>{}).finally(()=>{busy=false; render();});
 }
 function applyState(next) {
   if (next.workspace!==state.workspace) openWhenComplete=null;
   Object.assign(state,next);
   state.project ??= {blocks:[],revision:0};
-  fields={taskBrief:state.project.taskBrief ?? t('briefDefault'),coordinator:state.project.coordinator ?? null,
+  fields={taskBrief:state.project.taskBrief ?? '',coordinator:state.project.coordinator ?? null,
     workers:state.project.workers ?? [],thicknessCandidatesMm:state.project.thicknessCandidatesMm ?? {}};
   $('task-brief').value=fields.taskBrief;
   if (editing && !state.project.blocks?.some(b=>b.id === editing)) {
@@ -195,9 +194,9 @@ function watchConnections(force=false) {
 }
 async function saveProject(blocks, force = false) {
   clearTimeout(saveTimer);
-  if (!thickness.valid()) throw Error(t('invalidThickness'));
   if (!state.workspace || (!force && !dirtyFields())) return;
-  const payload={workspace:state.workspace,revision:state.project.revision,blocks:projectBlocks(blocks ?? state.project.blocks),...fields};
+  const payload={workspace:state.workspace,schema:state.project.schema,revision:state.project.revision,
+    blocks:projectBlocks(blocks ?? state.project.blocks),...fields};
   const result=await request('project',payload);
   state.project=result.project; renderRun();
 }
@@ -224,7 +223,7 @@ function workspaceDialog() {
   async function choose(args) {
     if (!args.browse && !args.path) {input.focus();return;}
     if (state.workspace && dirtyBlock() && !window.confirm(t('discard'))) return;
-    const oldWorkspace=state.workspace, oldFields={...fields}, oldDefault=state.project.taskBrief ?? t('briefDefault');
+    const oldWorkspace=state.workspace, oldFields={...fields};
     actions.querySelectorAll('button').forEach(b=>b.disabled=true); note.textContent=t('statusPending');
     try {
       await enqueue(async()=>{
@@ -233,11 +232,11 @@ function workspaceDialog() {
         if (oldWorkspace) resetDraft();
         applyState(next);
         if (!oldWorkspace && !next.project.revision && (oldFields.coordinator || oldFields.workers.length ||
-              Object.keys(oldFields.thicknessCandidatesMm).length || oldFields.taskBrief!==oldDefault)) {
+              Object.keys(oldFields.thicknessCandidatesMm).length || oldFields.taskBrief)) {
           if (oldFields.coordinator) fields.coordinator=oldFields.coordinator;
           if (oldFields.workers.length) fields.workers=oldFields.workers;
           fields.thicknessCandidatesMm=oldFields.thicknessCandidatesMm;
-          if (oldFields.taskBrief!==oldDefault) fields.taskBrief=oldFields.taskBrief;
+          fields.taskBrief=oldFields.taskBrief;
           $('task-brief').value=fields.taskBrief; await saveProject();
         }
         $('dialog').close();notice('');render();
@@ -365,10 +364,11 @@ function preview(asset) {
   const root=newDialog('preview',asset.name);
   previewController=new AbortController(); previewAsset(asset,root,t,state.locale,previewController.signal);
 }
-function fileButton(asset, compact) {
-  const b=button(mark(t('preview'),asset.name),()=>preview(asset),{style:'file-preview',iconOnly:true});
+function fileButton(asset, compact, number) {
+  const label=t('file')+' '+number+' · '+asset.name;
+  const b=button(mark(t('preview'),label),()=>preview(asset),{style:'file-preview',iconOnly:true});
   const thumb=el('span','thumb'), copy=el('span','file-copy');
-  if (asset.kind==='image') {const img=el('img');img.alt='';img.src=asset.url;img.loading='lazy';thumb.append(img);}
+  if (asset.kind==='image') {const img=el('img');img.alt='';img.draggable=false;img.src=asset.url;img.loading='lazy';thumb.append(img);}
   else thumb.append(icon(asset.kind));
   copy.append(el('span','file-name',asset.name));
   if (!compact) {
@@ -376,40 +376,57 @@ function fileButton(asset, compact) {
     const size=typeof bytes==='number' ? (bytes>=1048576 ? (bytes/1048576).toFixed(1)+' MiB' : Math.ceil(bytes/1024)+' KiB') : '';
     copy.append(el('span','file-detail',ext+(size?' · '+size:'')));
   }
-  b.append(thumb,copy);return b;
+  b.append(el('span','file-number',String(number)),thumb,copy);return b;
 }
 function actionIcon(key,glyph,handler,disabled=false) {
   return button(t(key),handler,{glyph,style:'icon-button',iconOnly:true,disabled});
 }
-function moveItem(items,from,to) {
+function moveItem(items,sourceId,targetId) {
+  const from=items.findIndex(item=>item.id===sourceId), to=items.findIndex(item=>item.id===targetId);
+  if (from<0 || to<0 || from===to) return items;
   const next=[...items];next.splice(to,0,next.splice(from,1)[0]);return next;
 }
-function sortable(row,kind,id,commit) {
-  row.draggable=true;
-  row.addEventListener('dragstart',event=>{
-    drag={kind,id};event.dataTransfer.setData('text/plain',id);event.dataTransfer.effectAllowed='move';event.stopPropagation();
+function sortHandle(row,kind,items,index,commit) {
+  const id=items[index].id, label=t('reorder')+' · '+t(kind)+' '+(index+1);
+  const handle=el('button','icon-button sort-handle');handle.type='button';handle.append(icon('grip'));
+  handle.title=label;handle.setAttribute('aria-label',label);handle.dataset.sortId=id;
+  handle.setAttribute('aria-keyshortcuts','ArrowUp ArrowDown');
+  handle.disabled=busy || items.length<2;handle.draggable=!handle.disabled;
+  if (handle.disabled) return handle;
+  const dragType='application/x-sim-bim-'+kind;
+  handle.addEventListener('keydown',async event=>{
+    if (event.key!=='ArrowUp' && event.key!=='ArrowDown') return;
+    event.preventDefault();
+    const target=items[index+(event.key==='ArrowUp'?-1:1)];
+    if (!target) return;
+    await commit(id,target.id);
+    document.querySelector('.sort-handle[data-sort-id="'+CSS.escape(id)+'"]')?.focus();
+  });
+  handle.addEventListener('dragstart',event=>{
+    drag={kind,id,index};event.dataTransfer.setData(dragType,id);event.dataTransfer.effectAllowed='move';
+    event.dataTransfer.setDragImage(row,14,14);event.stopPropagation();
   });
   row.addEventListener('dragover',event=>{
-    if (drag?.kind!==kind || drag.id===id) return;
-    event.preventDefault();event.dataTransfer.dropEffect='move';row.classList.add('drag-over');
+    if (drag?.kind!==kind || drag.id===id || !event.dataTransfer.types.includes(dragType)) return;
+    event.preventDefault();event.dataTransfer.dropEffect='move';row.dataset.drop=drag.index<index?'after':'before';
   });
-  row.addEventListener('dragleave',()=>row.classList.remove('drag-over'));
+  row.addEventListener('dragleave',event=>{if (!row.contains(event.relatedTarget)) delete row.dataset.drop;});
   row.addEventListener('drop',event=>{
-    if (drag?.kind!==kind) return;
-    event.preventDefault();event.stopPropagation();row.classList.remove('drag-over');
-    if (drag.id!==id) commit(drag.id,id);drag=null;
+    if (drag?.kind!==kind || !event.dataTransfer.types.includes(dragType)) return;
+    event.preventDefault();event.stopPropagation();delete row.dataset.drop;
+    const source=drag.id;drag=null;
+    if (source!==id) commit(source,id);
   });
-  row.addEventListener('dragend',()=>{drag=null;document.querySelectorAll('.drag-over').forEach(n=>n.classList.remove('drag-over'));});
+  handle.addEventListener('dragend',()=>{drag=null;document.querySelectorAll('[data-drop]').forEach(n=>delete n.dataset.drop);});
+  return handle;
 }
 function renderFiles() {
   const list=$('draft-files');list.replaceChildren();
   function move(from,to) {draft=moveItem(draft,from,to);renderFiles();}
   draft.forEach((asset,index)=>{
-    const row=el('div','file-row'), actions=el('div','row-actions'); row.append(fileButton(asset,false));
-    actions.append(actionIcon('moveUp','up',()=>move(index,index-1),index===0 || busy),
-      actionIcon('moveDown','down',()=>move(index,index+1),index===draft.length-1 || busy),
-      actionIcon('remove','close',()=>{if (asset.file) URL.revokeObjectURL(asset.url);draft.splice(index,1);render();},busy));
-    row.append(actions); if (!busy) sortable(row,'file',asset.id,(from,to)=>move(draft.findIndex(f=>f.id===from),draft.findIndex(f=>f.id===to)));
+    const row=el('div','file-row');
+    row.append(sortHandle(row,'file',draft,index,move),fileButton(asset,false,index+1),
+      actionIcon('remove','trash',()=>{if (asset.file) URL.revokeObjectURL(asset.url);draft.splice(index,1);render();},busy));
     list.append(row);
   });
 }
@@ -424,18 +441,16 @@ function renderBlocks() {
   if (!blocks.length) {const empty=el('div','empty');empty.append(icon('blocks'),el('span','',t('empty'))); list.append(empty);return;}
   const change=transform=>act(async()=>{await saveProject(transform(state.project.blocks),true);notice('');});
   blocks.forEach((block,i)=>{
-    const item=el('article','block'), head=el('div','block-heading'), actions=el('div','block-actions');
-    head.append(el('strong','',t('block')+' '+String(i+1).padStart(2,'0')));
-    actions.append(actionIcon('moveUp','up',()=>change(current=>moveItem(current,i,i-1)),i===0 || busy),
-      actionIcon('moveDown','down',()=>change(current=>moveItem(current,i,i+1)),i===blocks.length-1 || busy),
-      actionIcon('edit','edit',()=>editBlock(block),busy),
+    const item=el('article','block'), head=el('div','block-heading'), name=t('block')+' '+String(i+1).padStart(2,'0');
+    const edit=button(name,()=>editBlock(block),{style:'block-edit',disabled:busy});
+    edit.append(icon('edit'));edit.title=mark(t('edit'),name);edit.setAttribute('aria-label',edit.title);
+    head.append(sortHandle(item,'block',blocks,i,(from,to)=>change(current=>moveItem(current,from,to))),edit,
       actionIcon('remove','trash',()=>{if (!window.confirm(t('removeConfirm'))) return;change(current=>{
         if (editing===block.id) resetDraft();return current.filter(b=>b.id!==block.id);
       });},busy));
-    head.append(actions);item.append(head);
+    item.append(head);
     if (block.caption) item.append(el('p','block-detail',block.caption));
-    const strip=el('div','asset-strip');block.assets.forEach(asset=>strip.append(fileButton(asset,true)));item.append(strip);
-    if (!busy) sortable(item,'block',block.id,(from,to)=>change(current=>moveItem(current,current.findIndex(b=>b.id===from),current.findIndex(b=>b.id===to))));
+    const strip=el('div','asset-strip');block.assets.forEach((asset,index)=>strip.append(fileButton(asset,true,index+1)));item.append(strip);
     list.append(item);
   });
 }
@@ -461,19 +476,17 @@ function submitBlock() {
 async function setLanguage(locale) {
   if (locale===state.locale) return;
   await saveProject();
-  const previousDefault=state.project.taskBrief ?? t('briefDefault'), priorFields={...fields};
+  const priorFields=fields;
   const next=await request('preferences',{locale, workspace:state.workspace, revision:state.project.revision}); applyState(next);
   if (!state.workspace) {
-    fields.coordinator=priorFields.coordinator; fields.workers=priorFields.workers;
-    fields.thicknessCandidatesMm=priorFields.thicknessCandidatesMm;
-    if (priorFields.taskBrief!==previousDefault) fields.taskBrief=priorFields.taskBrief;
+    fields=priorFields;
     $('task-brief').value=fields.taskBrief; render();
   }
   if (!next.workspaceError) notice('');
 }
 function initialize() {
   document.querySelectorAll('i[data-icon]').forEach(node=>node.replaceWith(icon(node.dataset.icon)));
-  $('task-brief').value=fields.taskBrief=t('briefDefault'); render();
+  render();
   $('settings').onclick=settingsDialog; $('workspace').onclick=workspaceDialog; $('workers').onclick=workerDialog;
   $('coordinator').onchange=e=>{
     if (e.target.value==='settings') {renderModels();settingsDialog();return;}
@@ -499,6 +512,7 @@ function initialize() {
   $('task-brief').onblur=()=>{if (dirtyFields()) enqueue(()=>saveProject()).catch(()=>{});};
   $('add').onclick=submitBlock;
   $('run').onclick=()=>{
+    thickness.finishInput();
     // Capture the catalog shown at click time, before any queued save or background refresh.
     const providers=new Set([fields.coordinator,...fields.workers].map(route=>route?.provider));
     const connectionRevisions=Object.fromEntries(state.connections

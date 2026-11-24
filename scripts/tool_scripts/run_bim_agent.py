@@ -204,7 +204,9 @@ def run_guide(run: Path) -> str:
     mesh = bool(manifest.get("mesh_input"))
     kind = manifest.get("image_kind") or (("unknown" if mesh else "drawings") if manifest.get("images") else None)
     orchestrator = manifest.get("orchestrator") is True
-    guide = build_guide(images=kind, mesh=mesh, orchestrator=orchestrator)
+    from scripts.tool_scripts.bim_agent_inspection import POLICY as SPATIAL_POLICY
+    guide = build_guide(images=kind, mesh=mesh, orchestrator=orchestrator,
+                        sim_inspection=manifest.get("spatial_assessment_policy") == SPATIAL_POLICY)
     if manifest.get("drawing_review_policy") and not orchestrator:
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS

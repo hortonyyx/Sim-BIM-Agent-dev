@@ -25,7 +25,7 @@ from src.agent.geometry.thickness_options import PRESETS_MM
 
 from .connections import Connections
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
-from .storage import (DEFAULT_BRIEF, InputError, add_block, app_data, client_project, inside, locked, new_project,
+from .storage import (LOCALES, InputError, add_block, app_data, client_project, inside, locked, new_project,
                       open_project, persist, read_json, read_project, revision_check, save_json, update_project, workspace_path)
 
 STATIC = Path(__file__).with_name("static")
@@ -65,7 +65,7 @@ class Workbench:
         except (ValueError, OSError):
             saved = {}
         self.prefs = {"locale": "zh-CN", "workspace": None}
-        if isinstance(saved, dict) and saved.get("locale") in DEFAULT_BRIEF:
+        if isinstance(saved, dict) and saved.get("locale") in LOCALES:
             self.prefs.update(locale=saved["locale"], workspace=saved.get("workspace"))
         self.connections = Connections()
         self.guard = threading.RLock()
@@ -110,7 +110,7 @@ class Workbench:
             return self.snapshot()
 
     def language(self, locale, submitted, revision):
-        if locale not in DEFAULT_BRIEF:
+        if locale not in LOCALES:
             raise InputError("语言选项无效。", "Invalid language.")
         with self.guard:
             if submitted != self.snapshot()["workspace"]:
@@ -122,8 +122,6 @@ class Workbench:
                         data = read_project(root)
                         revision_check(data, revision)
                         if data["locale"] != locale:
-                            if data["taskBrief"] == DEFAULT_BRIEF[data["locale"]]:
-                                data["taskBrief"] = DEFAULT_BRIEF[locale]
                             data["locale"] = locale
                             persist(root, data)
             self.prefs["locale"] = locale

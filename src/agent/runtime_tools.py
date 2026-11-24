@@ -532,8 +532,8 @@ def write_frozen_materials(output_directory: Path, *, repository_root: Path) -> 
         relative: metadata["sha256"] for relative, metadata in version["files"].items()
     }
     prompts = {
-        "drawing_system_prompt.txt": build_guide(images="drawings", mesh=False),
-        "mesh_system_prompt.txt": build_guide(images="mesh_views", mesh=True),
+        "drawing_system_prompt.txt": build_guide(images="drawings", mesh=False, sim_inspection=True),
+        "mesh_system_prompt.txt": build_guide(images="mesh_views", mesh=True, sim_inspection=True),
     }
     for name, text in prompts.items():
         (output / name).write_text(text, encoding="utf-8")

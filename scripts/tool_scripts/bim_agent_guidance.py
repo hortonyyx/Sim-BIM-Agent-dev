@@ -550,12 +550,34 @@ if required scope is unfinished."""
 
 
 SPATIAL_GRADE_SCALE = """Grade each object's reconstructed position, shape and extent against the supplied evidence.
-5 Direct evidence: a source specific to this object shows its location and principal dimensions.
-4 Strong support: most geometry is documented with a minor estimate, or a documented typical-storey
-template applies to this object on the target storey. Cite the template and what establishes the repetition.
-3 Partial support: some geometry is anchored, but an important boundary or dimension remains inferred.
-2 Indirect support: a contextual clue suggests the object's approximate location or shape.
-1 Assumed: the inputs give no applicable geometric evidence for the adopted location or shape."""
+5 Direct evidence: a plan, section, measurement or explicit dimension directly establishes this object's
+location and principal extents on the target storey.
+4 Strong support: documented geometry needs only a minor estimate, or a documented typical-storey
+template has evidence of repeating for this object on the target storey. Name the template and the
+evidence of applicability, such as a stated storey range or a matching measured envelope and floor pitch.
+3 Partial support: evidence fixes a significant part of this object's geometry, but a principal extent is
+inferred. A continuing lift shaft can anchor a lobby whose partitions on this storey are unknown.
+2 Indirect support: a layout elsewhere or a comparable space suggests a plausible position or shape,
+without a geometric anchor for this object here. A cubicle copied from another storey often fits here.
+1 Assumed: no applicable evidence locates or sizes this object; its geometry is a modelling assumption.
+Grade the zone, its faces and its openings independently. A repeated office envelope can merit 4 while
+local partitions or doorways merit 2 or 3. A copied model, floor name or room use alone cannot establish
+repetition. Cite applicable evidence for grades 2–5. Choose according to evidence, without grade quotas."""
+
+SIM_BIM_DELIVERY_GUIDE = """Deliver the whole building as a simulation-ready Sim-BIM and its interactive HTML
+unless the user specifies a narrower scope. Use the submitted building description and block captions as
+user statements; relate them to the actual drawings, mesh and declarations. A file number in a caption
+refers to its 1-based position within that block. Where a description is silent, work from the supplied sources.
+Before finish_bim assess every saved zone, boundary and opening. Give a short reason in English and Chinese
+naming the spatial evidence, where it applies and the main estimate. Assign broad room-use types to zones.
+For physical surfaces record a short bilingual observation about the principal construction material and
+the total component thickness in mm, with a separate source for each: from material, inference, or from user.
+Use each group's selected thickness candidates for inferred values, or ordinary modules when none were selected.
+Choosing a value from a shortlist is inference. Use from user for a thickness explicitly assigned to that component.
+Both sides of a shared construction use the same total thickness. Glazing uses total unit thickness including
+cavities. Material and thickness are independent of spatial confidence. Use get_bim_reference('sim_inspection')
+for the assessment schema and stage or submit inspection_json with the final candidate.
+""" + SPATIAL_GRADE_SCALE
 
 
 def describe_orchestrator_inputs(manifest: dict) -> str:
@@ -572,21 +594,17 @@ def describe_orchestrator_inputs(manifest: dict) -> str:
                      "the supplied descriptions, their applicability and any stated sources.")
     if manifest.get("floor_scope_source") == "explicit_input_filenames":
         lines.append("Explicitly supplied floor-plan names: " + ", ".join(manifest["floor_plan_images"]) + ".")
-    if manifest.get("spatial_assessment_policy") == "object_evidence_v1":
-        lines.append("Assess the spatial geometry of each saved zone, boundary and opening. Give both English and "
-                     "Chinese reasons. Describe each physical surface's principal construction material in a short "
-                     "bilingual observation, qualifying uncertainty. Record thickness and its source separately. Use "
-                     "get_bim_reference('sim_inspection') and batch by shared evidence with inspection_json. "
-                     "The user's thickness candidates in millimetres are in inputs().thickness_candidates_mm.")
-        lines.append(SPATIAL_GRADE_SCALE)
     return "\n".join(lines)
 
 
-def build_guide(*, images=None, mesh=False, orchestrator=False):
+def build_guide(*, images=None, mesh=False, orchestrator=False, sim_inspection=False):
     """System prompt for one run. images is drawings, mesh_views, photos, unknown or None."""
     if orchestrator:
         handoff = ORCHESTRATOR_MESH_FINISH if mesh else ORCHESTRATOR_DRAWING_FINISH
-        return ORCHESTRATOR_GUIDE + "\n" + handoff
+        parts = [ORCHESTRATOR_GUIDE, handoff]
+        if sim_inspection:
+            parts.append(SIM_BIM_DELIVERY_GUIDE)
+        return "\n".join(parts)
     mesh_mode = mesh or images == "mesh_views"
     parts = [MESH_CORE if mesh_mode else CORE]
     if mesh_mode:
@@ -599,8 +617,10 @@ def build_guide(*, images=None, mesh=False, orchestrator=False):
         parts.append(MESH_VIEWS)
     if not mesh_mode and images in ("photos", "unknown"):
         parts.append(PHOTOS)
-    tools = TOOLS
-    return "\n".join(parts + [tools, DELIVERY])
+    parts.extend([TOOLS, DELIVERY])
+    if sim_inspection:
+        parts.append(SIM_BIM_DELIVERY_GUIDE)
+    return "\n".join(parts)
 
 
 REFERENCES = {

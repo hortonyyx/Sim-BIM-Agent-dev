@@ -16,7 +16,7 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
-from scripts.tool_scripts.bim_agent_guidance import SPATIAL_GRADE_SCALE, build_guide
+from scripts.tool_scripts.bim_agent_guidance import build_guide, describe_orchestrator_inputs
 from src.agent.runtime_tools import (
     FrozenBimTools, coordinator_role, local_observer_role, frozen_bim_client,
     write_frozen_materials, write_frozen_tool_catalog,
@@ -85,7 +85,7 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
         manifest["drawing_review_policy"] = POLICY
     (run / "inputs.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     guide = build_guide(images=image_kind if inventory else None, mesh=bool(mesh),
-                        **({"orchestrator": True} if orchestrator else {}))
+                        orchestrator=orchestrator, sim_inspection=True)
     guide += ("\nSingle-model runtime completion: finish_bim selects your final handoff. "
         "After the current tool batch completes, a successful finish of a complete building "
         "with matching saved source and viewer ends this run without another model request. "
@@ -94,29 +94,21 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
     if process_reviews and not orchestrator:
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS
-    task = scope
+    task_parts = ["Task kickoff:\n" + scope] if scope.strip() else []
     if thickness:
-        task += ("\n\nUser-selected thickness candidates in mm by component group (glazing includes the cavities of "
-                 "the whole glazing unit; horizontal applies jointly to floor and ceiling). A model's choice among "
-                 "candidates is inference. Preserve explicitly specified dimensions and their source.\n"
-                 + json.dumps(thickness, ensure_ascii=False))
+        task_parts.append("User-selected thickness candidates by component group (mm):\n"
+                          + json.dumps(thickness, ensure_ascii=False))
     if locale is not None:
         language = "Simplified Chinese" if locale == "zh-CN" else "English"
         guide += (f"\nWrite user-facing output, names, assumptions, progress, and modelling notes in {language}. "
                   "Preserve the user's original captions and filenames as evidence.\n")
     if blocks is not None:
-        ordered = [{"id": b["id"], "caption": b["caption"], "files": [
-            {"name": a["name"], "tool_filename": a["file"], "kind": a["kind"]} for a in b["assets"]]} for b in blocks]
-        task += "\n\nUser material blocks in submitted order. Each caption describes the files in its block, in order:\n" + json.dumps(ordered, ensure_ascii=False)
-    if orchestrator:
-        from scripts.tool_scripts.bim_agent_guidance import describe_orchestrator_inputs
-        task += "\n\n" + describe_orchestrator_inputs(manifest)
-    else:
-        task += ("\n\nAssess every zone, boundary and opening for spatial evidence, with a grade and a short "
-                 "reason in English and Chinese. Use get_bim_reference('sim_inspection') for the assessment "
-                 "and material/thickness schema. Describe the principal construction in a short bilingual observation "
-                 "and qualify what the evidence supports. Pass the rules in finish_bim or stage them with record_sim_inspection.")
-        task += "\n" + SPATIAL_GRADE_SCALE
+        ordered = [{"number": n, "id": b["id"], "caption": b["caption"], "files": [
+            {"number": i, "name": a["name"], "tool_filename": a["file"], "kind": a["kind"]}
+            for i, a in enumerate(b["assets"], 1)]} for n, b in enumerate(blocks, 1)]
+        task_parts.append("User material blocks in submitted order:\n" + json.dumps(ordered, ensure_ascii=False))
+    task_parts.append(describe_orchestrator_inputs(manifest))
+    task = "\n\n".join(task_parts)
     (output / "guide.txt").write_text(guide, encoding="utf-8")
     (output / "task.txt").write_text(task, encoding="utf-8")
     return run, guide, task
@@ -542,7 +534,7 @@ def parser():
     p.add_argument("--image-kind", choices=("drawings", "mesh_views", "photos", "unknown"), default="drawings")
     p.add_argument("--process-reviews", action="store_true",
                    help="require local drawing reviews and a separate architectural judgment before complete delivery")
-    p.add_argument("--scope", default="Build the supplied building at the requested detail; inspect saved results and report limitations.")
+    p.add_argument("--scope", default="", help="Optional user description of the building or requested scope.")
     p.add_argument("--role", choices=("coordinator", "local_observer"), default="coordinator")
     p.add_argument("--provider", choices=("scripted", *LIVE_PROVIDERS), required=True)
     p.add_argument("--script", type=Path, help="explicit offline Chat Completions response fixture")
