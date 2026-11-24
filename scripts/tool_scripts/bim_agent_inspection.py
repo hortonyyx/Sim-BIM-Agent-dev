@@ -12,6 +12,7 @@ import tempfile
 
 from scripts.tool_scripts.bim_agent_inference import _source
 from src.agent.execution.handoff_transaction import handoff_writer
+from src.agent.geometry.sim_components import MATERIAL_SCOPE
 
 
 POLICY = "object_evidence_v1"
@@ -162,8 +163,6 @@ def _attribute_sources(fields, resolve):
             _check_attribute_evidence(fields[key], resolve)
     for region in fields.get("thickness_regions", ()):
         _check_attribute_evidence(region["thickness"], resolve)
-    for material in fields.get("materials_by_host", {}).values():
-        _check_attribute_evidence(material, resolve)
 
 
 def _selected(rule, group, inventory, source):
@@ -218,8 +217,6 @@ def apply_rules(toolkit, source, records, packet):
             allowed = {"spatial"} if group == "spaces" else {"spatial", "material", "thickness"}
             if group == "boundaries":
                 allowed.add("thickness_regions")
-            if group == "openings":
-                allowed.add("materials_by_host")
             if not attrs or attrs - allowed:
                 raise ValueError(f"Unsupported assessment attributes for {group}: {attrs - allowed}")
             fields = {k: rule[k] for k in attrs}
@@ -241,7 +238,16 @@ def _load(source, directory, *, draft=False):
             if (record.get("schema_version") != SCHEMA or
                     record.get("source_model_sha256") != source["source_model_sha256"]):
                 raise ValueError("Inspection is bound to a different source model")
-            return record["declarations"]
+            declarations = record["declarations"]
+            # Full inspections declare material semantics in properties. Partial drafts
+            # have no computed properties and carry the same marker directly.
+            if record.get("properties", record).get("material_scope") != MATERIAL_SCOPE:
+                for group in ("boundaries", "openings"):
+                    for fields in declarations[group].values():
+                        old = {k: fields.pop(k) for k in ("material", "materials_by_host") if k in fields}
+                        if old:
+                            fields["legacy_surface_material"] = old
+            return declarations
     return _empty()
 
 
@@ -304,8 +310,9 @@ def snapshot(toolkit, source, records, *, complete=False, check_evidence=False):
                 if "spatial" in fields:
                     _spatial(fields["spatial"], resolve)
                 _attribute_sources(fields, resolve)
-    attrs = {group: {k: {f: v for f, v in fields.items() if f != "spatial"}
-                     for k, fields in records[group].items() if fields.keys() - {"spatial"}}
+    separate = {"spatial", "legacy_surface_material"}
+    attrs = {group: {k: {f: v for f, v in fields.items() if f not in separate}
+                     for k, fields in records[group].items() if fields.keys() - separate}
              for group in ("boundaries", "openings")}
     props = build_surface_properties(source, toolkit.manifest.get("thickness_candidates_mm"), attrs)
     return {"schema_version": SCHEMA, "source_model_sha256": source["source_model_sha256"],
@@ -328,7 +335,8 @@ def record_inspection(toolkit, candidate, text):
         records = apply_rules(toolkit, source, _load(source, path.parent, draft=True), json.loads(text))
         assessment = snapshot(toolkit, source, records)
         _write_json(path.parent / "sim_inspection_draft.json", {
-            "schema_version": SCHEMA, "source_model_sha256": source["source_model_sha256"], "declarations": records})
+            "schema_version": SCHEMA, "material_scope": MATERIAL_SCOPE,
+            "source_model_sha256": source["source_model_sha256"], "declarations": records})
         return {"candidate": candidate, "source_model_sha256": source["source_model_sha256"],
                 "coverage": _summary(source, assessment)}
 
@@ -353,7 +361,8 @@ def finish_inspection(toolkit, candidate, text):
     mesh_path = toolkit.run / "assets" / "input.glb" if source.get("mesh_frame") else None
     html = build_viewer_html(display, mesh_path=mesh_path, locale=toolkit.manifest.get("locale", "en"))
     _write_json(directory / "sim_inspection_draft.json", {
-        "schema_version": SCHEMA, "source_model_sha256": source["source_model_sha256"], "declarations": records})
+        "schema_version": SCHEMA, "material_scope": MATERIAL_SCOPE,
+        "source_model_sha256": source["source_model_sha256"], "declarations": records})
     _write_json(directory / "sim_inspection.json", assessment)
     _write(directory / "viewer.html", html.encode())
     return True

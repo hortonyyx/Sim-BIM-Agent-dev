@@ -156,11 +156,12 @@ def test_inspection_sidecar_is_source_bound_and_exports_only_public_fields(tmp_p
     path.write_text(json.dumps(source), encoding="utf-8")
     reason = {"en": "Drawn perimeter", "zh": "图纸标明空间范围"}
     assessment = {"grade": 5, "reason": reason, "source_refs": ["private-evidence"]}
-    material = {"en": "Paint", "zh": "涂料", "source": "from user", "source_refs": ["private-brief"]}
+    material = {"en": "Concrete wall with masonry infill", "zh": "混凝土墙，局部为砌体填充",
+                "source": "from user", "source_refs": ["private-brief"]}
     private = {
         "schema_version": "sim_inspection_v1", "source_model_sha256": source["source_model_sha256"],
         "spatial": {"spaces": {"room": assessment, "unrelated": assessment}},
-        "properties": {"components": {"private-component": {"thickness": {
+        "properties": {"material_scope": "principal_construction", "components": {"private-component": {"thickness": {
             "value_mm": 200, "source": "from material", "source_refs": ["private-drawing"]}}},
             "boundaries": {"room/wall/0": {"component_ids": ["private-component"], "material": material}}},
     }
@@ -170,8 +171,14 @@ def test_inspection_sidecar_is_source_bound_and_exports_only_public_fields(tmp_p
     assert public["spatial"]["spaces"] == {"room": {"grade": 5, "reason": reason}}
     boundary = public["properties"]["boundaries"]["room/wall/0"]
     assert boundary == {"applicable": True, "thicknesses": [{"value_mm": 200, "source": "from material"}],
-                        "material": {"en": "Paint", "zh": "涂料", "source": "from user"}}
+                        "material": {k: material[k] for k in ("en", "zh", "source")}}
     assert "private-" not in json.dumps(public)
+    del private["properties"]["material_scope"]
+    material.update(en="Painted finish", zh="涂料饰面")
+    sidecar.write_text(json.dumps(private), encoding="utf-8")
+    old = _display_payload(rgv.load_viewer_geometry(path))["inspection"]
+    assert old["properties"]["boundaries"]["room/wall/0"] == {**boundary, "material": None}
+    assert old["spatial"] == public["spatial"]
     private["source_model_sha256"] = "wrong-model"
     sidecar.write_text(json.dumps(private), encoding="utf-8")
     archived = _display_payload(rgv.load_viewer_geometry(path))["inspection"]
@@ -368,7 +375,7 @@ def test_selection_cards_show_canonical_identity_and_category_quantities_in_both
         "schema_version": "sim_inspection_v1", "source_model_sha256": "test-model",
         "spatial": {"spaces": {"Z1": {"grade": 4, "reason": {"en": "Room traced", "zh": "空间范围按图绘制"}}},
                     "openings": {"win1": {"grade": 2, "reason": {"en": "Sill inferred", "zh": "窗台推断"}}}},
-        "properties": {"openings": {"win1": {"component_ids": ["unit"], "material": {
+        "properties": {"material_scope": "principal_construction", "openings": {"win1": {"component_ids": ["unit"], "material": {
             "en": "Glass", "zh": "玻璃", "source": "from material"}}},
             "components": {"unit": {"thickness": {"value_mm": 24, "source": "from user"}}}},
     }
@@ -429,6 +436,8 @@ console.log(JSON.stringify(result));
         assert ('Not recorded' if lang == 'en' else '未记录') in surface
         assert ('Sill inferred' if lang == 'en' else '窗台推断') in window and '2 · ' in window
         assert ('Glass' if lang == 'en' else '玻璃') in window and '24 mm' in window
+        for label in (("Material", "Thickness") if lang == "en" else ("材料", "厚度")):
+            assert f">{label}<" in window and f">{label}<" in surface
         assert '>from material<' in window and '>from user<' in window
         assert 'confidence-row' not in floor and 'confidence-row' not in edge
         assert 'class="pick-name">Z01_W1_Part2_Edge2<' in edge and 'class="kv"' not in edge

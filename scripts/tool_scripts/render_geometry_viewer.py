@@ -737,15 +737,14 @@ _APP_JS = r"""
       SOURCE_BOUNDARIES[id]?.kind==='virtual' || attrs?.applicable===false;
     const fallback=esc(msg(virtual ? 'Not applicable' : 'Not recorded'));
     const tag=source=>source ? '<small class="source-tag">'+esc(source)+'</small>' : '';
-    const material=attrs?.materials_by_host?.[SOURCE_MAP.surfaces?.[u.host] || u.host] || attrs?.material;
+    const material=!virtual && attrs?.material;
     const thicknesses=regionalThicknesses(attrs,point);
     const thickness=thicknesses.map(t=>'<span class="attr-value">'+esc(t.value_mm.toLocaleString(locale,{maximumFractionDigits:6}))+
       ' mm'+tag(t.source)+'</span>').join('');
-    const thicknessLabel=u.kind==='window' ? 'Glazing thickness' : (u.kind==='opening' && !virtual ? 'Door leaf thickness' : 'Component thickness');
-    const value=(label,content)=>'<div class="surface-attribute"><span>'+esc(msg(label))+'</span><div>'+content+'</div></div>';
-    return '<div class="surface-attributes">'+value('Material on this side',!virtual && material
-      ? '<span class="attr-value">'+esc(material[locale==='en'?'en':'zh'])+tag(material.source)+'</span>' : fallback)+
-      value(thicknessLabel,!virtual && thickness || fallback)+'</div>';
+    const observation=material ? esc(material[locale==='en'?'en':'zh']) : fallback;
+    return '<div class="surface-attributes"><div class="material-observation"><span>'+esc(msg('Material'))+'</span>'+
+      tag(material?.source)+'<p>'+observation+'</p></div><div class="surface-attribute"><span>'+esc(msg('Thickness'))+
+      '</span><div>'+(!virtual && thickness || fallback)+'</div></div></div>';
   }
   function component(u){
     const key=u.name;
@@ -1155,6 +1154,9 @@ _STYLE = r"""
   .pick-metric small {font-size:12px;font-weight:500;color:var(--muted);}
   .pick-fields:empty,.pick-metrics:empty {display:none;}
   .surface-attributes {display:grid;gap:9px;padding:11px 15px 12px;border-top:1px solid var(--line);}
+  .material-observation {display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:baseline;}
+  .material-observation>span {color:var(--muted);font-size:12px;}
+  .material-observation p {grid-column:1/-1;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere;}
   .surface-attribute {display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:12px;align-items:baseline;font-size:12px;}
   .surface-attribute>span {color:var(--muted);}
   .surface-attribute>div {text-align:right;overflow-wrap:anywhere;font-size:13px;font-weight:580;}

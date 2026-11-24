@@ -45,19 +45,33 @@ def region_area(row):
     return Polygon([v[:2] for v in row["vertices"]], [[v[:2] for v in ring] for ring in row["holes"]]).area
 
 
-def test_one_to_many_slab_is_one_construction_with_independent_side_finishes():
+def test_one_to_many_slab_shares_thickness_and_respects_local_material_observations():
     source, (upper, left, right) = stacked()
     original = deepcopy(source)
-    values = {"boundaries": {left: {"thickness": thickness(207.5), "material": materials("Paint", "涂料")},
-                             upper: {"material": materials("Tile", "地砖")}}}
+    slab = materials("Concrete slab; the reinforcement is not visible.", "混凝土楼板，配筋未可见。")
+    values = {"boundaries": {left: {"thickness": thickness(207.5)}, upper: {"material": slab}}}
     result = build_surface_properties(source, {"horizontal": [120, 180]}, values)
     sides = result["boundaries"]
     ids = sides[upper]["component_ids"]
     assert len(ids) == 1 and ids == sides[left]["component_ids"] == sides[right]["component_ids"]
     assert quantities(result, "boundaries", upper) == [thickness(207.5)]
     assert "regions" not in sides[upper]
-    assert sides[upper]["material"]["en"] == "Tile" and sides[left]["material"]["en"] == "Paint"
-    assert sides[right]["material"]["source"] == "inference"
+    assert result["material_scope"] == "principal_construction"
+    assert [sides[bid]["material"] for bid in (upper, left, right)] == [slab] * 3
+    values["boundaries"][left]["material"] = slab
+    del values["boundaries"][upper]["material"]
+    partial = build_surface_properties(source, declarations=values)["boundaries"]
+    assert partial[left]["material"] == slab
+    assert partial[upper]["material"]["source"] == partial[right]["material"]["source"] == "inference"
+    assert "single primary material" in partial[upper]["material"]["en"]
+    timber_guess = dict(materials("A timber slab is plausible.", "可能为木楼板。"), source="inference", source_refs=[])
+    values["boundaries"][upper] = {"material": timber_guess}
+    mixed = build_surface_properties(source, declarations=values)["boundaries"]
+    assert mixed[left]["material"] == slab and mixed[right]["material"] == timber_guess
+    assert "single primary material" in mixed[upper]["material"]["en"]
+    values["boundaries"][right] = {"material": slab}
+    documented = build_surface_properties(source, declarations=values)["boundaries"]
+    assert [documented[bid]["material"] for bid in (upper, left, right)] == [slab] * 3
     assert source == original
     values["boundaries"][left]["thickness"] = thickness(211.5, "from user")
     changed = build_surface_properties(source, declarations=values)
@@ -126,15 +140,17 @@ def test_terrace_and_shared_floor_resolve_different_kinds_and_open_interfaces_ha
         build_surface_properties(opened, declarations={"boundaries": {lower["id"]: {"thickness": thickness(500)}}})
 
 
-def test_glass_total_decimal_candidates_door_sides_and_unfilled_opening():
+def test_glass_total_decimal_candidates_door_observation_and_unfilled_opening():
     source = build_source_bim(three_rooms())
     window = next(o["id"] for o in source["openings"] if o["kind"] == "window")
-    host = source["opening_hosts"]["door"][0]
+    observation = materials("The drawings identify a laminated timber leaf.", "图纸注明门扇为胶合木。")
     values = {"openings": {window: {"thickness": thickness(24)},
-                           "door": {"materials_by_host": {host: materials("Oak", "橡木")}}}}
+                           "door": {"material": observation}}}
     result = build_surface_properties(source, {"glazing": [9.75]}, values)
     assert quantities(result, "openings", window) == [thickness(24)]
-    assert result["openings"]["door"]["materials_by_host"] == {host: materials("Oak", "橡木")}
+    assert result["openings"]["door"]["material"] == observation
+    with pytest.raises(ValueError, match="invalid openings property"):
+        build_surface_properties(source, declarations={"openings": {"door": {"materials_by_host": {}}}})
     assert quantities(result, "openings", "door")[0]["source"] == "inference"
     inferred = build_surface_properties(source, {"glazing": [9.75]})
     assert quantities(inferred, "openings", window) == [{"value_mm": 9.75, "source": "inference", "source_refs": []}]
@@ -142,6 +158,61 @@ def test_glass_total_decimal_candidates_door_sides_and_unfilled_opening():
         build_surface_properties(source, {"glazing": [9.75]}, {"openings": {window: {"thickness": thickness(24, "inference")}}})
     source["openings"][next(i for i, o in enumerate(source["openings"]) if o["id"] == "door")]["kind"] = "open"
     assert build_surface_properties(source)["openings"]["door"] == {"component_ids": [], "material": None}
+
+
+def test_shared_wall_adjoining_shaft_and_office_limits_material_inference_to_contact():
+    data = three_rooms().model_dump()
+    data["floors"][0]["cells"][1]["role"] = "shaft"
+    source = build_source_bim(GeometryInput.model_validate(data))
+    large = next(b for b in source["boundaries"] if set(b["adjacent_space_ids"]) == {"a", "b"})
+    owners = {b["space_id"]: b["id"] for b in source["boundaries"] if b["id"] in large["counterpart_ids"]}
+    values = build_surface_properties(source)["boundaries"]
+    assert "masonry enclosure" in values[owners["a"]]["material"]["en"]
+    assert "framed partition" in values[owners["b"]]["material"]["en"]
+    assert "single primary material" in values[large["id"]]["material"]["en"]
+
+
+@pytest.mark.parametrize(("neighbour", "role", "expected"), [
+    ("LIFT_3:lift3", "shaft", "metal lift landing door"),
+    ("北电梯井", "shaft", "metal lift landing door"),
+    ("northElevatorShaft", "shaft", "metal lift landing door"),
+    ("liftLobby", "lobby", "Interior door"),
+    ("PIPE:pipe", "shaft", "Interior door"),
+    ("stair", "stairwell", "metal leaf"),
+])
+def test_door_inferences_use_connected_space_context_and_respect_explicit_material(neighbour, role, expected):
+    data = three_rooms().model_dump()
+    cells = data["floors"][0]["cells"]
+    cells[0]["role"] = "retail"
+    cells[1].update(id=neighbour, role=role)
+    data["openings"][0]["other_space_id"] = neighbour
+    for name, p1, p2 in [("shopEntry", [0, 3], [0, 4]), ("plainEntry", [1, 0], [2, 0])]:
+        data["openings"].append(dict(data["openings"][0], id=name, p1=p1, p2=p2, other_space_id=None))
+    source = build_source_bim(GeometryInput.model_validate(data))
+    result = build_surface_properties(source)
+    doors = result["openings"]
+    assert expected in doors["door"]["material"]["en"]
+    assert "glazed entrance" in doors["shopEntry"]["material"]["en"]
+    assert "Exterior door" in doors["plainEntry"]["material"]["en"]
+    for name in ("door", "shopEntry", "plainEntry"):
+        assert doors[name]["material"]["source"] == "inference"
+        assert quantities(result, "openings", name)[0]["value_mm"] == 45
+    declared = materials("The shop entrance has an oak leaf.", "店面入口采用橡木门扇。")
+    explicit = build_surface_properties(source, declarations={"openings": {"shopEntry": {"material": declared}}})
+    assert explicit["openings"]["shopEntry"]["material"] == declared
+
+
+def test_distant_window_on_storefront_wall_does_not_establish_entry_material():
+    data = {"schema_version": "2", "footprint_x": [0, 16], "footprint_y": [0, 80],
+            "floors": [{"name": "G", "z_floor": 0, "ceiling_height": 3,
+                        "cells": [{"id": "shop", "role": "retail", "x": [0, 16], "y": [0, 80]}]}],
+            "windows": [{"id": "display", "room": "shop", "floor": "G", "facade": "West", "span": [1, 2], "z": [1, 2]}],
+            "openings": [{"id": "entry", "kind": "door", "space_id": "shop", "other_space_id": None,
+                          "p1": [0, 77], "p2": [0, 78],
+                          "z": [0, 2.1], "source_refs": ["fixture"]}]}
+    source = build_source_bim(GeometryInput.model_validate(data))
+    material = build_surface_properties(source)["openings"]["entry"]["material"]
+    assert material["source"] == "inference" and "undetermined" in material["en"]
 
 
 def test_archived_scope_is_preserved_and_explicit_values_precede_candidates():

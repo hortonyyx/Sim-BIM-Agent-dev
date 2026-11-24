@@ -114,7 +114,8 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
     else:
         task += ("\n\nAssess every zone, boundary and opening for spatial evidence, with a grade and a short "
                  "reason in English and Chinese. Use get_bim_reference('sim_inspection') for the assessment "
-                 "and material/thickness schema. Pass the rules in finish_bim or stage them with record_sim_inspection.")
+                 "and material/thickness schema. Describe the principal construction in a short bilingual observation "
+                 "and qualify what the evidence supports. Pass the rules in finish_bim or stage them with record_sim_inspection.")
     (output / "guide.txt").write_text(guide, encoding="utf-8")
     (output / "task.txt").write_text(task, encoding="utf-8")
     return run, guide, task

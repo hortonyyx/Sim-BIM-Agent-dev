@@ -4,12 +4,14 @@ from math import isfinite
 
 from shapely.ops import unary_union
 
+from .principal_material import contact_materials, material_across_patches, opening_material
 from .sim_component_topology import Plane, component_id, physical_families
 from .source_bim import EPS, _parts
 from .thickness_options import PRESETS_MM, normalize_candidates
 
 
 SOURCES = ("inference", "from material", "from user")
+MATERIAL_SCOPE = "principal_construction"
 _DOOR_MM = (8, 10, 12, 35, 36, 40, 45, 50, 55, 60, 70, 80)
 _TARGET_MM = {"wall": 150, "horizontal": 150, "roof": 150, "glazing": 24, "door": 45}
 
@@ -43,21 +45,6 @@ def _material(row):
             raise ValueError("material description requires English and Chinese display text")
         record[key] = row[key].strip()
     return record
-
-
-def _inferred_material(kind, role):
-    if kind == "floor" and role in {"toilet", "bathroom", "kitchen", "restroom"}:
-        label = ("Ceramic tile", "瓷砖")
-    else:
-        label = {
-            "floor": ("Cementitious flooring", "水泥基面层"),
-            "ceiling": ("Painted soffit", "涂料顶面"),
-            "roof": ("Painted soffit", "涂料顶面"),
-            "wall": ("Painted finish", "涂料饰面"),
-            "window": ("Glass", "玻璃"),
-            "door": ("Timber door leaf", "木质门扇"),
-        }[kind]
-    return {"en": label[0], "zh": label[1], "source": "inference", "source_refs": []}
 
 
 def _adopt(kind, candidates, target=None):
@@ -134,25 +121,27 @@ def _declarations(declarations, boundaries, openings):
     if not isinstance(supplied, dict) or set(supplied) - {"boundaries", "openings"}:
         raise ValueError("property declarations must be keyed by boundaries or openings")
     result = {}
-    for group, inventory, extra in (("boundaries", boundaries, "thickness_regions"),
-                                    ("openings", openings, "materials_by_host")):
+    for group, inventory in (("boundaries", boundaries), ("openings", openings)):
+        allowed = {"material", "thickness"}
+        if group == "boundaries":
+            allowed.add("thickness_regions")
         rows = supplied.get(group, {})
         if not isinstance(rows, dict) or set(rows) - inventory.keys():
             raise ValueError(f"property declarations reference unknown {group} IDs")
         validated = {}
         for identity, row in rows.items():
-            if not isinstance(row, dict) or set(row) - {"material", "thickness", extra}:
+            if not isinstance(row, dict) or set(row) - allowed:
                 raise ValueError(f"invalid {group} property declaration on {identity}")
             obj = {}
             if "material" in row:
                 obj["material"] = _material(row["material"])
             if "thickness" in row:
                 obj["thickness"] = _thickness(row["thickness"])
-            if extra == "thickness_regions" and extra in row:
-                regions = row[extra]
+            if "thickness_regions" in row:
+                regions = row["thickness_regions"]
                 if not isinstance(regions, list) or not regions:
                     raise ValueError(f"expected nonempty thickness_regions on {identity}")
-                obj[extra] = []
+                obj["thickness_regions"] = []
                 # Validate against the actual declaring side, independently of any contact projection.
                 plane = Plane(inventory[identity])
                 host = plane.shape(inventory[identity])
@@ -173,11 +162,7 @@ def _declarations(declarations, boundaries, openings):
                         raise ValueError(f"local thickness changes require a material or user source on {identity}")
                     if not host.buffer(EPS).covers(plane.shape(region)):
                         raise ValueError(f"thickness region extends outside {identity}")
-                    obj[extra].append({**region, "thickness": thickness})
-            if extra == "materials_by_host" and extra in row:
-                if not isinstance(row[extra], dict):
-                    raise ValueError(f"materials_by_host must use source boundary IDs on {identity}")
-                obj[extra] = {bid: _material(value) for bid, value in row[extra].items()}
+                    obj["thickness_regions"].append({**region, "thickness": thickness})
             validated[identity] = obj
         result[group] = validated
     return result
@@ -232,7 +217,7 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
     candidates = normalize_candidates(thickness_candidates)
     boundaries = {b["id"]: b for b in source.get("boundaries", [])}
     openings = {o["id"]: o for o in source.get("openings", [])}
-    roles = {s["id"]: s.get("role") for s in source.get("spaces", [])}
+    spaces = {s["id"]: s for s in source.get("spaces", [])}
     declared = _declarations(declarations, boundaries, openings)
     sides, apertures = declared["boundaries"], declared["openings"]
     readings = _legacy_readings(source)
@@ -243,6 +228,7 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
                        else [row["thickness"]])
             readings[bid] = _agree(records, bid)
     components, result, open_results = {}, {}, {}
+    patch_materials = defaultdict(list)
     for family, kind, plane, patches in physical_families(source, boundaries):
         # Exterior walls without a counterpart and walls dividing rooms have different nominal defaults.
         target = 240 if kind == "wall" and len(family) == 1 else _TARGET_MM[kind]
@@ -258,6 +244,7 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
                     value = {**value, "value_mm": _adopt(kind, candidates, value["value_mm"])["value_mm"]}
                 applicable[bid] = value
         by_value = _resolve_family(family, kind, plane, patches, sides, applicable, fallback)
+        materials_by_contact = {}
         for rows in by_value.values():
             owners = sorted({bid for hosts, _, _ in rows for bid in hosts})
             identity = [family]
@@ -267,7 +254,11 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
             components[cid] = {"kind": kind, "boundary_ids": owners,
                                "thickness": _agree([r[2] for r in rows], ", ".join(owners))}
             for hosts, shape, _ in rows:
+                if hosts not in materials_by_contact:
+                    roles = {spaces.get(boundaries[bid]["space_id"], {}).get("role") for bid in hosts}
+                    materials_by_contact[hosts] = contact_materials(hosts, sides, kind, roles)
                 for bid in hosts:
+                    patch_materials[bid].append(materials_by_contact[hosts][bid])
                     record = result.setdefault(bid, {"component_ids": [], "material": None})
                     if cid not in record["component_ids"]:
                         record["component_ids"].append(cid)
@@ -290,8 +281,11 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
             record["regions"] = [region for cid, shapes in sorted(masks.items())
                                  for region in shapes[0][0].regions(unary_union([s for _, s in shapes]), cid)]
         record["component_ids"].sort()
-        material = sides.get(bid, {}).get("material")
-        record["material"] = material or _inferred_material(boundary["geometry_type"], roles.get(boundary["space_id"]))
+        record["material"] = material_across_patches(patch_materials[bid])
+    windows_by_host = defaultdict(list)
+    for opening in openings.values():
+        if opening["kind"] == "window":
+            windows_by_host[opening["host_boundary_id"]].append(opening)
     for oid, opening in openings.items():
         properties = apertures.get(oid, {})
         if opening["kind"] == "open":
@@ -306,14 +300,9 @@ def build_surface_properties(source, thickness_candidates=None, declarations=Non
         if thickness["source"] == "inference" and thickness["value_mm"] not in choices:
             raise ValueError(f"inferred thickness on {oid} must use a {kind} candidate")
         components[cid] = {"kind": kind, "opening_ids": [oid], "thickness": thickness}
-        material = properties.get("material") or _inferred_material(opening["kind"], None)
+        material = properties.get("material") or opening_material(opening, spaces, windows_by_host, boundaries)
         open_results[oid] = {"component_ids": [cid], "material": material}
-        if "materials_by_host" in properties:
-            allowed = source.get("opening_hosts", {}).get(oid, [opening["host_boundary_id"]])
-            if set(properties["materials_by_host"]) - set(allowed):
-                raise ValueError(f"opening side material bound to an incorrect boundary: {oid}")
-            open_results[oid]["materials_by_host"] = properties["materials_by_host"]
-    return {"components": components, "boundaries": result, "openings": open_results}
+    return {"material_scope": MATERIAL_SCOPE, "components": components, "boundaries": result, "openings": open_results}
 
 
 def legacy_surface_properties(source):

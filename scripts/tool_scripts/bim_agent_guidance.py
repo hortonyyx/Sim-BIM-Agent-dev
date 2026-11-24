@@ -565,7 +565,8 @@ def describe_orchestrator_inputs(manifest: dict) -> str:
         lines.append("Explicitly supplied floor-plan names: " + ", ".join(manifest["floor_plan_images"]) + ".")
     if manifest.get("spatial_assessment_policy") == "object_evidence_v1":
         lines.append("Assess the spatial geometry of each saved zone, boundary and opening. Give both English and "
-                     "Chinese reasons and record surface material and thickness evidence where available. Use "
+                     "Chinese reasons. Describe each physical surface's principal construction material in a short "
+                     "bilingual observation, qualifying uncertainty. Record thickness and its source separately. Use "
                      "get_bim_reference('sim_inspection') and batch by shared evidence with inspection_json. "
                      "The user's thickness candidates in millimetres are in inputs().thickness_candidates_mm.")
     return "\n".join(lines)
@@ -615,18 +616,24 @@ Each source_refs entry is one of image:<exact admitted filename>, view:view_NNNN
 mesh:mesh_NNN, section:section_NNN, brief, block:<admitted block ID with caption>, or input:/json/pointer
 into inputs().building_input.declaration. Append #<locator> for the specific region or statement.
 Private refs stay in the workspace. Keep paths and internal IDs out of the public bilingual reason.
-On boundaries and openings you may independently set material:{en,zh,source,source_refs} and/or
-thickness:{value_mm,source,source_refs}. Use lowercase source tags: "from material" for evidence in
-an admitted original, "from user" for an explicit instruction for the particular element, "inference"
-for a judgment. Capture observed exterior finishes and any explicit user assignments; infer omitted
-materials at a simple descriptive level. A selected thickness shortlist is a constraint on an inferred
+On boundaries and openings set material:{en,zh,source,source_refs} and thickness:{value_mm,source,source_refs}
+independently. Material describes the component's principal construction in a short, free-text observation in
+both languages. A single door leaf has one material description. An observation can say "The leaf appears
+metallic. Its core is unknown." Where only paint, tile, surface colour or wood grain is visible, qualify
+any inference about the underlying construction. Leave finish layers, precise assemblies and simulation libraries
+to the downstream plugin. Use "from user" when a caption, brief or declaration identifies the principal material
+for this element. Use "from material" when the supplied drawings or imagery support the observation itself.
+Use "inference" for a conclusion about an unseen material derived from building context. For each door check the
+connected rooms, lift shaft/landing, stair and exterior relation, and any visible entrance or glazing evidence.
+Apply those distinctions before grouping similar openings. Where information is missing state what is uncertain.
+These observations do not influence the spatial grade. A selected thickness shortlist is a constraint on an inferred
 choice and is not an explicit user assertion about that element. Wall, horizontal floor/ceiling, roof
 and total glazing thickness use their respective inputs().thickness_candidates_mm groups. For inferred
 values choose an admitted candidate if selected, otherwise a common module. Doors use ordinary inferred
 values. Use the full glazing unit thickness including cavities; do not construct layers or change opening
-geometry. Both sides of a physical component share its total thickness; materials describe each face.
+geometry. Both sides of a physical component share its total thickness.
 For actual documented local changes, boundaries may carry thickness_regions:[{vertices:[[x,y,z],...],
-holes:[],thickness:{value_mm,source,source_refs}}]; openings can carry materials_by_host:{hostID:material}.
+holes:[],thickness:{value_mm,source,source_refs}}].
 The component builder resolves shared component membership and fills missing physical properties with
 labelled inferences. Open-air/unknown separators have no material or thickness.""",
     'drawing_process': DRAWING_PROCESS_REFERENCE,

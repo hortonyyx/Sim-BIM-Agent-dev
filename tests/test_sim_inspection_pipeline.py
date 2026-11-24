@@ -18,7 +18,7 @@ def _run(tmp_path):
     images.mkdir()
     Image.new("RGB", (120, 120), "white").save(images / "plan.png")
     return prepare_inputs(tmp_path / "execution", images=images, mesh=None, building_input=None,
-        scope="The door is oak.", image_kind="drawings", floor_plan_images=None,
+        scope="The door leaf has a solid oak core.", image_kind="drawings", floor_plan_images=None,
         max_candidates=5, orchestrator=True, thickness_candidates_mm={"wall": [180]})
 
 
@@ -50,7 +50,8 @@ def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
         opening = {"kind": "opening", "all": True, "spatial": _grade(2, "Door presence stated in brief.",
             "用户提及门，位置为估算。", ["brief"])}
         oak = {"kind": "opening", "type": "door", "material": {
-            "en": "Oak", "zh": "橡木", "source": "from user", "source_refs": ["brief"]}}
+            "en": "The door leaf has a solid oak core.", "zh": "门扇芯材为实心橡木。",
+            "source": "from user", "source_refs": ["brief"]}}
         packet = {"rules": [boundary, opening, oak]}
         published = bim.finish_to(tmp_path / "delivery", candidate, reviews=reviews, inspection=packet)
         public = Path(published["viewer"])
@@ -61,10 +62,13 @@ def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
         assert b"fixture-locator" not in public.read_bytes()
         assessment = json.loads(sidecar.read_bytes())
         assert assessment["source_model_sha256"] == source["source_model_sha256"]
+        assert assessment["properties"]["material_scope"] == "principal_construction"
+        assert json.loads((directory / "sim_inspection_draft.json").read_bytes())["material_scope"] == "principal_construction"
+        assert oak["material"]["en"].encode() in public.read_bytes()
         for group in ("spaces", "boundaries", "openings"):
             assert set(assessment["spatial"][group]) == {r["id"] for r in source[group]}
         for door in source["openings"]:
-            assert assessment["properties"]["openings"][door["id"]]["material"]["source"] == "from user"
+            assert assessment["properties"]["openings"][door["id"]]["material"] == oak["material"]
         finish = bim.call("finish_bim", candidate=candidate, reviews_json=reviews).require_ok()
         assert attest_finished_handoff(run, finish, candidate)
         previous = {name: (run / name).read_bytes() for name in finish["delivery_artifact_sha256"]}
@@ -122,6 +126,44 @@ def test_evidence_and_selectors_reject_wrong_origin_unknown_ids_and_missing_refs
         with pytest.raises(ValueError):
             apply_rules(toolkit, source, rows, {"rules": [rule, {**rule, **update}]})
         assert rows == _empty()
+
+
+@pytest.mark.parametrize("filename", ["sim_inspection.json", "sim_inspection_draft.json"])
+def test_legacy_side_materials_remain_auditable_across_revisions_without_becoming_primary(tmp_path, filename):
+    from scripts.tool_scripts.bim_agent_inspection import snapshot
+    from src.agent.execution.source_proposal import export_source_proposal
+    from tests.test_source_proposal import _proposal
+
+    run, _, _ = _run(tmp_path)
+    candidate = "candidate_01"
+    folder = run / candidate
+    export_source_proposal(_proposal(), folder)
+    source = json.loads((folder / "source_model.json").read_bytes())
+    old = _empty()
+    opening = next(o for o in source["openings"] if o["kind"] == "door")
+    host, door = opening["host_boundary_id"], opening["id"]
+    finish = {"en": "Decorative oak veneer", "zh": "装饰橡木贴面", "source": "from user", "source_refs": ["brief"]}
+    sided = {host: finish}
+    grade = _grade(1, "Assumed height.", "高度为推断。")
+    thickness = {"value_mm": 45, "source": "inference", "source_refs": []}
+    old["boundaries"][host] = {"material": finish, "spatial": grade}
+    old["openings"][door] = {"material": finish, "materials_by_host": sided, "thickness": thickness}
+    archive = {"schema_version": "sim_inspection_v1", "source_model_sha256": source["source_model_sha256"],
+               "declarations": old}
+    if filename == "sim_inspection.json":
+        archive["properties"] = {}
+    path = folder / filename
+    path.write_text(json.dumps(archive), encoding="utf-8")
+    toolkit = Toolkit(run)
+    revised = inherited_records(toolkit, source, candidate)
+    assert revised["openings"][door] == {
+        "thickness": thickness, "legacy_surface_material": {"material": finish, "materials_by_host": sided}}
+    assert revised["boundaries"][host] == {"spatial": grade, "legacy_surface_material": {"material": finish}}
+    new_doc = snapshot(toolkit, source, revised, check_evidence=True)
+    assert new_doc["spatial"]["boundaries"][host] == grade
+    assert new_doc["properties"]["openings"][door]["material"]["source"] == "inference"
+    assert finish["en"] not in json.dumps(new_doc["properties"])
+    assert json.loads(path.read_bytes()) == archive
 
 
 def test_dsh_initial_messages_and_resume_bind_candidates(tmp_path, monkeypatch):

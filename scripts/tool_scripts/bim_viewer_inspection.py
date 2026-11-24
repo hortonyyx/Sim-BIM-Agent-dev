@@ -51,7 +51,7 @@ def public_inspection(source, inspection):
     bound = bool(source.get("source_model_sha256") and isinstance(inspection, dict)
                  and inspection.get("schema_version") == "sim_inspection_v1"
                  and inspection.get("source_model_sha256") == source["source_model_sha256"])
-    from src.agent.geometry.sim_components import legacy_surface_properties
+    from src.agent.geometry.sim_components import MATERIAL_SCOPE, legacy_surface_properties
 
     result = {"spatial": {}, "properties": {"boundaries": {}, "openings": {}}}
     if not bound:
@@ -59,6 +59,7 @@ def public_inspection(source, inspection):
     props = inspection.get("properties")
     if props is None:
         props = legacy_surface_properties(source)
+    has_main_material = props.get("material_scope") == MATERIAL_SCOPE
     components = props.get("components", {})
     for group in ("spaces", "boundaries", "openings"):
         ratings = result["spatial"][group] = {}
@@ -83,11 +84,8 @@ def public_inspection(source, inspection):
                     if thickness not in thicknesses:
                         thicknesses.append(thickness)
                     indexes[cid] = thicknesses.index(thickness)
-            item = {"material": _material(material), "thicknesses": thicknesses,
+            item = {"material": _material(material) if has_main_material else None, "thicknesses": thicknesses,
                     "applicable": bool(component_ids or material)}
-            if group == "openings" and face.get("materials_by_host"):
-                item["materials_by_host"] = {k: _material(v) for k, v in face["materials_by_host"].items()
-                                             if k in source.get("opening_hosts", {}).get(identity, ())}
             if len(thicknesses) > 1:
                 item["regions"] = [{"index": indexes[r["component_id"]], "vertices": r["vertices"],
                                     "holes": r.get("holes", [])} for r in face.get("regions", ())

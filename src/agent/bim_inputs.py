@@ -61,6 +61,7 @@ IMPLEMENTATION_FILES = (
     'src/agent/execution/handoff_transaction.py',
     'scripts/tool_scripts/bim_viewer_inspection.py',
     'src/agent/geometry/sim_components.py',
+    'src/agent/geometry/principal_material.py',
     'src/agent/geometry/sim_component_topology.py',
     'src/agent/geometry/thickness_options.py',
     'src/agent/geometry/viewer_metrics.py',
