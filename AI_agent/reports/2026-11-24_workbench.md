@@ -74,3 +74,7 @@
 在独立工作区使用真实 DSH 和本地脚本模型完成浏览器 Run 到 Sim-BIM 的验收。空 kickoff 配合三张重排后的图和三个水平构件厚度，主控调用四次，协作模型调用一次，交付两个空间、十二个边界面和两个开口的模型。对实际请求逐角色检查，五档评分仅随系统消息发送，占位示例也没有出现在请求中。验收记录见 `D:/Sim-BIM-Agent/cache/sim-bim-workbench-kickoff-20261124/workbench-standalone-e2e-1_1n55fa/accepted.json`，另有中英文文件排序及厚度取消、刷新和工作区切换的真实浏览器记录，分别在同级 `sim-bim-ordered-blocks-20261124` 与 `sim-bim-thickness-enter-20261124`。
 
 八组定向回归共 169 项通过，结果保存在 D:/Sim-BIM-Agent/cache/pytest/d3472cc5a305/results.xml。
+
+## 输入页文案
+
+工作台首页以现有 Sim-BIM 品牌作为主标题，上传区改为 New material block。两种界面语言的占位文本直接展示样例。素材组说明把两张平面图片和一份 GLB 对应到同组的三个文件编号。开发提交 `b2ea92ba`，登记 runtime-v67 / domain-v197。工作台定向测试 6 项通过，1280 × 800 的中英文截图及输入为空的检查记录在 `D:/Sim-BIM-Agent/cache/sim-bim-workbench-copy-20261124/`。指北针校准、批注与重建处于方案讨论阶段。
