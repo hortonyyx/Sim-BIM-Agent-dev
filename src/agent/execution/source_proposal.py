@@ -233,6 +233,7 @@ def compile_source_proposal(proposal: dict, *, provenance: dict | None = None,
 def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | None = None,
                            mesh_path: Path | None = None,
                            locale: str = "zh-CN",
+                           inspection_builder=None,
                            vertical_continuity_policy: str | None = None) -> dict:
     """Compile and save a new inspectable candidate; never claim visual approval."""
     started = perf_counter()
@@ -252,6 +253,10 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
             checkpoint = perf_counter()
             display = source_view_geometry(source)
             (out_dir / "display_geometry.json").write_bytes(_json_bytes(display, indent=2))
+            if inspection_builder is not None:
+                inspection = inspection_builder(source)
+                (out_dir / "sim_inspection.json").write_bytes(_json_bytes(inspection))
+                display["sim_inspection"] = inspection
             timings["display_geometry_seconds"] = perf_counter() - checkpoint
             checkpoint = perf_counter()
             from scripts.tool_scripts.render_geometry_viewer import build_viewer_html

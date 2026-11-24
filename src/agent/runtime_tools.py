@@ -48,7 +48,7 @@ LOCAL_OBSERVER_TOOL_NAMES = (
     "map_dimension_chain", "compare_facade_spans", "map_pixels", "read_candidate_items",
 )
 COORDINATOR_ONLY_TOOL_NAMES = (
-    "record_inference", "inspect_inference", "audit_inference_candidate",
+    "record_inference", "inspect_inference", "audit_inference_candidate", "record_sim_inspection",
     "inspect_plan_draft", "revise_plan_bim", "view_plan_wall_support",
     "claim_transaction", "replace_claim_sources", "claim_status", "check_wall_dimensions", "inspect_candidate",
     "check_source_space_relation", "check_openings",

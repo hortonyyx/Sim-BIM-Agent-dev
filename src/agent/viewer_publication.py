@@ -80,4 +80,6 @@ def publish_attested_viewer(run: Path, proof: dict, directory: Path) -> Path:
     expected = proof.get("artifact_sha256", {}).get(f"{candidate}/viewer.html")
     if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("The finished viewer has no bound digest")
-    return publish_viewer(run, candidate, directory, expected_sha256=expected)
+    from src.agent.execution.handoff_transaction import handoff_reader
+    with handoff_reader(run):
+        return publish_viewer(run, candidate, directory, expected_sha256=expected)

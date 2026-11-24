@@ -44,6 +44,11 @@ def publish_finished(run: Path, candidate: str, reply, output_directory) -> dict
     renderer_names = ("src/agent/execution/source_proposal.py", "src/agent/geometry/source_bim.py",
                       "scripts/tool_scripts/render_geometry_viewer.py",
                       "scripts/tool_scripts/bim_agent_delivery_display.py",
+                      "scripts/tool_scripts/bim_viewer_inspection.py",
+                      "scripts/tool_scripts/bim_agent_inspection.py",
+                      "src/agent/geometry/sim_components.py",
+                      "src/agent/geometry/sim_component_topology.py",
+                      "src/agent/geometry/thickness_options.py",
                       "scripts/tool_scripts/bim_display_language.py")
     publication = {
         "schema": "bim_sdk_publication_v2", "candidate": candidate,

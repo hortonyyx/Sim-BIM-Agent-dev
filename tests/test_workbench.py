@@ -47,7 +47,8 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
     assert len(list((root / "materials").rglob("Plan.png"))) == 3
     payload = {"workspace": str(root), "revision": 1, "blocks": [
         {"id": block["id"], "caption": "first, typical, roof", "assetIds": [a["id"] for a in reversed(block["assets"])]}],
-        "taskBrief": "Keep the entrance.", "coordinator": COORD, "workers": [WORKER]}
+        "taskBrief": "Keep the entrance.", "coordinator": COORD, "workers": [WORKER],
+        "thicknessCandidatesMm": {"glazing": [24, 16.8, 24], "horizontal": [160.5, 200]}}
     assert client.post("/api/project", json=payload).status_code == 200
     stale = client.post("/api/project", json=payload)
     assert stale.status_code == 409 and stale.json()["code"] == "revision_conflict"
@@ -66,17 +67,44 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
     case = load_configuration(directory / "case.json")["cases"][0]
     assert case["provider"] == COORD["provider"] and case["workers"] == [WORKER]
     frozen = read_json(directory / "input.json")
+    expected = {"glazing": [16.8, 24], "horizontal": [160.5, 200]}
+    assert state["project"]["thicknessCandidatesMm"] == expected
+    assert frozen["thicknessCandidatesMm"] == case["thickness_candidates_mm"] == expected
     assets = frozen["blocks"][0]["assets"]
     assert [a["name"] for a in assets] == ["Plan.png"] * 3
     assert [(directory / a["path"]).read_bytes() for a in assets] == images[::-1]
     assert len({a["file"].casefold() for a in assets}) == 3
     run, guide, task = prepare_inputs(tmp_path / "production", images=directory / "inputs/images",
         mesh=None, building_input=None, scope=case["scope"], image_kind=case["image_kind"], max_candidates=4,
-        orchestrator=True, blocks=case["blocks"], locale=case["locale"])
+        orchestrator=True, blocks=case["blocks"], locale=case["locale"],
+        thickness_candidates_mm=case["thickness_candidates_mm"])
     assert "first, typical, roof" in task and "Keep the entrance." in task and "English" in guide
     assert all(a["file"] in task for a in assets)
     assert read_json(run / "inputs.json")["blocks"] == frozen["blocks"]
     assert read_json(run / "inputs.json")["locale"] == "en"
+    assert read_json(run / "inputs.json")["thickness_candidates_mm"] == expected
+    assert read_json(run / "inputs.json")["spatial_assessment_policy"] == "object_evidence_v1"
+    assert "160.5" in task
+
+
+def test_thickness_candidates_legacy_draft_and_invalid_updates(workbench):
+    client, root = workbench
+    path = root / "project.json"
+    old = read_json(path)
+    del old["thicknessCandidatesMm"]
+    path.write_text(json.dumps(old), encoding="utf-8")
+    state = client.get("/api/state").json()
+    assert set(state["thicknessPresetsMm"]) == {"wall", "horizontal", "roof", "glazing"}
+    assert state["project"]["thicknessCandidatesMm"] == {}
+    payload = dict(old, workspace=str(root), thicknessCandidatesMm={"wall": [201.5], "roof": []})
+    saved = client.post("/api/project", json=payload).json()["project"]
+    assert saved["thicknessCandidatesMm"] == {"wall": [201.5]}
+    payload["revision"] = saved["revision"]
+    for invalid in ({"wall": [True]}, {"wall": [-1]}, {"wall": "200"}, {"door": [55]}):
+        assert client.post("/api/project", json=dict(payload, thicknessCandidatesMm=invalid)).status_code == 400
+        assert read_json(path) == saved
+    del payload["thicknessCandidatesMm"]
+    assert client.post("/api/project", json=payload).json()["project"]["thicknessCandidatesMm"] == {"wall": [201.5]}
 
 
 def test_atomic_import_block_edit_and_workspace_guards(workbench):

@@ -150,6 +150,34 @@ def test_loader_opens_validated_source_bim_directly(tmp_path):
         rgv.load_viewer_geometry(path)
 
 
+def test_inspection_sidecar_is_source_bound_and_exports_only_public_fields(tmp_path):
+    source = _minimal_source_v2()
+    path = tmp_path / "source_model.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+    reason = {"en": "Drawn perimeter", "zh": "图纸标明空间范围"}
+    assessment = {"grade": 5, "reason": reason, "source_refs": ["private-evidence"]}
+    material = {"en": "Paint", "zh": "涂料", "source": "from user", "source_refs": ["private-brief"]}
+    private = {
+        "schema_version": "sim_inspection_v1", "source_model_sha256": source["source_model_sha256"],
+        "spatial": {"spaces": {"room": assessment, "unrelated": assessment}},
+        "properties": {"components": {"private-component": {"thickness": {
+            "value_mm": 200, "source": "from material", "source_refs": ["private-drawing"]}}},
+            "boundaries": {"room/wall/0": {"component_ids": ["private-component"], "material": material}}},
+    }
+    sidecar = path.with_name("sim_inspection.json")
+    sidecar.write_text(json.dumps(private), encoding="utf-8")
+    public = _display_payload(rgv.load_viewer_geometry(path))["inspection"]
+    assert public["spatial"]["spaces"] == {"room": {"grade": 5, "reason": reason}}
+    boundary = public["properties"]["boundaries"]["room/wall/0"]
+    assert boundary == {"applicable": True, "thicknesses": [{"value_mm": 200, "source": "from material"}],
+                        "material": {"en": "Paint", "zh": "涂料", "source": "from user"}}
+    assert "private-" not in json.dumps(public)
+    private["source_model_sha256"] = "wrong-model"
+    sidecar.write_text(json.dumps(private), encoding="utf-8")
+    archived = _display_payload(rgv.load_viewer_geometry(path))["inspection"]
+    assert not any(archived["spatial"].values()) and not any(archived["properties"].values())
+
+
 def test_loader_projects_v3_open_boundary_without_a_wall_part(tmp_path):
     from src.agent.geometry.source_enclosure import apply_source_enclosure
 
@@ -335,6 +363,15 @@ def test_selection_cards_show_canonical_identity_and_category_quantities_in_both
     model = copy.deepcopy(_GEO)
     model["source_model"]["spaces"][0].update(name="101", role="office")
     model["source_model"]["floors"][0]["name"] = "G"
+    model["source_model"]["source_model_sha256"] = "test-model"
+    model["sim_inspection"] = {
+        "schema_version": "sim_inspection_v1", "source_model_sha256": "test-model",
+        "spatial": {"spaces": {"Z1": {"grade": 4, "reason": {"en": "Room traced", "zh": "空间范围按图绘制"}}},
+                    "openings": {"win1": {"grade": 2, "reason": {"en": "Sill inferred", "zh": "窗台推断"}}}},
+        "properties": {"openings": {"win1": {"component_ids": ["unit"], "material": {
+            "en": "Glass", "zh": "玻璃", "source": "from material"}}},
+            "components": {"unit": {"thickness": {"value_mm": 24, "source": "from user"}}}},
+    }
     page = rgv.build_viewer_html(model)
     payload = page.split("window.GEO = ", 1)[1].split(";</script>", 1)[0]
     script = rgv.app_js()
@@ -343,18 +380,20 @@ def test_selection_cards_show_canonical_identity_and_category_quantities_in_both
         return script[script.index(start):script.index(end)]
 
     output = _node_result(tmp_path, "const GEO="+payload+";"+"""
-const el={style:{},dataset:{},replaceChildren(){}}, $=()=>el;
+const el={style:{},dataset:{},replaceChildren(){},querySelector(){return null;}}, $=()=>el;
 let inspected=null;
 const SURF=GEO.surfaces,OPENS=GEO.openings,SOURCE=GEO.source_model;
+const surfaceByName=new Map(SURF.map(s=>[s.name,s]));
 const SOURCE_MAP={},SOURCE_BOUNDARIES={},SOURCE_SPACES={},ZONES=GEO.zones;
 const zoneFloors={Z1:[0],Z2:[1]},zoneFloor={Z1:0,Z2:1},verticalCore=()=>false;
 const NAMED_FLOORS=GEO.public_names.floors,BASES=NAMED_FLOORS.map(f=>f.z_floor),ROOM_TYPES=GEO.room_types;
 """ + section("  let locale = ", "  const SURF =")
+        + section("  const GRADE_COLORS=", "  // resolve a window")
         + section("  function roleLabel(", "  // Geometry is drawn")
         + section("  const sourceFloor =", "  const _zFloorZ =")
         + section("  function ringArea3D(", "  function ringGeom(")
         + section("  function row(k,v)", "  function updateStats(")
-        + section("  const surfaceByName=", "  function handleClick(") + """
+        + section("  const openingByName=", "  function handleClick(") + """
 const result={};
 const hole=[[1,0,1],[2,0,1],[2,0,2],[1,0,2]];
 const wall={kind:'surface',zone:'Z1',floor:0,type:'Wall',name:'w1',publicName:'Z01_W1_Part2',
@@ -370,6 +409,7 @@ for(const lang of ['en','zh-CN']){
 console.log(JSON.stringify(result));
 """)
     canonical_room = json.loads(payload)["public_names"]["spaces"]["Z1"]
+    assert canonical_room.startswith("Z01_G_")
     for lang, room_use, volume, floor_volume, count, length in [
         ("en", "Office", "Modeled volume", "Storey volume", "Space count", "Length"),
         ("zh-CN", "办公 · Office", "模型体积", "本层体积", "空间数", "长度"),
@@ -384,8 +424,49 @@ console.log(JSON.stringify(result));
         assert 'class="pick-name">Z01_W1_Part2<' in surface and ">Z01_W1<" in surface and canonical_room in surface
         assert ">G<" in surface and "11.00 <small>m²" in surface and "m³" not in surface
         assert 'class="pick-name">Z01_W1_Win1<' in window and "2.00 <small>m²" in window
+        assert ('Room traced' if lang == 'en' else '空间范围按图绘制') in zone and '4 · ' in zone
+        assert ('Unassessed' if lang == 'en' else '未评估') in surface
+        assert ('Not recorded' if lang == 'en' else '未记录') in surface
+        assert ('Sill inferred' if lang == 'en' else '窗台推断') in window and '2 · ' in window
+        assert ('Glass' if lang == 'en' else '玻璃') in window and '24 mm' in window
+        assert '>from material<' in window and '>from user<' in window
+        assert 'confidence-row' not in floor and 'confidence-row' not in edge
         assert 'class="pick-name">Z01_W1_Part2_Edge2<' in edge and 'class="kv"' not in edge
         assert length in edge and "4.00 <small>m<" in edge and edge.count('class="pick-metric"') == 1
+
+
+def test_shared_face_card_reads_the_component_at_the_pick_including_recesses(tmp_path):
+    """Two slabs adjoining one face can only differ on explicit, nonoverlapping regions."""
+    script = rgv.app_js()
+    code = script[script.index("  function projectionAxis("):script.index("  function signedArea2D(")]
+    code += script[script.index("  function segDist("):script.index("  function edgePick(")]
+    code += script[script.index("  function regionalThicknesses("):script.index("  function surfaceAttributes(")]
+    result = _node_result(tmp_path, code + """
+const ring=(low,high)=>[[low,0,3],[high,0,3],[high,4,3],[low,4,3]];
+const recess=[[1,1,3],[2,1,3],[2,2,3],[1,2,3]];
+const attributes={thicknesses:[{value_mm:150},{value_mm:200}], regions:[
+  {index:0,vertices:ring(0,4),holes:[recess]},
+  {index:1,vertices:recess,holes:[]},{index:1,vertices:ring(4,8),holes:[]}]};
+console.log(JSON.stringify([[0.5,2,3],[1.5,1.5,3],[7,3,3],[4,2,3]].map(p=>
+  regionalThicknesses(attributes,p).map(t=>t.value_mm))));
+""")
+    assert result == [[150], [200], [200], [150, 200]]
+
+
+def test_coincident_room_sides_switch_with_the_camera_without_drawing_both(tmp_path):
+    script = rgv.app_js()
+    setup = script[script.index("  const pairedSides="):script.index("  controls.addEventListener('change',faceCamera)")]
+    result = _node_result(tmp_path, f"const THREE=require({json.dumps(str(rgv._VENDOR / 'three.min.js'))});\n" + """
+const zoneForSpace={},camera=new THREE.PerspectiveCamera(),host={verts:[[4,0,0],[4,8,0],[4,8,3],[4,0,3]]};
+const east=new THREE.Mesh(), west=new THREE.Mesh();
+east.userData={zone:'east',dup:false};west.userData={zone:'west',dup:true,occludedBy:['east']};
+const sideFaces=[{mesh:east,host,key:'door'},{mesh:west,host,key:'door'}];
+""" + setup + """
+pairedSides[0].enabled=true;
+function visible(x){camera.position.x=x;faceCamera();return [west.visible,east.visible];}
+console.log(JSON.stringify([visible(3),visible(5)]));
+""")
+    assert result == [[True, False], [False, True]]
 
 
 def test_fragment_and_edge_names_survive_ring_reordering_and_match_the_picked_segment():
@@ -448,7 +529,7 @@ def test_partial_archived_source_uses_bound_names_and_preserves_host_numbers():
                               "boundaries": {"w1": "Z18_W4"}, "openings": {"win1": "Z18_W4_Win3"}}
     geo = _display_payload(model)
     assert geo["public_names"]["floors"][0]["name"] == "F9"
-    assert geo["public_names"]["spaces"]["Z1"] == "Z18_F9_Office_SE"
+    assert geo["public_names"]["spaces"]["Z1"] == "Z18_F1_Office_SE"
     assert geo["visible_wall_parts"]["w1"][0]["public_name"] == "Z18_W4"
     assert [geo["windows"][0][k] for k in ("public_name", "parent_name")] == ["Z18_W4_Win3", "Z18_W4"]
 

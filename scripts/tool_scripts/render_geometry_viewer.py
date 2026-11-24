@@ -23,6 +23,7 @@ from pathlib import Path
 from scripts.tool_scripts.bim_display_language import (
     room_role, room_type_labels, viewer_markup, viewer_messages, viewer_script,
 )
+from scripts.tool_scripts.bim_viewer_inspection import project_storey_names, public_inspection
 
 _VENDOR = Path(__file__).resolve().parent / "vendor"
 
@@ -59,6 +60,9 @@ _APP_JS = r"""
   const SOURCE_MAP = SOURCE ? (SOURCE.derived || {}) : {};
   const SOURCE_SPACES = Object.fromEntries(((SOURCE && SOURCE.spaces) || []).map(s=>[s.id,s]));
   const SOURCE_BOUNDARIES = Object.fromEntries(((SOURCE && SOURCE.boundaries) || []).map(b=>[b.id,b]));
+  let confidenceView=false;
+  const GRADE_COLORS=[0xc5cbd2,0x59298c,0x8754ba,0xb48ada,0xd7bcee,0xeee4fa];
+  const GRADE_LABELS=['Unassessed','Assumed','Mostly inferred','Partly inferred','Mostly observed','Direct evidence'];
   // resolve a window's zone: its parent surface's zone first (parent = "<wall>_<i>"),
   // then a zone-name prefix, then the nearest zone centroid — never returns '?' so a
   // window always pops out + groups/explodes with a real zone.
@@ -255,6 +259,13 @@ _APP_JS = r"""
   const surfMeshes=[], winMeshes=[], openingMeshes=[], enclosureMeshes=[], edgeSegs=[], logicalLines=[], enclosureLines=[], windowEdges=[];
   const root=new THREE.Group(); scene.add(root);
   const surfaceEdges=[];
+  const sideFaces=[];
+  const surfaceByName=new Map(SURF.map(s=>[s.name,s]));
+  function registerSide(mesh,ring,holes,host){
+    if(!SOURCE || !host) return;
+    const key=JSON.stringify([enclosureRegionKey(ring),holes.map(enclosureRegionKey).sort()]);
+    sideFaces.push({mesh,key,host});
+  }
   function projectionAxis(ring){
     let nx=0,ny=0,nz=0;
     const origin=ring[0]||[0,0,0];
@@ -325,6 +336,7 @@ _APP_JS = r"""
         publicName:part.public_name, parentName:s.public_name, area:faceArea(part.verts,part.holes),
         occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined)};
       surfMeshes.push(mesh); root.add(mesh);
+      registerSide(mesh,part.verts,part.holes||[],s);
       const segments=part.edge_segments ?? [part.verts,...(part.holes||[])].flatMap(r=>r.map((v,i)=>[v,r[(i+1)%r.length]]));
       const em=new THREE.LineSegments(segmentGeom(segments), new THREE.LineBasicMaterial({color:0x303030}));
       em.userData={...mesh.userData}; edgeSegs.push(em); root.add(em);
@@ -363,7 +375,8 @@ _APP_JS = r"""
     const zone=zoneOfWindow(w), sv=popOut(w.verts, zone);  // proud of wall → clean + pickable
     const m=new THREE.MeshStandardMaterial({color:WINDOW_COLOR, side:THREE.DoubleSide, roughness:0.4});
     const mesh=new THREE.Mesh(ringGeom(sv), m);
-    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, publicName:w.public_name, parentName:w.parent_name, area:faceArea(w.verts), kind:'window', dup:false};
+    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, publicName:w.public_name, parentName:w.parent_name, host:w.parent, area:faceArea(w.verts), kind:'window', dup:false};
+    mesh.modelMaterial=m;
     winMeshes.push(mesh); root.add(mesh);
     // Comparison contours use the exact source geometry, without the picking offset.
     const edge=new THREE.LineSegments(edgeGeom(w.verts),new THREE.LineBasicMaterial({color:0x087d3b}));
@@ -378,13 +391,46 @@ _APP_JS = r"""
     mesh.userData={zone,floor:zoneFloor[zone]||0,name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
       kind:'opening',dup,baseColor:color,publicName:o.public_name,
-      parentName:o.parent_name,area:faceArea(o.verts)};
+      parentName:o.parent_name,host:o.parent,sourceId:o.source_opening_id,area:faceArea(o.verts)};
+    mesh.modelOpacity=m.opacity;
     openingMeshes.push(mesh);root.add(mesh);
+    registerSide(mesh,o.verts,[],surfaceByName.get(o.parent));
     const em=new THREE.LineSegments(edgeGeom(o.verts),new THREE.LineBasicMaterial({color}));
     em.userData={...mesh.userData};edgeSegs.push(em);root.add(em);
   });
   const allMeshes = () => surfMeshes.concat(winMeshes,openingMeshes,enclosureMeshes);
   const allPickables = () => allMeshes().concat(enclosureLines);
+  // Keep both authored sides selectable at a shared wall or slab. Exact peers swap
+  // which face is drawn. A partial counterpart only covers its own contact polygon.
+  const pairedSides=[];
+  const peersByRing=new Map();
+  for(const face of sideFaces){
+    const peers=peersByRing.get(face.key)||[];
+    peers.push(face.mesh);peersByRing.set(face.key,peers);
+  }
+  for(const {mesh,key,host} of sideFaces){
+    if(!mesh.userData.dup || !mesh.userData.occludedBy?.length) continue;
+    const ring=host.verts,normal=new THREE.Vector3(), p=new THREE.Vector3(), q=new THREE.Vector3(), part=new THREE.Vector3();
+    const origin=new THREE.Vector3(...ring[0]);
+    for(let i=1;i+1<ring.length;i++){
+      p.set(...ring[i]).sub(origin);q.set(...ring[i+1]).sub(origin);normal.add(part.crossVectors(p,q));
+    }
+    if(!normal.lengthSq()) continue;
+    const owners=mesh.userData.occludedBy.map(id=>zoneForSpace[id]||id);
+    const peers=peersByRing.get(key).filter(m=>!m.userData.dup && owners.includes(m.userData.zone));
+    pairedSides.push({mesh,owners,peer:peers.length===1 ? peers[0] : null,
+      plane:new THREE.Plane().setFromNormalAndCoplanarPoint(normal.normalize(),origin),enabled:false});
+  }
+  sideFaces.length=0;peersByRing.clear();
+  function faceCamera(){
+    for(const side of pairedSides){
+      if(!side.enabled) continue;
+      const m=side.mesh, inside=side.plane.distanceToPoint(camera.position)-side.plane.normal.dot(m.position)<0;
+      m.visible=inside;
+      if(side.peer) side.peer.visible=!inside;
+    }
+  }
+  controls.addEventListener('change',faceCamera);
 
   // The admitted mesh is an offline reference, never a source-BIM entity or pick target.
   const referenceMeshes=[], referenceGroup=new THREE.Group(); scene.add(referenceGroup);
@@ -412,7 +458,7 @@ _APP_JS = r"""
       referenceMeshes.push(mesh); referenceGroup.add(mesh);
     });
   }
-  const meshActive = () => Boolean(reference && $('showMesh').checked && parseFloat($('explode').value)===0);
+  const meshActive = () => Boolean(!confidenceView && reference && $('showMesh').checked && parseFloat($('explode').value)===0);
   function storeyPlanes(){
     const floor=sourceFloor(parseInt($('floorSel').value,10));
     if(floor && Number.isFinite(floor.height) && parseFloat($('explode').value)===0){
@@ -448,6 +494,7 @@ _APP_JS = r"""
     for(const obj of allMeshes().concat(referenceMeshes,edgeSegs,logicalLines,enclosureLines,windowEdges)){
       obj.material.clippingPlanes=clippingForGeometry(obj.geometry,sections,storey);
       obj.material.needsUpdate=true;
+      if(obj.selectionOutline) obj.selectionOutline.material.clippingPlanes=obj.material.clippingPlanes;
     }
   }
 
@@ -461,13 +508,37 @@ _APP_JS = r"""
       m.userData.baseColor=c; });
     winMeshes.forEach(m=>m.userData.baseColor=WINDOW_COLOR);
     enclosureMeshes.forEach(m=>m.userData.baseColor=ENCLOSURE_COLOR);
-    allPickables().forEach(m=>m.material.color.setHex(selected.has(m) ? SEL_COLOR : m.userData.baseColor));
+    winMeshes.forEach(m=>{
+      if(confidenceView && !m.confidenceMaterial) m.confidenceMaterial=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+      m.material=confidenceView ? m.confidenceMaterial : m.modelMaterial;
+    });
+    openingMeshes.forEach(m=>{m.material.opacity=confidenceView?1:m.modelOpacity;m.material.depthWrite=confidenceView;});
+    enclosureMeshes.forEach(m=>{m.material.opacity=confidenceView?1:ENCLOSURE_OPACITY;m.material.depthWrite=confidenceView;});
+    for(const m of allPickables()){
+      const u=m.userData;
+      const color=confidenceView ? GRADE_COLORS[spatialRecord(mode,u)?.grade || 0] : u.baseColor;
+      m.material.color.setHex(selected.has(m) && (!confidenceView || !m.isMesh) ? SEL_COLOR : color);
+    }
     updateLegend(mode);
   }
-  function clearSelGroup(){ while(selGroup.children.length) selGroup.remove(selGroup.children[0]); }
+  function clearSelGroup(){ while(selGroup.children.length){const line=selGroup.children[0];
+    selGroup.remove(line);line.geometry.dispose();line.material.dispose();} }
+  function selectionOutlines(){
+    for(const m of selected){
+      if(!confidenceView || !m.isMesh) continue;
+      const line=new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),
+        new THREE.LineBasicMaterial({color:SEL_COLOR,transparent:true,depthWrite:false,clippingPlanes:m.material.clippingPlanes}));
+      line.renderOrder=890;m.add(line);m.selectionOutline=line;
+    }
+  }
+  function clearOutlines(){
+    for(const m of selected) if(m.selectionOutline){
+      const line=m.selectionOutline;m.remove(line);line.geometry.dispose();line.material.dispose();delete m.selectionOutline;
+    }
+  }
   let inspected=null;
-  function setSelection(arr){ clearSelGroup(); selected=new Set(arr);
-    allPickables().forEach(m=>m.material.color.setHex(selected.has(m)?SEL_COLOR:(m.userData.baseColor??0xcccccc)));
+  function setSelection(arr){ clearSelGroup();clearOutlines();selected=new Set(arr);
+    refreshColors();selectionOutlines();
   }
   function clearSelection(){ setSelection([]); inspected=null; renderInspection(); }
 
@@ -617,9 +688,65 @@ _APP_JS = r"""
     const mouse=new THREE.Vector2(((ev.clientX-r.left)/r.width)*2-1, -((ev.clientY-r.top)/r.height)*2+1);
     raycaster.setFromCamera(mouse,camera);
     const hits=raycaster.intersectObjects(allPickables().filter(m=>m.visible),false)
-      .filter(h=>comparisonPlanes().every(p=>p.distanceToPoint(h.point)>=-0.0001)); return hits.length?hits[0]:null; }
-  const surfaceByName=new Map(SURF.map(s=>[s.name,s]));
+      .filter(h=>comparisonPlanes().every(p=>p.distanceToPoint(h.point)>=-0.0001));
+    if(!hits.length) return null;
+    return hits.find(h=>h.distance<=hits[0].distance+0.00001 && h.object.material.polygonOffset) || hits[0]; }
   const openingByName=new Map(OPENS.map(o=>[o.name,o]));
+  function surfaceBinding(u){
+    if(u.kind==='opening') return ['openings',u.sourceId || SOURCE_MAP.openings?.[u.name] || u.name];
+    if(u.kind==='window') return ['openings',SOURCE_MAP.windows?.[u.name] || u.name];
+    return ['boundaries',u.boundaryId || SOURCE_MAP.surfaces?.[u.name] || u.name];
+  }
+  function spatialRecord(mode,u){
+    const spatial=GEO.inspection.spatial;
+    if(mode==='zone' || mode==='floor') return spatial.spaces?.[sourceIdOfZone(u.zone)];
+    const [group,id]=surfaceBinding(u);
+    return spatial[group]?.[id];
+  }
+  function confidenceCard(mode,u){
+    const record=spatialRecord(mode,u), grade=record?.grade || 0;
+    const label=(grade ? grade+' · ' : '')+msg(GRADE_LABELS[grade]);
+    const head='<span>'+esc(msg('Spatial confidence'))+'</span><b><i style="background:'+hex6(GRADE_COLORS[grade])+'"></i>'+esc(label)+'</b>';
+    if(!record) return '<div class="confidence-row">'+head+'</div>';
+    return '<details class="confidence-reason"'+(inspected.reasonOpen?' open':'')+'><summary class="confidence-row" title="'+
+      esc(msg('Evidence and reasoning'))+'">'+head+'</summary><p>'+esc(record.reason[locale==='en'?'en':'zh'])+'</p></details>';
+  }
+  function regionalThicknesses(attributes,point){
+    const values=attributes?.thicknesses || [];
+    if(!point || !attributes?.regions?.length) return values;
+    const indices=new Set();
+    for(const r of attributes.regions){
+      const axis=projectionAxis(r.vertices);
+      const [p]=projectRing([point],axis);
+      function contains(ring){
+        const v=projectRing(ring,axis);let inside=false;
+        for(let i=0,j=v.length-1;i<v.length;j=i++){
+          const a=v[j],b=v[i];
+          if(segDist(p[0],p[1],a[0],a[1],b[0],b[1])<1e-12) return 0;
+          if((b[1]>p[1])!==(a[1]>p[1]) && p[0]<(a[0]-b[0])*(p[1]-b[1])/(a[1]-b[1])+b[0]) inside=!inside;
+        }
+        return inside ? 1 : -1;
+      }
+      if(contains(r.vertices)>=0 && !r.holes.some(h=>contains(h)>0)) indices.add(r.index);
+    }
+    return indices.size ? [...indices].map(i=>values[i]) : values;
+  }
+  function surfaceAttributes(u,point){
+    const [group,id]=surfaceBinding(u), attrs=GEO.inspection.properties[group]?.[id];
+    const virtual=u.kind==='enclosure-region' || (u.kind==='opening' && component(u)==='Passage') ||
+      SOURCE_BOUNDARIES[id]?.kind==='virtual' || attrs?.applicable===false;
+    const fallback=esc(msg(virtual ? 'Not applicable' : 'Not recorded'));
+    const tag=source=>source ? '<small class="source-tag">'+esc(source)+'</small>' : '';
+    const material=attrs?.materials_by_host?.[SOURCE_MAP.surfaces?.[u.host] || u.host] || attrs?.material;
+    const thicknesses=regionalThicknesses(attrs,point);
+    const thickness=thicknesses.map(t=>'<span class="attr-value">'+esc(t.value_mm.toLocaleString(locale,{maximumFractionDigits:6}))+
+      ' mm'+tag(t.source)+'</span>').join('');
+    const thicknessLabel=u.kind==='window' ? 'Glazing thickness' : (u.kind==='opening' && !virtual ? 'Door leaf thickness' : 'Component thickness');
+    const value=(label,content)=>'<div class="surface-attribute"><span>'+esc(msg(label))+'</span><div>'+content+'</div></div>';
+    return '<div class="surface-attributes">'+value('Material on this side',!virtual && material
+      ? '<span class="attr-value">'+esc(material[locale==='en'?'en':'zh'])+tag(material.source)+'</span>' : fallback)+
+      value(thicknessLabel,!virtual && thickness || fallback)+'</div>';
+  }
   function component(u){
     const key=u.name;
     const surface=surfaceByName.get(key);
@@ -654,7 +781,7 @@ _APP_JS = r"""
     const touching=floors.filter(i=>{const f=sourceFloor(i);return f && low<=f.z_floor+f.height+0.001 && high>=f.z_floor-0.001;});
     return touching.length ? touching : floors;
   }
-  function showInspection(mode,item,floor){inspected={mode,item,floor};renderInspection();}
+  function showInspection(mode,item,floor,point){inspected={mode,item,floor,point,reasonOpen:false};renderInspection();}
   function renderInspection(){
     const el=$('sel'); el.style.display=inspected ? 'block' : 'none';
     if(!inspected){el.replaceChildren();return;}
@@ -687,7 +814,11 @@ _APP_JS = r"""
       return '<div class="pick-metric"><span>'+esc(msg(key))+'</span><b>'+number+' <small>'+unit+'</small></b></div>';
     }).join('');
     el.innerHTML='<header class="pick-head"><span class="pick-kind">'+esc(msg(mode))+'</span><strong class="pick-name">'+
-      esc(name)+'</strong></header><div class="pick-fields">'+rows+'</div><div class="pick-metrics">'+metrics+'</div>';
+      esc(name)+'</strong></header><div class="pick-fields">'+rows+'</div><div class="pick-metrics">'+metrics+'</div>'+
+      (mode==='surface' ? surfaceAttributes(u,inspected.point) : '')+
+      (mode==='surface'||mode==='zone' ? confidenceCard(mode,u) : '');
+    const reason=el.querySelector('.confidence-reason');
+    if(reason) reason.ontoggle=()=>{if(inspected && reason.isConnected) inspected.reasonOpen=reason.open;};
   }
   function handleClick(ev){
     if(measuring){ const r=renderer.domElement.getBoundingClientRect();
@@ -709,7 +840,7 @@ _APP_JS = r"""
       }) ?? floors[floors.length-1]);
       sel=allPickables().filter(m=>actualStoreys(m.userData.zone,m.userData.floor).includes(floor));
     }else if(mode==='zone') sel=allPickables().filter(m=>m.userData.zone===o.userData.zone); else sel=[o];
-    setSelection(sel); showInspection(mode,o,floor);
+    setSelection(sel); showInspection(mode,o,floor,hit.point.clone().sub(o.position).toArray());
   }
   // click vs orbit-drag: only a near-stationary press is a click
   let downXY=null;
@@ -734,6 +865,14 @@ _APP_JS = r"""
     surfMeshes.forEach(m=>m.visible = fills && sw && okF(m.userData));
     winMeshes.forEach(m=>m.visible = fills && swin && okF(m.userData));
     openingMeshes.forEach(m=>m.visible=fills && $('showOpen').checked && okF(m.userData));
+    for(const side of pairedSides){
+      const m=side.mesh,u=m.userData, layer=u.kind==='opening' ? $('showOpen').checked : sw;
+      side.enabled=fills && layer && onFloor(u,f) && side.owners.some(z=>
+        onFloor({zone:z,floor:zoneFloor[z]},f) && (!exploded || m.position.distanceToSquared(explodeOffset(z))<1e-12));
+      m.material.polygonOffset=side.enabled && !side.peer;
+      m.material.polygonOffsetFactor=-1;m.material.polygonOffsetUnits=-2;
+    }
+    faceCamera();
     enclosureMeshes.forEach(m=>m.visible=fills && $('showEnclosure').checked && okF(m.userData));
     edgeSegs.forEach(e=>{e.visible = contours && se && okF(e.userData) && (e.userData.kind!=='opening'||$('showOpen').checked);
       e.material.color.setHex(e.userData.kind==='opening' ? (comparison?0xec820e:e.userData.baseColor) : (comparison?0xc51b80:0x303030));});
@@ -780,7 +919,11 @@ _APP_JS = r"""
   // ---- room-type legend (shown in zone mode: colour swatch → room type) ----
   function updateLegend(mode){
     const el=$('legend'); if(!el) return;
-    $('legendGroup').hidden=mode!=='zone' || !HAS_ROLES;
+    $('confidenceLegend').hidden=!confidenceView;
+    $('confidenceUnit').textContent=msg(mode==='zone'||mode==='floor' ? 'zone' : 'surface');
+    $('confidenceScale').innerHTML=[5,4,3,2,1,0].map(g=>'<li><i style="background:'+hex6(GRADE_COLORS[g])+
+      '"></i><span>'+(g ? g+' · ' : '')+esc(msg(GRADE_LABELS[g]))+'</span></li>').join('');
+    $('legendGroup').hidden=confidenceView || mode!=='zone' || !HAS_ROLES;
     if($('legendGroup').hidden){el.innerHTML='';return;}
     const present=[], seen=new Set();
     (GEO.zones||[]).forEach(z=>{ const r=roleOf(z)||'untyped'; if(!seen.has(r)){ seen.add(r); present.push(r);} });
@@ -805,7 +948,27 @@ _APP_JS = r"""
   const fs=$('floorSel'); BASES.forEach((b,i)=>{
     if(!SURF.some(s=>onFloor({zone:s.zone,floor:zoneFloor[s.zone]},i))) return;
     const o=document.createElement('option'); o.value=i; o.textContent=floorLabel(i); fs.appendChild(o);});
-  $('colorBy').onchange=()=>{ refreshColors(); clearSelection(); };
+  const viewTabs=[$('modelTab'),$('confidenceTab')];
+  function setViewMode(confidence){
+    confidenceView=confidence;clearOutlines();
+    const active=viewTabs[confidence?1:0];
+    for(const tab of viewTabs){
+      tab.setAttribute('aria-selected',String(tab===active));tab.tabIndex=tab===active?0:-1;
+    }
+    $('stage').setAttribute('aria-labelledby',active.id);
+    $('meshControls').hidden=confidence || !reference;
+    refreshColors();applyFilter();selectionOutlines();
+  }
+  for(const tab of viewTabs){
+    tab.onclick=()=>setViewMode(tab===viewTabs[1]);
+    tab.onkeydown=event=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const next=event.key==='Home' ? 0 : event.key==='End' ? 1 : Number(tab===viewTabs[0]);
+      viewTabs[next].focus();setViewMode(next===1);
+    };
+  }
+  $('colorBy').onchange=clearSelection;
   fs.onchange=()=>{clearSelection();clearMeasure();applyFilter();};
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
   $('showOpen').onchange=applyFilter; $('showLogical').onchange=applyFilter; $('showEnclosure').onchange=applyFilter;
@@ -858,13 +1021,17 @@ _APP_JS = r"""
 _PANEL_HTML = r"""
 <header class="masthead">
   <h1><svg class="brand-mark" aria-hidden="true" viewBox="0 0 32 32"><path fill="currentColor" d="M0 19 9 15v15H0zm10-3 6-4v18h-6zM16 2h15v15H16z"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M23.5 17H31v13h-7.5z"/></svg>Sim-BIM</h1>
+  <div class="view-tabs" role="tablist" aria-label="[[msg:Viewer mode]]">
+    <button type="button" role="tab" id="modelTab" aria-selected="true" aria-controls="stage">[[msg:Model]]</button>
+    <button type="button" role="tab" id="confidenceTab" aria-selected="false" aria-controls="stage" tabindex="-1">[[msg:Confidence]]</button>
+  </div>
   <div class="head-actions">
     <select id="locale" aria-label="[[msg:Language]]"><option value="en" lang="en">English</option><option value="zh-CN" lang="zh-CN">中文</option></select>
     <button type="button" id="savePng"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg><span>[[msg:Export PNG]]</span></button>
   </div>
 </header>
 <main class="viewer">
-  <section class="stage">
+  <section class="stage" id="stage" role="tabpanel" aria-labelledby="modelTab">
     <div id="app"></div>
     <div class="view-filters">
       <label class="filter" for="colorBy"><span>[[msg:select by]]</span><select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select></label>
@@ -881,6 +1048,10 @@ _PANEL_HTML = r"""
     <div id="sel" aria-live="polite"></div>
   </section>
   <aside id="panel">
+    <section id="confidenceLegend" hidden>
+      <div class="legend-heading"><h2>[[msg:Spatial confidence]]</h2><span id="confidenceUnit"></span></div>
+      <ul id="confidenceScale"></ul>
+    </section>
     <div id="rinfo">
       <section id="hud">
         <h2>[[msg:Statistics]]</h2>
@@ -937,11 +1108,15 @@ _STYLE = r"""
   button,select,summary,input[type=checkbox] {cursor:pointer;}
   :focus-visible {outline:3px solid #7190ef;outline-offset:2px;}
   h1,h2,p {margin:0;}
-  .masthead {display:flex;align-items:center;justify-content:space-between;gap:14px;flex:none;height:64px;padding:0 clamp(16px,2.1vw,34px);border-bottom:1px solid var(--line);background:white;}
+  .masthead {display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;flex:none;height:64px;padding:0 clamp(16px,2.1vw,34px);border-bottom:1px solid var(--line);background:white;}
   h1 {display:flex;align-items:center;gap:10px;font-size:25px;letter-spacing:-.05em;line-height:1;font-weight:720;}
   .brand-mark {height:28px;width:28px;color:var(--blue);}
   .head-actions,.tool-row,.view-filters {display:flex;align-items:center;gap:8px;}
-  .head-actions {gap:14px;}
+  .head-actions {gap:14px;justify-self:end;}
+  .view-tabs {display:flex;gap:2px;padding:3px;border:1px solid #d4dae4;border-radius:7px;background:#f2f4f7;}
+  .view-tabs button {border:1px solid transparent;background:transparent;color:var(--muted);padding:5px 15px;font-size:13px;}
+  .view-tabs button[aria-selected="true"] {background:white;border-color:#c4ccd7;color:var(--ink);box-shadow:0 1px 3px #1322310d;}
+  #confidenceTab[aria-selected="true"] {color:#59298c;border-color:#c2a8d9;}
   button,select {border:1px solid #bdc7d3;border-radius:5px;background:#fff;}
   button {display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 12px;font-weight:570;white-space:nowrap;}
   button svg {display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;}
@@ -979,6 +1154,20 @@ _STYLE = r"""
   .pick-metric b {font-size:19px;line-height:1.2;font-weight:630;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .pick-metric small {font-size:12px;font-weight:500;color:var(--muted);}
   .pick-fields:empty,.pick-metrics:empty {display:none;}
+  .surface-attributes {display:grid;gap:9px;padding:11px 15px 12px;border-top:1px solid var(--line);}
+  .surface-attribute {display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:12px;align-items:baseline;font-size:12px;}
+  .surface-attribute>span {color:var(--muted);}
+  .surface-attribute>div {text-align:right;overflow-wrap:anywhere;font-size:13px;font-weight:580;}
+  .attr-value {display:block;}
+  .source-tag {display:table;margin:2px 0 0 auto;padding:0 5px;color:#48576b;background:#eef1f5;border-radius:3px;font-size:11px;line-height:1.45;font-weight:500;}
+  .confidence-row {display:flex;gap:8px;align-items:baseline;justify-content:space-between;padding:10px 15px;border-top:1px solid var(--line);font-size:12px;}
+  .confidence-row>span {color:var(--muted);}
+  .confidence-row b {display:inline-flex;gap:5px;align-items:center;font-size:12px;text-align:right;}
+  .confidence-row i,#confidenceScale i {display:inline-block;flex:none;width:10px;height:10px;border:1px solid #24123226;border-radius:3px;}
+  .confidence-reason summary {cursor:pointer;list-style:none;}
+  .confidence-reason summary b:after {content:"";border-right:1px solid;border-bottom:1px solid;width:5px;height:5px;transform:rotate(45deg);margin:-3px 1px 0 3px;}
+  .confidence-reason[open] summary b:after {transform:rotate(225deg);margin-top:3px;}
+  .confidence-reason p {font-size:13px;line-height:1.5;padding:0 15px 12px;overflow-wrap:anywhere;}
   .kv {display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
   .kv span {color:var(--muted);}
   .kv b {font-variant-numeric:tabular-nums;font-weight:600;}
@@ -987,6 +1176,12 @@ _STYLE = r"""
   #sel .kv span {flex:none;}
   #panel {min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable;border-left:1px solid var(--line);padding:clamp(18px,1.65vw,28px);background:var(--sheet);}
   #panel h2 {font-size:clamp(18px,1.4vw,23px);line-height:1.27;font-weight:670;letter-spacing:-.035em;}
+  #confidenceLegend {position:sticky;top:0;z-index:1;background:var(--sheet);border-bottom:1px solid var(--line);margin-bottom:17px;padding:0 0 13px;}
+  .legend-heading {display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
+  #confidenceUnit {font-size:12px;color:var(--muted);}
+  #confidenceScale {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 9px;padding:0;list-style:none;margin:10px 0 0;}
+  #confidenceScale li {display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink);}
+  #confidenceScale i {width:16px;height:11px;}
   #counts {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:16px 0 12px;}
   #counts .kv,#dimensions .kv {display:flex;gap:2px;align-items:flex-start;flex-direction:column;}
   #counts .kv {flex-direction:column-reverse;padding:10px 1px 11px;}
@@ -1102,7 +1297,7 @@ def _viewer_source(source: dict) -> dict:
     for group, fields in {
         "floors": ("id", "name", "z_floor", "height"),
         "spaces": ("id", "floor_id", "role", "enclosure"),
-        "boundaries": ("id", "space_id", "enclosure"),
+        "boundaries": ("id", "space_id", "enclosure", "kind"),
         "openings": ("id", "kind"),
         "connections": ("opening_id", "kind", "space_ids", "exterior", "state"),
     }.items():
@@ -1140,7 +1335,7 @@ def _selection_names(data: dict, geo: dict) -> None:
         names = legacy_viewer_names(data, parts, geo["roles"])
         geo["public_names"]["floors"] = names["floors"]
         geo["primary_floors"] = names["primary_floors"]
-    geo["public_names"]["spaces"] = names["spaces"]
+    geo["public_names"]["spaces"] = project_storey_names(names["spaces"], geo["public_names"]["floors"])
     objects = names["objects"]
     for surface in geo["surfaces"]:
         name = surface["name"]
@@ -1192,6 +1387,7 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
             **{r["name"]: r["role"] for r in data.get("zone_meta", []) if r.get("name") and r.get("role")},
             **data.get("roles", {})},
         "source_model": _viewer_source(source) if source else None,
+        "inspection": public_inspection(source, data.get("sim_inspection")),
     }
     from src.agent.roles import ROOM_TYPES
     geo["room_types"] = room_type_labels(ROOM_TYPES)
@@ -1257,8 +1453,8 @@ def load_viewer_geometry(path: Path) -> dict:
     if schema in {"source_bim_v2", "source_bim_v3"}:
         from src.agent.geometry.source_bim import source_view_geometry
 
-        return source_view_geometry(data)
-    if isinstance(schema, str) and schema.startswith("source_bim"):
+        data = source_view_geometry(data)
+    elif isinstance(schema, str) and schema.startswith("source_bim"):
         raise ValueError(f"unsupported source BIM schema: {schema}")
 
     source_path = path.with_name("source_model.json")
@@ -1269,6 +1465,12 @@ def load_viewer_geometry(path: Path) -> dict:
         # Attach a source only when its digest binds this display geometry.
         if source.get("derived_geometry_sha256") == _digest(data):
             data["source_model"] = source
+    inspection_path = path.with_name("sim_inspection.json")
+    if data.get("source_model") and inspection_path.is_file():
+        inspection = json.loads(inspection_path.read_text(encoding="utf-8"))
+        digest = data["source_model"].get("source_model_sha256")
+        if digest and inspection.get("source_model_sha256") == digest:
+            data["sim_inspection"] = inspection
     return data
 
 

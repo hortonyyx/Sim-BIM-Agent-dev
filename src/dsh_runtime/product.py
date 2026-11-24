@@ -115,6 +115,8 @@ def host_config(case, auth_dir, *, resume_revisions=None):
 
 
 def verify_resume_inputs(manifest, material_paths):
+    if manifest.get("thickness_candidates_mm", {}) != material_paths.get("thickness_candidates_mm", {}):
+        raise ValueError("configured thickness candidates differ from the admitted DSH run")
     for name in ("blocks", "locale"):
         if manifest.get(name) != material_paths.get(name):
             raise ValueError(f"configured {name} differs from the admitted DSH run")
@@ -152,7 +154,7 @@ def launch(case, *, resume=False, delivery_directory=None):
     auxiliary, declaration = resolve_supplemental_inputs(case)
     mesh = primary if case["input_kind"] == "mesh" else None
     materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
-    materials.update({key: case[key] for key in ("blocks", "locale") if key in case})
+    materials.update({key: case[key] for key in ("blocks", "locale", "thickness_candidates_mm") if key in case})
     if resume:
         if frozen_config != config or (output / "shared/task.txt").read_text(encoding="utf-8") != case["scope"]:
             raise ValueError("requested DSH configuration or task differs from the frozen run")

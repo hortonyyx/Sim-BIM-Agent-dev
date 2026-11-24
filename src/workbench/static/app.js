@@ -2,21 +2,27 @@ import { byId as $, element as el, icon, button } from './dom.js';
 import { tr, totals, catalogCount } from './language.js';
 import { previewAsset } from './preview.js';
 import { connectionForm } from './connection-form.js';
+import { thicknessPicker } from './thickness.js';
 
 const state = { workspace: null, locale: 'zh-CN', project: {blocks:[],revision:0}, connections: [], run: null };
-let fields = {taskBrief:'',coordinator:null,workers:[]};
+let fields = {taskBrief:'',coordinator:null,workers:[],thicknessCandidatesMm:{}};
 let draft = [], editing = null, saveTimer, runTimer, pollToken = 0, busy = false, loaded = false;
 let work = Promise.resolve(), previewController, dialogType, drag = null;
 let connectionsTimer, connectionsEpoch=0;
 let openWhenComplete = null;
 const pendingConnections=new Set();
 const t = key=>tr(state.locale,key);
+const thickness = thicknessPicker($('thickness-groups'), t, candidates => {
+  if (candidates) { fields.thicknessCandidatesMm=candidates; queueSave(); }
+  else clearTimeout(saveTimer);
+  renderRun();
+});
 const same = (a,b)=>JSON.stringify(a) === JSON.stringify(b);
 const modelKey = selection=>selection ? JSON.stringify([selection.provider,selection.model]) : '';
 const parseModel = key=>{ const [provider,model]=JSON.parse(key); return {provider,model}; };
-const selectedProject = ()=>({ taskBrief:fields.taskBrief,coordinator:fields.coordinator,workers:fields.workers });
 const projectBlocks = blocks=>blocks.map(b=>({id:b.id,caption:b.caption,assetIds:b.assets.map(a=>a.id)}));
-const dirtyFields = ()=>fields.taskBrief !== state.project.taskBrief || modelKey(fields.coordinator) !== modelKey(state.project.coordinator) || !same(fields.workers,state.project.workers ?? []);
+const dirtyFields = ()=>fields.taskBrief !== state.project.taskBrief || modelKey(fields.coordinator) !== modelKey(state.project.coordinator) ||
+  !same(fields.workers,state.project.workers ?? []) || !same(fields.thicknessCandidatesMm,state.project.thicknessCandidatesMm ?? {});
 const dirtyBlock = ()=>Boolean(editing || draft.length || $('caption').value.trim());
 const fmtName = a=>a.name ?? a.id;
 const allModels = ()=>state.connections.flatMap(c=>(c.models ?? []).map(m=>({provider:c.provider,model:m.id,label:fmtName(m),connection:c})));
@@ -42,7 +48,7 @@ async function handleError(error) {
   if (error.status === 409 && String(error.code ?? error.message).match(/revision|stale|conflict|changed|已更新|已切换|已不存在/i)) {
     try {
       const pending = {}, workspace=state.workspace;
-      for (const key of ['taskBrief','coordinator','workers']) if (!same(fields[key],state.project[key])) pending[key]=fields[key];
+      for (const key of Object.keys(fields)) if (!same(fields[key],state.project[key])) pending[key]=fields[key];
       const next=await request('state');
       if (next.workspace!==workspace) resetDraft();
       applyState(next);
@@ -67,7 +73,8 @@ function applyState(next) {
   if (next.workspace!==state.workspace) openWhenComplete=null;
   Object.assign(state,next);
   state.project ??= {blocks:[],revision:0};
-  fields={taskBrief:state.project.taskBrief ?? t('briefDefault'),coordinator:state.project.coordinator ?? null,workers:state.project.workers ?? []};
+  fields={taskBrief:state.project.taskBrief ?? t('briefDefault'),coordinator:state.project.coordinator ?? null,
+    workers:state.project.workers ?? [],thicknessCandidatesMm:state.project.thicknessCandidatesMm ?? {}};
   $('task-brief').value=fields.taskBrief;
   if (editing && !state.project.blocks?.some(b=>b.id === editing)) {
     editing=null; draft=draft.filter(asset=>asset.file);
@@ -98,6 +105,7 @@ function renderModels() {
 }
 function render() {
   renderLanguage(); renderModels();
+  thickness.sync(state.thicknessPresetsMm,fields.thicknessCandidatesMm,state.workspace,busy || !loaded);
   $('workspace-value').textContent=state.workspace || t('chooseFolder'); $('workspace').title=state.workspace || t('chooseFolder');
   $('compose-heading').textContent=editing ? t('blockEdit') : t('blockNew');
   $('cancel-edit').hidden=!dirtyBlock(); $('add-label').textContent=editing ? t('saveBlock') : t('add');
@@ -108,6 +116,7 @@ function render() {
 }
 function runReason() {
   if (!loaded) return t('browserOffline');
+  if (!thickness.valid()) return t('invalidThickness');
   if (!state.workspace) return t('noWorkspace');
   if (dirtyBlock()) return t('pendingBlock');
   if (!(state.project.blocks ?? []).length) return t('noBlocks');
@@ -186,8 +195,9 @@ function watchConnections(force=false) {
 }
 async function saveProject(blocks, force = false) {
   clearTimeout(saveTimer);
+  if (!thickness.valid()) throw Error(t('invalidThickness'));
   if (!state.workspace || (!force && !dirtyFields())) return;
-  const payload={workspace:state.workspace,revision:state.project.revision,blocks:projectBlocks(blocks ?? state.project.blocks),...selectedProject()};
+  const payload={workspace:state.workspace,revision:state.project.revision,blocks:projectBlocks(blocks ?? state.project.blocks),...fields};
   const result=await request('project',payload);
   state.project=result.project; renderRun();
 }
@@ -222,9 +232,11 @@ function workspaceDialog() {
         if (!next.workspace || next.workspace===oldWorkspace) {note.textContent='';return;}
         if (oldWorkspace) resetDraft();
         applyState(next);
-        if (!oldWorkspace && !next.project.revision && (oldFields.coordinator || oldFields.workers.length || oldFields.taskBrief!==oldDefault)) {
+        if (!oldWorkspace && !next.project.revision && (oldFields.coordinator || oldFields.workers.length ||
+              Object.keys(oldFields.thicknessCandidatesMm).length || oldFields.taskBrief!==oldDefault)) {
           if (oldFields.coordinator) fields.coordinator=oldFields.coordinator;
           if (oldFields.workers.length) fields.workers=oldFields.workers;
+          fields.thicknessCandidatesMm=oldFields.thicknessCandidatesMm;
           if (oldFields.taskBrief!==oldDefault) fields.taskBrief=oldFields.taskBrief;
           $('task-brief').value=fields.taskBrief; await saveProject();
         }
@@ -453,6 +465,7 @@ async function setLanguage(locale) {
   const next=await request('preferences',{locale, workspace:state.workspace, revision:state.project.revision}); applyState(next);
   if (!state.workspace) {
     fields.coordinator=priorFields.coordinator; fields.workers=priorFields.workers;
+    fields.thicknessCandidatesMm=priorFields.thicknessCandidatesMm;
     if (priorFields.taskBrief!==previousDefault) fields.taskBrief=priorFields.taskBrief;
     $('task-brief').value=fields.taskBrief; render();
   }

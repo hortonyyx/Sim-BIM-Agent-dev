@@ -2,6 +2,14 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_sim_components.py": {
+      "group": "targeted",
+      "reason": "Reciprocal and one-to-many wall and slab thickness, local surface materials and provenance"
+    },
+    "tests/test_sim_inspection_pipeline.py": {
+      "group": "targeted",
+      "reason": "Object evidence, candidate revisions, assessed viewer publication and finish attestation"
+    },
     "tests/test_viewer_metrics.py": {
       "group": "fast",
       "reason": "Offline projected areas and modeled volumes for zone and floor inspection cards"
@@ -12,7 +20,7 @@
     },
     "tests/test_workbench.py": {
       "group": "targeted",
-      "reason": "Local web submission, ordered material copies, immutable run snapshots, model selections and locale"
+      "reason": "Local web submission, ordered material copies, immutable run snapshots, thickness candidates, model selections and locale"
     },
     "tests/test_workbench_custom_connections.py": {
       "group": "targeted",

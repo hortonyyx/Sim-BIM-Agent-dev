@@ -62,7 +62,12 @@ const copy = {
   workspaceNeedsVisual: ['请添加至少一张 PNG 图像或一个 GLB 网格。', 'Add at least one PNG image or GLB mesh.'],
   saveInProgress: ['正在保存…', 'Saving…'], refreshPage: ['重新读取工作区', 'Reload workspace'],
   browserOffline: ['尚未连接本地工作台，请重新载入。', 'The local workbench is unavailable. Reload to reconnect.'],
-  noModelsFound: ['暂未获取到模型。', 'No models have been fetched yet.']
+  noModelsFound: ['暂未获取到模型。', 'No models have been fetched yet.'],
+  thicknessCandidates: ['候选厚度（mm）', 'Thickness candidates (mm)'],
+  wallThickness: ['墙体', 'Wall'], horizontalThickness: ['横向分隔（楼板 / 顶面）', 'Horizontal separator (floor / ceiling)'],
+  roofThickness: ['屋面', 'Roof'], glazingThickness: ['玻璃组件（含中空层）', 'Glazing unit (including cavities)'],
+  customThickness: ['自定值', 'Custom values'], customThicknessHint: ['多个值用逗号分隔', 'Separate values with commas'],
+  invalidThickness: ['厚度须为大于零的毫米数值。', 'Enter positive thicknesses in millimetres.']
 };
 export const tr = (lang, key) => copy[key]?.[lang === 'en' ? 1 : 0] ?? key;
 export function totals(lang, blocks, files) {

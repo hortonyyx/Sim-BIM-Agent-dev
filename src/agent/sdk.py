@@ -182,7 +182,7 @@ class BimSession:
         from src.agent.sdk_workflow import build_with_views
         return build_with_views(self, plan, drawings=drawings, mesh_observations=mesh_observations)
 
-    def finish_to(self, output_directory, candidate: str, *, reviews=None, inferences=None):
+    def finish_to(self, output_directory, candidate: str, *, reviews=None, inferences=None, inspection=None):
         """Finish normally and publish the bound interactive HTML in one call.
 
         The output directory must not exist. A failed or incomplete original
@@ -196,6 +196,8 @@ class BimSession:
             arguments["reviews_json"] = reviews
         if inferences is not None:
             arguments["inferences_json"] = inferences
+        if inspection is not None:
+            arguments["inspection_json"] = inspection
         reply = self.call("finish_bim", **arguments)
         return publish_finished(self.run, candidate, reply, output_directory)
 

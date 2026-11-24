@@ -42,7 +42,18 @@ def attest_finished_handoff(run: Path, result: dict, candidate: str) -> dict | N
     This reads evidence only; it cannot select, finish, repair or approve a BIM.
     The caller must supply the result of its actual successful finish call.
     """
+    from src.agent.execution.handoff_transaction import handoff_reader
+    from portalocker import LockException
+    try:
+        with handoff_reader(Path(run)):
+            return _attest_finished_handoff(run, result, candidate)
+    except (OSError, ValueError, LockException):
+        return None
+
+
+def _attest_finished_handoff(run, result, candidate):
     from scripts.tool_scripts.bim_agent_saved_result import full_result_metadata
+    from scripts.tool_scripts.bim_agent_inspection import POLICY, SCHEMA, KINDS
     from src.agent.geometry.source_model import _digest
     try:
         run = Path(run).resolve()
@@ -54,6 +65,10 @@ def attest_finished_handoff(run: Path, result: dict, candidate: str) -> dict | N
         manifest = json.loads((run / "inputs.json").read_bytes())
         names = {"inputs.json", "delivery_selection.json", "delivery.json", "delivery.html",
                  f"{candidate}/source_model.json", f"{candidate}/viewer.html"}
+        inspection_name = f"{candidate}/sim_inspection.json"
+        current_policy = manifest.get("spatial_assessment_policy") == POLICY
+        if current_policy or (run / inspection_name).is_file():
+            names.add(inspection_name)
         if manifest.get("mesh_input") and (run / candidate / "mesh_review.json").is_file():
             names.add(f"{candidate}/mesh_review.json")
         if set(expected) != names or any(not (run / name).resolve().is_relative_to(run) for name in names):
@@ -65,6 +80,15 @@ def attest_finished_handoff(run: Path, result: dict, candidate: str) -> dict | N
         delivery = json.loads(contents["delivery.json"])
         source = json.loads(contents[f"{candidate}/source_model.json"])
         source_hash = _digest({k: v for k, v in source.items() if k != "source_model_sha256"})
+        if inspection_name in names:
+            inspection = json.loads(contents[inspection_name])
+            if (inspection.get("schema_version") != SCHEMA or
+                    inspection.get("source_model_sha256") != source_hash or
+                    delivery.get("sim_inspection") != inspection_name):
+                return None
+            if current_policy and any(set(inspection["spatial"][kind]) != {r["id"] for r in source[kind]}
+                                      for kind in KINDS.values()):
+                return None
         if (source.get("schema_version") not in {"source_bim_v2", "source_bim_v3"}
                 or any(row.get("source_model_sha256") != source_hash for row in (source, selection, delivery, result))
                 or any(row.get("candidate") != candidate for row in (selection, delivery))

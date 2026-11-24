@@ -563,6 +563,11 @@ def describe_orchestrator_inputs(manifest: dict) -> str:
                      "the supplied descriptions, their applicability and any stated sources.")
     if manifest.get("floor_scope_source") == "explicit_input_filenames":
         lines.append("Explicitly supplied floor-plan names: " + ", ".join(manifest["floor_plan_images"]) + ".")
+    if manifest.get("spatial_assessment_policy") == "object_evidence_v1":
+        lines.append("Assess the spatial geometry of each saved zone, boundary and opening. Give both English and "
+                     "Chinese reasons and record surface material and thickness evidence where available. Use "
+                     "get_bim_reference('sim_inspection') and batch by shared evidence with inspection_json. "
+                     "The user's thickness candidates in millimetres are in inputs().thickness_candidates_mm.")
     return "\n".join(lines)
 
 
@@ -588,6 +593,42 @@ def build_guide(*, images=None, mesh=False, orchestrator=False):
 
 
 REFERENCES = {
+    'sim_inspection': """Spatial evidence and simulation properties are attached to the actual source IDs.
+On production runs with spatial_assessment_policy=object_evidence_v1, assess EVERY space, boundary
+and opening. Stage partial batches with record_sim_inspection(candidate,inspection_json), or include the
+same packet in finish_bim. Unchanged objects retain their declarations on a source revision.
+Use {"rules":[...]} with ordered rules. kind is space, boundary or opening. Use all:true for a judgment
+applicable to the entire kind, or intersect ids, space_ids, floor_ids (lists of saved IDs) and type
+(boundary: wall/floor/ceiling; opening: window/door/...; space: room-use code). Later rules replace
+only the supplied attributes. Group genuinely equivalent evidence, then specify exceptions. Read
+inspect_candidate/read_candidate_items for actual source IDs. An example fragment for a floor:
+{"kind":"space","floor_ids":["F1"],"spatial":{"grade":4,
+"reason":{"en":"Plan outlines the rooms; section height is approximate.","zh":"平面可见房间轮廓，层高为估算。"},
+"source_refs":["image:plan.png#F1 room outlines"]}}
+Spatial grade concerns geometry alone: 5 directly documented extent and dimensions; 4 mostly documented,
+with a minor dimension inferred; 3 some dimensions or boundaries observed, others inferred; 2 indirect
+support for an approximate location/shape; 1 chiefly assumed. Identify the actual spatial observation,
+transfer or gap in a short public reason in both languages. Choose grade from its architectural meaning.
+For a grade above 1 cite at least one admitted source. Grade 1 may cite an empty list when inputs give
+no spatial clues. Never grade geometry from room use, material, thickness or number of references.
+Each source_refs entry is one of image:<exact admitted filename>, view:view_NNNN, mesh:original,
+mesh:mesh_NNN, section:section_NNN, brief, block:<admitted block ID with caption>, or input:/json/pointer
+into inputs().building_input.declaration. Append #<locator> for the specific region or statement.
+Private refs stay in the workspace. Keep paths and internal IDs out of the public bilingual reason.
+On boundaries and openings you may independently set material:{en,zh,source,source_refs} and/or
+thickness:{value_mm,source,source_refs}. Use lowercase source tags: "from material" for evidence in
+an admitted original, "from user" for an explicit instruction for the particular element, "inference"
+for a judgment. Capture observed exterior finishes and any explicit user assignments; infer omitted
+materials at a simple descriptive level. A selected thickness shortlist is a constraint on an inferred
+choice and is not an explicit user assertion about that element. Wall, horizontal floor/ceiling, roof
+and total glazing thickness use their respective inputs().thickness_candidates_mm groups. For inferred
+values choose an admitted candidate if selected, otherwise a common module. Doors use ordinary inferred
+values. Use the full glazing unit thickness including cavities; do not construct layers or change opening
+geometry. Both sides of a physical component share its total thickness; materials describe each face.
+For actual documented local changes, boundaries may carry thickness_regions:[{vertices:[[x,y,z],...],
+holes:[],thickness:{value_mm,source,source_refs}}]; openings can carry materials_by_host:{hostID:material}.
+The component builder resolves shared component membership and fills missing physical properties with
+labelled inferences. Open-air/unknown separators have no material or thickness.""",
     'drawing_process': DRAWING_PROCESS_REFERENCE,
     'facade_correspondence': """Observe one facade's full opening list independently
 in the original plan and original elevation. Include doors and windows; retain
@@ -1011,6 +1052,9 @@ Example wall reference (unrelated to supplied drawings):
 offsets_m are signed along POSITIVE world x for a constant-x wall, or positive
 world y for a constant-y wall, independent of which room owns the boundary.
 Use offsets_m:null when unknown; thickness_m may also be null. Each reference
+can carry thickness_scope:"complete wall" when the drawing brackets the full assembly.
+Keep a partial layer or uncertain scope explicit in thickness_scope.
+Each wall reference
 covers one complete straight source wall and its congruent counterpart. Partial
 shared walls and explicit enclosure declarations are unsupported here. List only
 local evidence you have; do not fill all walls with one guessed thickness.

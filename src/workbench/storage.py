@@ -13,6 +13,7 @@ import portalocker
 
 from scripts.tool_scripts.bim_agent_inputs import read_building_input
 from src.agent.bim_inputs import validate_png
+from src.agent.geometry.thickness_options import normalize_candidates
 from src.agent_runtime.providers import is_custom_provider
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,7 +78,7 @@ def workspace_path(value):
 
 def new_project(locale):
     return {"schema": "sim-bim-workbench.v1", "revision": 0, "locale": locale, "blocks": [],
-            "taskBrief": DEFAULT_BRIEF[locale], "coordinator": None, "workers": []}
+            "taskBrief": DEFAULT_BRIEF[locale], "coordinator": None, "workers": [], "thicknessCandidatesMm": {}}
 
 
 def read_project(root):
@@ -85,6 +86,10 @@ def read_project(root):
     if not isinstance(data, dict) or data.get("schema") != "sim-bim-workbench.v1":
         raise InputError("该目录中的 project.json 属于其他项目。", "This folder already contains a different project.json.")
     invalid = InputError("工作区的 project.json 已损坏。", "The workspace project.json is damaged.")
+    try:
+        data["thicknessCandidatesMm"] = normalize_candidates(data.get("thicknessCandidatesMm"))
+    except ValueError as exc:
+        raise invalid from exc
     if (data.get("locale") not in DEFAULT_BRIEF or type(data.get("revision")) is not int
             or not isinstance(data.get("blocks"), list) or not isinstance(data.get("taskBrief"), str)
             or not isinstance(data.get("workers"), list) or "coordinator" not in data):
@@ -173,6 +178,11 @@ def update_project(root, payload):
                 raise InputError("请为素材组添加文件或填写说明。", "Add a file or a caption to the block.")
         data["blocks"] = selected
         data["taskBrief"] = str_field(payload.get("taskBrief"))
+        if "thicknessCandidatesMm" in payload:
+            try:
+                data["thicknessCandidatesMm"] = normalize_candidates(payload["thicknessCandidatesMm"])
+            except ValueError as exc:
+                raise InputError("请按组输入大于零的毫米数值。", str(exc)) from exc
         data["coordinator"] = selection(payload["coordinator"]) if payload.get("coordinator") else None
         workers = payload.get("workers", [])
         if not isinstance(workers, list):

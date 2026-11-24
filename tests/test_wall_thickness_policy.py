@@ -31,6 +31,9 @@ def test_batch_override_centimetres_and_required_final_coverage(tmp_path):
     result = require_wall_thickness(plan)
     assert [r['thickness_m'] for r in result['wall_metadata']] == [.37] * 4 + [.13]
     assert result['wall_metadata'][-1]['reference_side'] == 'centerline'
+    observed = copy.deepcopy(plan)
+    observed['wall_metadata'][-1].update(evidence_status='observed', thickness_m=.1275)
+    assert require_wall_thickness(observed)['wall_metadata'][-1]['thickness_m'] == .1275
     assert {r['reference_side'] for r in result['wall_metadata'][:4]} == {'negative_face', 'positive_face'}
     assert 62 in WALL_THICKNESS_PRESETS_CM and 200 in WALL_THICKNESS_PRESETS_CM
     plan['wall_metadata'][-1]['thickness_m'] = 2.17

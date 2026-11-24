@@ -21,6 +21,7 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from src.agent.viewer_publication import VIEWER_FILENAME
+from src.agent.geometry.thickness_options import PRESETS_MM
 
 from .connections import Connections
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
@@ -94,7 +95,8 @@ class Workbench:
                 error = ("上次工作区无法读取，可重新选择文件夹。" if locale == "zh-CN"
                          else "The previous workspace could not be read. Choose a workspace folder.")
             return {"workspace": str(root) if root else None, "locale": locale, "workspaceError": error,
-                    "project": client_project(project), "connections": self.connections.view(locale), "run": run}
+                    "project": client_project(project), "connections": self.connections.view(locale), "run": run,
+                    "thicknessPresetsMm": PRESETS_MM}
 
     def select(self, body):
         path = native_folder(self.prefs.get("workspace")) if body.get("browse") else body.get("path")

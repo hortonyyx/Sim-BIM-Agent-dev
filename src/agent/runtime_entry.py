@@ -54,9 +54,11 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
                    started_epoch: float | None = None,
                    seconds: float | None = None, process_reviews: bool = False,
                    orchestrator: bool = False, blocks: list[dict] | None = None,
-                   locale: str | None = None) -> tuple[Path, str, str]:
+                   locale: str | None = None, thickness_candidates_mm: dict | None = None) -> tuple[Path, str, str]:
     """Freeze and validate original inputs through the shared admission function."""
     from src.agent.bim_inputs import prepare_bim_inputs
+    from src.agent.geometry.thickness_options import normalize_candidates
+    thickness = normalize_candidates(thickness_candidates_mm)
     if started_epoch is None and seconds is not None:
         raise ValueError("seconds requires started_epoch")
     run = output / "bim"
@@ -73,14 +75,15 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
         manifest["blocks"] = blocks
     if orchestrator:
         manifest["orchestrator"] = True
-    if orchestrator or blocks is not None or locale is not None:
-        (run / "inputs.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    from scripts.tool_scripts.bim_agent_inspection import POLICY as SPATIAL_POLICY
+    manifest["spatial_assessment_policy"] = SPATIAL_POLICY
+    manifest["thickness_candidates_mm"] = thickness
     if process_reviews:
         if image_kind != "drawings" or mesh or not inventory:
             raise ValueError("process reviews require drawing images")
         from scripts.tool_scripts.bim_agent_process_reviews import POLICY
         manifest["drawing_review_policy"] = POLICY
-        (run / "inputs.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (run / "inputs.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     guide = build_guide(images=image_kind if inventory else None, mesh=bool(mesh),
                         **({"orchestrator": True} if orchestrator else {}))
     guide += ("\nSingle-model runtime completion: finish_bim selects your final handoff. "
@@ -92,6 +95,11 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
         from scripts.tool_scripts.bim_agent_guidance import DRAWING_PROCESS
         guide += "\n" + DRAWING_PROCESS
     task = scope
+    if thickness:
+        task += ("\n\nUser-selected thickness candidates in mm by component group (glazing includes the cavities of "
+                 "the whole glazing unit; horizontal applies jointly to floor and ceiling). A model's choice among "
+                 "candidates is inference. Preserve explicitly specified dimensions and their source.\n"
+                 + json.dumps(thickness, ensure_ascii=False))
     if locale is not None:
         language = "Simplified Chinese" if locale == "zh-CN" else "English"
         guide += (f"\nWrite user-facing output, names, assumptions, progress, and modelling notes in {language}. "
@@ -103,9 +111,21 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
     if orchestrator:
         from scripts.tool_scripts.bim_agent_guidance import describe_orchestrator_inputs
         task += "\n\n" + describe_orchestrator_inputs(manifest)
+    else:
+        task += ("\n\nAssess every zone, boundary and opening for spatial evidence, with a grade and a short "
+                 "reason in English and Chinese. Use get_bim_reference('sim_inspection') for the assessment "
+                 "and material/thickness schema. Pass the rules in finish_bim or stage them with record_sim_inspection.")
     (output / "guide.txt").write_text(guide, encoding="utf-8")
     (output / "task.txt").write_text(task, encoding="utf-8")
     return run, guide, task
+
+
+def admitted_thickness_candidates(manifest, requested):
+    from src.agent.geometry.thickness_options import normalize_candidates
+    admitted = manifest.get("thickness_candidates_mm", {})
+    if requested is not None and normalize_candidates(requested) != admitted:
+        raise ValueError("configured thickness candidates differ from the admitted run")
+    return admitted
 
 
 def publish_tool_budget(engine):
@@ -225,6 +245,8 @@ async def execute(args) -> dict:
             allow_recovery_policy_change=getattr(args, "allow_recovery_policy_change", False))
         limits = continuation.limits
         imported_source = continuation.source
+        admitted_thickness_candidates(imported_source.read_json("bim/inputs.json"),
+                                      getattr(args, "thickness_candidates_mm", None))
     elif args.resume and (output / "continuation_manifest.json").is_file():
         from src.agent_runtime.continuation import ReadOnlyRun
         from src.agent.runtime_mesh_continuation import continuation_lineage, tree_hashes
@@ -265,12 +287,15 @@ async def execute(args) -> dict:
             building_input=args.building_input, scope=args.scope, image_kind=args.image_kind,
             max_candidates=args.max_candidates, floor_plan_images=args.floor_plan_images,
             started_epoch=started_epoch, seconds=limits.seconds,
-            process_reviews=getattr(args, "process_reviews", False), orchestrator=orchestrator)
+            process_reviews=getattr(args, "process_reviews", False), orchestrator=orchestrator,
+            thickness_candidates_mm=getattr(args, "thickness_candidates_mm", None))
         if mesh_workers and not orchestrator:
             from scripts.tool_scripts.bim_agent_guidance import MESH_WORKERS
             guide += "\n" + MESH_WORKERS
             (output / "guide.txt").write_text(guide, encoding="utf-8")
     manifest = json.loads((run / "inputs.json").read_bytes())
+    if args.resume:
+        admitted_thickness_candidates(manifest, getattr(args, "thickness_candidates_mm", None))
     started_epoch = manifest.get("started_epoch")
     role = (local_observer_role if args.role == "local_observer" else coordinator_role)(limits.ledger_limit())
     adapter = None
@@ -500,6 +525,8 @@ def parser():
     p.add_argument("--floor-plan-image", dest="floor_plan_images", action="append",
                    help="Explicit expected floor-plan filename; repeat for all floors")
     p.add_argument("--mesh", type=Path)
+    p.add_argument("--thickness-candidates-mm", type=json.loads,
+                   help="JSON groups of candidate thicknesses in millimetres: wall, horizontal, roof, glazing")
     p.add_argument("--orchestrator", action="store_true", help="coordinate available building inputs in one run")
     p.add_argument("--worker-model", help="optional observer model on the coordinator's provider")
     p.add_argument("--worker-concurrency", type=int, default=0, help="maximum simultaneous optional observers")

@@ -255,6 +255,9 @@ def load_configuration(path: Path, *, low_output_limit_reason: str | None = None
     for index, case in enumerate(cases):
         if not isinstance(case, dict):
             raise ValueError(f"cases[{index}] must be a JSON object")
+        if "thickness_candidates_mm" in case:
+            from src.agent.geometry.thickness_options import normalize_candidates
+            case["thickness_candidates_mm"] = normalize_candidates(case["thickness_candidates_mm"])
         if case.get("mode") == "orchestrator":
             admit_project_materials(case)
         elif "materials" in case:
@@ -469,6 +472,8 @@ def argv_for(case: dict, *, resume: bool = False, configuration_path: Path | Non
     argv = [sys.executable, "-m", entrypoint,
             "--out", str(output), "--provider", case["provider"],
             "--model", case["model"]]
+    if "thickness_candidates_mm" in case:
+        argv.extend(["--thickness-candidates-mm", json.dumps(case["thickness_candidates_mm"])])
     if case["mode"] == "orchestrator":
         argv.append("--orchestrator")
         worker = orchestrator_worker(case)

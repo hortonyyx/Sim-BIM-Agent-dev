@@ -47,7 +47,7 @@ chain for an uncertain or conflicting span, not for every clear opening. Code ac
 shared nodes and adopts 0.1 m coordinates while retaining readings. Do not hand-round or
 remeasure merely to remove sub-grid tails.
 
-Every wall needs positive thickness at 1 cm resolution. Use wall_metadata defaults for
+Keep a directly documented wall width at its stated precision. Adopt inferred widths on the 1 cm grid. Use wall_metadata defaults for
 footprint:* and partition:*, then only visible exceptions at footprint:<edge>,
 partition:<id> or partition:<id>:<segment>. Rows need thickness_m, evidence_status,
 short basis and source_refs. Batch defaults are inferred; observed requires direct evidence

@@ -83,6 +83,7 @@ def freeze(root, target, draft):
         materials["building_input"] = "building.json"
     save_json(target / "input.json", {"schema": "sim-bim-run.v1", "revision": draft["revision"],
               "locale": draft["locale"], "blocks": blocks, "taskBrief": draft["taskBrief"],
+              "thicknessCandidatesMm": draft.get("thicknessCandidatesMm", {}),
               "coordinator": draft["coordinator"], "workers": draft["workers"]})
     return materials, blocks
 
@@ -101,6 +102,7 @@ def configuration(directory, draft, materials, blocks, *, connections=None):
             custom[provider] = entry
     case = {"case_id": directory.name, "mode": "orchestrator", "runtime": "dsh", "output": "production",
             "materials": materials, "blocks": blocks, "locale": draft["locale"],
+            "thickness_candidates_mm": draft.get("thicknessCandidatesMm", {}),
             "scope": draft["taskBrief"].strip() or DEFAULT_BRIEF[draft["locale"]],
             **route, "workers": draft["workers"], "reasoning_effort": "high",
             "output_tokens": default_output_tokens(route["model"]), "image_history_batches": 3,

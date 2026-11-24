@@ -541,6 +541,8 @@ class Toolkit:
                   "generation_status": generation_status or {"state":"in_progress"},
                   **opening_delivery_summary(self, source)}
         result["source_image_feedback"] = self._delivery_projection_status(candidate, source)
+        if (path / "sim_inspection.json").is_file():
+            result["sim_inspection"] = f"{candidate}/sim_inspection.json"
         result["space_relation_review"] = self.space_relation_status(source)
         result["input_view_status"] = self.input_view_status()
         if self.manifest.get("drawing_review_policy"):
@@ -1085,7 +1087,12 @@ class Toolkit:
         if architectural_regularization is not None:
             provenance["architectural_regularization"] = architectural_regularization
         stage("admission_seconds")
+        from scripts.tool_scripts.bim_agent_inspection import POLICY, initial_snapshot
+        needs_inspection = (self.manifest.get("spatial_assessment_policy") == POLICY or
+            (parent and any((self.candidate_path(parent) / name).is_file()
+                            for name in ["sim_inspection.json", "sim_inspection_draft.json"])))
         report = export_source_proposal(proposal, self.run/candidate, provenance=provenance,
+            inspection_builder=(lambda source: initial_snapshot(self, source, parent)) if needs_inspection else None,
             locale=self.manifest.get("locale", "zh-CN"),
             mesh_path=self.run/'assets'/'input.glb' if proposal.get('mesh_frame') else None,
             vertical_continuity_policy=self.manifest.get('vertical_continuity_policy'))
@@ -2735,7 +2742,8 @@ def build_tool_server(run: Path, readonly=False):
 
 
         @server.tool()
-        def finish_bim(candidate: str, reviews_json: str = "", inferences_json: str = "") -> dict:
+        def finish_bim(candidate: str, reviews_json: str = "", inferences_json: str = "",
+                       inspection_json: str = "") -> dict:
             """Select a saved BIM and persist a handoff based on actual checks.
             Unreviewed/pending scopes remain explicit. This does not certify image
             fidelity. Whether it ends work is determined by the running entrypoint:
@@ -2754,10 +2762,21 @@ def build_tool_server(run: Path, readonly=False):
             (statement, basis, reason, source_refs, missing_information, object_refs).
             object_refs is a list of {"kind":"space|boundary|opening|floor","id":"..."}.
             These are saved together on this exact source, not additional quality approval.
+            inspection_json accepts batched spatial grades/reasons and surface properties.
+            Use get_bim_reference("sim_inspection") for selectors and evidence syntax.
+            Current production runs require spatial assessments for all zones and surfaces.
             """
+            from src.agent.execution.handoff_transaction import finish_transaction
+            with finish_transaction(run, candidate):
+                return _finish_bim(candidate, reviews_json, inferences_json, inspection_json)
+
+        def _finish_bim(candidate, reviews_json, inferences_json, inspection_json):
+            from scripts.tool_scripts.bim_agent_inspection import finish_inspection
+            from scripts.tool_scripts.bim_agent_inference import prepare_inferences, save_prepared_inferences
             from scripts.tool_scripts.bim_agent_process_reviews import (
                 carry_reviews, drawing_handoff_review, orchestrated_drawing, require_process_reviews)
             from scripts.tool_scripts.bim_agent_mesh_review import carry_mesh_review
+            prepared = prepare_inferences(toolkit, inferences_json, candidate) if inferences_json else None
             drawing_review = None
             if orchestrated_drawing(toolkit.manifest):
                 packet = json.loads(reviews_json) if reviews_json else None
@@ -2767,10 +2786,8 @@ def build_tool_server(run: Path, readonly=False):
             elif carry_mesh_review(toolkit, candidate, reviews_json) is None:
                 carry_reviews(toolkit, reviews_json, candidate)
             require_process_reviews(toolkit, candidate)
-            inference_batch = None
-            if inferences_json:
-                from scripts.tool_scripts.bim_agent_inference import record_inferences
-                inference_batch = record_inferences(toolkit, inferences_json, candidate)
+            has_inspection = finish_inspection(toolkit, candidate, inspection_json)
+            inference_batch = save_prepared_inferences(toolkit, *prepared) if prepared else None
             result = toolkit.delivery(candidate, selection_origin="agent_selected", drawing_review=drawing_review,
                 generation_status={"state": "in_progress", "handoff_saved": True,
                                    "agent_response_completed": False})
@@ -2784,6 +2801,9 @@ def build_tool_server(run: Path, readonly=False):
                 "inputs.json", "delivery_selection.json", "delivery.json", "delivery.html",
                 f"{candidate}/source_model.json", f"{candidate}/viewer.html")}
             mesh_review_path = run / candidate / 'mesh_review.json'
+            if has_inspection:
+                inspection_name = f"{candidate}/sim_inspection.json"
+                artifacts[inspection_name] = digest(run / inspection_name)
             if toolkit.manifest.get('mesh_input') and mesh_review_path.is_file():
                 artifacts[f'{candidate}/mesh_review.json'] = digest(mesh_review_path)
             from scripts.tool_scripts.bim_agent_replies import compact_reply
