@@ -22,6 +22,6 @@
   "locked_package_count": 39,
   "product_lock_sha256": "44075f238f2d560f85d025e2525aff408891685f095f3700dc4f3a890b391d88",
   "product_pyproject_sha256": "4d6d6b90c4eec916a2a1ac55945d60062725b47febd786138f0bc7d763a9b29c",
-  "profile_sha256": "e9698ddc9a08b3b25bfa606e201930dc4dda4182cc846d3413a6140ff8179a9c",
+  "profile_sha256": "f4819c95a58f34f318280cad8432ccdcd1aa741e7f52573d0eadb22787188857",
   "schema_version": "sim-bim-product-dependencies.v1"
 }
