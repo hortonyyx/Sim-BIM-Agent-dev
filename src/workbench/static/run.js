@@ -148,8 +148,11 @@ function renderTimeline() {
   for (const row of rows) if (belongsToStep(row)) {
     steps.get(stepKey(row)).push(row);
   }
-  for (const row of rows) {
-    if (row.source==='worker') continue;
+  // The supervisor and each Harness attempt write separate journals. A replay can read their
+  // pages in a different order to a live tail. Place recovery before the attempt it starts.
+  const main=rows.filter(row=>row.source!=='worker').sort((a,b)=>
+    (a.attempt ?? 1)-(b.attempt ?? 1) || Number(b.kind==='retry')-Number(a.kind==='retry'));
+  for (const row of main) {
     if (belongsToStep(row)) continue;
     const item=el('li','trace-item');item.dataset.kind=row.kind;item.dataset.status=row.status || '';
     if (row.kind==='step') {
@@ -218,7 +221,9 @@ async function loadHistory() {
 locale=locale==='zh-CN'?'zh-CN':'en';
 document.querySelectorAll('[data-lang]').forEach(node=>{node.onclick=()=>setLocale(node.dataset.lang);});
 $('run-history').onchange=e=>{
-  url.searchParams.set('id',e.target.value);url.hash='';location.assign(url.href);
+  const selected=runs.find(entry=>entry.id===e.target.value);
+  if (!selected) return;
+  url.searchParams.set('id',selected.id);url.hash=selected.status==='running'?'live':'';location.assign(url.href);
 };
 window.addEventListener('pagehide',()=>{active=false;clearTimeout(timer);});
 window.addEventListener('pageshow',e=>{if (e.persisted){active=true;loadHistory();poll();}});

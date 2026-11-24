@@ -44,6 +44,8 @@ def _compact(**fields):
 
 def _project_harness(row, attempt, position, state):
     phase = row.get("phase") if row.get("type") == "status" else row.get("type")
+    if phase == "turn_start":
+        state[2:] = [0, 0]
     if phase in {"turn_start", "step_start", "step_end", "turn_end"}:
         for field, index in (("turn", 1), ("step", 2)):
             if type(row.get(field)) is int:
@@ -94,9 +96,15 @@ def _project_harness(row, attempt, position, state):
         state[3] = 1
         return _compact(**base, id=f"{prefix}:text:{position}", kind="message", text=_text(row["text"]))
     if phase in {"session", "turn_end"}:
-        reason = row.get("reason")
-        ended = reason.get("kind") if isinstance(reason, dict) else None
-        status = "running" if phase == "session" else ("failed" if ended in ("error", "abort", "cancelled", "timeout") else "completed")
+        status = "running"
+        if phase == "turn_end":
+            reason = row.get("reason")
+            details = reason if isinstance(reason, dict) else {}
+            ended = details.get("kind")
+            if details.get("error") or ended in ("error", "abort", "aborted", "cancelled", "timeout"):
+                status = "failed"
+            else:
+                status = "completed" if ended == "completed" else "recorded"
         return _compact(**base, id=f"h{attempt}:session:{position}", kind="session", action=phase, status=status)
     return None
 
@@ -106,7 +114,7 @@ def _project_worker(row):
     task = _text(row.get("task_id"), 160)
     parent = row.get("parent_task") or {}
     if not task or not parent.get("task_id"):
-        return None  # The observer pool itself is bookkeeping, not a selected worker.
+        return  # The observer pool itself is bookkeeping, not a selected worker.
     base = dict(source="worker", task=task, parent=_text(parent["task_id"], 160),
                 time=_when(row.get("occurred_at")))
     kind = payload.get("event_type")
@@ -114,24 +122,28 @@ def _project_worker(row):
         action, reason = payload.get("action"), payload.get("reason")
         status = ("completed" if reason == "completed" else "failed") if action == "stop" else (
             "failed" if action in ("failure", "timeout", "cancel") else "running")
-        return _compact(**base, id=f"w:{task}", kind="worker", action=_text(action, 80),
-                        status=status, text=_text(reason, 200) if status == "failed" else None)
+        model_failure = payload.get("model_failure") or {}
+        request = _text(model_failure.get("request_event_id"), 240)
+        if request and status == "failed":
+            yield _compact(**base, id=f"w:{task}:step:{request}", kind="step", status="failed")
+        # The UI merges updates for the same task; clear obsolete failure text on recovery.
+        yield _compact(**base, id=f"w:{task}", kind="worker", action=_text(action, 80),
+                       status=status, text=_text(reason, 200) if status == "failed" else "")
     if kind in {"adapter_request", "model_response"}:
         request = row.get("event_id") if kind == "adapter_request" else payload.get("request_event_id")
         remote = (payload.get("versions") or {}).get("remote_model") or {}
         visible = payload.get("visible_text")
         text = _text("\n".join(v for v in visible if isinstance(v, str))) if isinstance(visible, list) else None
-        return _compact(**base, id=f"w:{task}:step:{request}", kind="step",
-                        model=_text(remote.get("remote_alias"), 160), text=text or None,
-                        status="running" if kind == "adapter_request" else "completed")
+        yield _compact(**base, id=f"w:{task}:step:{request}", kind="step",
+                       model=_text(remote.get("remote_alias"), 160), text=text or None,
+                       status="running" if kind == "adapter_request" else "completed")
     if kind in {"tool_invocation", "tool_execution"}:
         call = _text(payload.get("call_id"), 240)
         if call:
-            status = "running" if kind == "tool_invocation" else (
-                "completed" if payload.get("outcome") == "succeeded" else "failed")
-            return _compact(**base, id=f"w:{task}:tool:{call}", kind="tool", call_id=call,
-                            tool=_text(payload.get("tool_name"), 180), status=status)
-    return None
+            outcomes = {"succeeded": "completed", "failed": "failed"}
+            status = "running" if kind == "tool_invocation" else outcomes.get(payload.get("outcome"), "recorded")
+            yield _compact(**base, id=f"w:{task}:tool:{call}", kind="tool", call_id=call,
+                           tool=_text(payload.get("tool_name"), 180), status=status)
 
 
 def _project_retry(row, position):
@@ -186,8 +198,9 @@ def _page(directory, cursor):
                 state[0] = file.tell()
                 row = json.loads(raw)
                 if source == "worker":
-                    event = _project_worker(row)
-                elif source == "retry":
+                    events.extend(_project_worker(row))
+                    continue
+                if source == "retry":
                     event = _project_retry(row, position)
                 else:
                     event = _project_harness(row, int(source), position, state)

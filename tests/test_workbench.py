@@ -293,3 +293,46 @@ def test_live_trace_paginates_host_rows_without_duplicate_text(workbench, monkey
         cursor = page["cursor"]
     assert [e["text"] for e in all_rows] == list("01234")
     assert len({e["id"] for e in all_rows}) == 5
+
+
+def test_live_trace_settles_only_native_receipts_across_recovery(tmp_path, monkeypatch):
+    from src.workbench import trace
+    session = tmp_path / "production/private/dsh/session"
+    session.mkdir(parents=True)
+    rows = [
+        {"type": "status", "phase": "step_start", "turn": 1, "step": 1},
+        {"type": "status", "phase": "step_end", "turn": 1, "step": 1, "usage": {}},
+        {"type": "status", "phase": "turn_end", "turn": 1, "reason": {"kind": "aborted"}},
+        {"type": "status", "phase": "turn_start", "turn": 2},
+        {"type": "status", "phase": "turn_end", "turn": 2, "reason": {"error": {"code": "TIMEOUT"}}},
+        {"type": "status", "phase": "turn_end", "turn": 3, "reason": {}},
+    ]
+    (session / "events.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    worker = tmp_path / "production/private/workers"
+    worker.mkdir()
+    rows = [
+        {"event_type": "adapter_request"},
+        {"event_type": "run_lifecycle", "action": "failure", "reason": "timeout",
+         "model_failure": {"request_event_id": "e0"}},
+        {"event_type": "run_lifecycle", "action": "retry", "reason": "retrying"},
+        {"event_type": "adapter_request"},
+        {"event_type": "model_response", "request_event_id": "e3", "visible_text": ["Recovered."]},
+        {"event_type": "tool_execution", "call_id": "t1", "outcome": "unknown"},
+        {"event_type": "run_lifecycle", "action": "stop", "reason": "completed"},
+    ]
+    with (worker / "events.jsonl").open("w") as stream:
+        for index, payload in enumerate(rows):
+            stream.write(json.dumps({"event_id": f"e{index}", "task_id": "reader",
+                                     "parent_task": {"task_id": "pool"}, "payload": payload}) + "\n")
+    monkeypatch.setattr(trace, "_BATCH", 1)
+    records, cursor, more = {}, None, True
+    while more:
+        events, cursor, more = trace._page(tmp_path, cursor)
+        for event in events:
+            records.setdefault(event["id"], {}).update(event)
+    assert records["h1:1:1"]["status"] == "failed" and "h1:2:1" not in records
+    assert [r["status"] for r in records.values() if r["kind"] == "session"] == ["failed", "failed", "recorded"]
+    assert records["w:reader:step:e0"]["status"] == "failed"
+    assert records["w:reader:step:e3"]["text"] == "Recovered."
+    assert records["w:reader:tool:t1"]["status"] == "recorded"
+    assert (records["w:reader"]["status"], records["w:reader"]["text"]) == ("completed", "")
