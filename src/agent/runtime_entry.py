@@ -16,7 +16,7 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
-from scripts.tool_scripts.bim_agent_guidance import build_guide
+from scripts.tool_scripts.bim_agent_guidance import SPATIAL_GRADE_SCALE, build_guide
 from src.agent.runtime_tools import (
     FrozenBimTools, coordinator_role, local_observer_role, frozen_bim_client,
     write_frozen_materials, write_frozen_tool_catalog,
@@ -116,6 +116,7 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
                  "reason in English and Chinese. Use get_bim_reference('sim_inspection') for the assessment "
                  "and material/thickness schema. Describe the principal construction in a short bilingual observation "
                  "and qualify what the evidence supports. Pass the rules in finish_bim or stage them with record_sim_inspection.")
+        task += "\n" + SPATIAL_GRADE_SCALE
     (output / "guide.txt").write_text(guide, encoding="utf-8")
     (output / "task.txt").write_text(task, encoding="utf-8")
     return run, guide, task

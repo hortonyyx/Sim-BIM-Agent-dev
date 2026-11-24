@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from scripts.tool_scripts.bim_agent_guidance import REFERENCES, SPATIAL_GRADE_SCALE
 from scripts.tool_scripts.bim_agent_inspection import apply_rules, inherited_records, _empty
 from scripts.tool_scripts.run_bim_agent import Toolkit
 from src.agent.runtime_delivery import attest_finished_handoff
@@ -13,17 +14,24 @@ from src.agent.sdk import BimSession
 from tests.test_drawing_source_precision import rotated_plan
 
 
-def _run(tmp_path):
+def _run(tmp_path, *, orchestrator=True):
     images = tmp_path / "originals"
     images.mkdir()
     Image.new("RGB", (120, 120), "white").save(images / "plan.png")
     return prepare_inputs(tmp_path / "execution", images=images, mesh=None, building_input=None,
         scope="The door leaf has a solid oak core.", image_kind="drawings", floor_plan_images=None,
-        max_candidates=5, orchestrator=True, thickness_candidates_mm={"wall": [180]})
+        max_candidates=5, orchestrator=orchestrator, thickness_candidates_mm={"wall": [180]})
 
 
 def _grade(value, en, zh, refs=()):
     return {"grade": value, "reason": {"en": en, "zh": zh}, "source_refs": list(refs)}
+
+
+@pytest.mark.parametrize("orchestrator", [False, True])
+def test_initial_task_and_inspection_reference_share_spatial_scale(tmp_path, orchestrator):
+    _, _, task = _run(tmp_path, orchestrator=orchestrator)
+    assert task.count(SPATIAL_GRADE_SCALE) == 1
+    assert SPATIAL_GRADE_SCALE in REFERENCES["sim_inspection"]
 
 
 def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
@@ -188,6 +196,7 @@ def test_dsh_initial_messages_and_resume_bind_candidates(tmp_path, monkeypatch):
     initial, specs = relay.cfg()
     prompt = initial[1]["content"][0]["text"]
     assert "sim_inspection" in prompt and '"glazing": [24]' in prompt
+    assert SPATIAL_GRADE_SCALE in prompt
     assert manifest["spatial_assessment_policy"] == "object_evidence_v1"
     assert {s["function"]["name"] for s in specs} >= {"record_sim_inspection", "finish_bim"}
     verify_resume_inputs(manifest, materials)

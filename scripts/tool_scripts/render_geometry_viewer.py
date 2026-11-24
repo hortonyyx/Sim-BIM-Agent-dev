@@ -61,8 +61,9 @@ _APP_JS = r"""
   const SOURCE_SPACES = Object.fromEntries(((SOURCE && SOURCE.spaces) || []).map(s=>[s.id,s]));
   const SOURCE_BOUNDARIES = Object.fromEntries(((SOURCE && SOURCE.boundaries) || []).map(b=>[b.id,b]));
   let confidenceView=false;
-  const GRADE_COLORS=[0xc5cbd2,0x59298c,0x8754ba,0xb48ada,0xd7bcee,0xeee4fa];
-  const GRADE_LABELS=['Unassessed','Assumed','Mostly inferred','Partly inferred','Mostly observed','Direct evidence'];
+  let modelOpacity=1;
+  const GRADE_COLORS=[0xb3bac4,0x40145f,0x74399e,0xa46ec7,0xcfabe4,0xf2e6f7];
+  const GRADE_LABELS=['Unassessed','Assumed','Indirect support','Partial support','Strong support','Direct evidence'];
   // resolve a window's zone: its parent surface's zone first (parent = "<wall>_<i>"),
   // then a zone-name prefix, then the nearest zone centroid — never returns '?' so a
   // window always pops out + groups/explodes with a real zone.
@@ -180,6 +181,21 @@ _APP_JS = r"""
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, viewport.clientWidth/Math.max(1,viewport.clientHeight), 0.05, radius*200);
   camera.up.set(0,0,1);
+  // The bundled Three renderer sorts transparent objects by their origin, but
+  // our face vertices are in building coordinates and share an object origin.
+  const sortPoint=new THREE.Vector3();
+  function faceDepth(item){
+    const object=item.object;
+    if(!object.isMesh || !object.geometry.boundingSphere) return item.z;
+    if(item.depthFrame!==renderer.info.render.frame){
+      item.depthFrame=renderer.info.render.frame;
+      item.z=sortPoint.copy(object.geometry.boundingSphere.center).applyMatrix4(object.matrixWorld).project(camera).z;
+    }
+    return item.z;
+  }
+  function sortConfidenceFaces(a,b){
+    return a.groupOrder-b.groupOrder || a.renderOrder-b.renderOrder || faceDepth(b)-faceDepth(a) || a.id-b.id;
+  }
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   let cameraMoved=false;
   controls.addEventListener('start',()=>{cameraMoved=true;});
@@ -253,7 +269,7 @@ _APP_JS = r"""
   ];
   AX.forEach(a=>{ a.enabled=false; a.flip=false; a.pos=a.max; a.plane=new THREE.Plane(a.base.clone(), a.max); });
   function updatePlane(a){ a.plane.normal.copy(a.flip?a.base.clone().negate():a.base.clone()); a.plane.constant=a.flip?-a.pos:a.pos; }
-  function activePlanes(){ return AX.filter(a=>a.enabled).map(a=>a.plane); }
+  function activePlanes(){ return confidenceView ? [] : AX.filter(a=>a.enabled).map(a=>a.plane); }
 
   // ---- build meshes (keep ALL faces; reciprocal dup hidden at rest, windows popped out) ----
   const surfMeshes=[], winMeshes=[], openingMeshes=[], enclosureMeshes=[], edgeSegs=[], logicalLines=[], enclosureLines=[], windowEdges=[];
@@ -500,6 +516,22 @@ _APP_JS = r"""
 
   // ---- select-by modes + uniform-colour selection ----
   let selected=new Set(); const selGroup=new THREE.Group(); scene.add(selGroup);
+  function applyOpacity(){
+    const value=Number($('opacity').value);
+    function setAlpha(mesh,alpha,depthWrite=alpha===1){
+      mesh.material.opacity=alpha;
+      mesh.material.transparent=alpha<1;
+      mesh.material.depthWrite=depthWrite;
+    }
+    surfMeshes.forEach(m=>setAlpha(m,value,!confidenceView || value===1));
+    winMeshes.forEach(m=>{
+      if(confidenceView && !m.confidenceMaterial) m.confidenceMaterial=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+      m.material=confidenceView ? m.confidenceMaterial : m.modelMaterial;
+      if(confidenceView) setAlpha(m,value);
+    });
+    openingMeshes.forEach(m=>setAlpha(m,confidenceView ? value : m.modelOpacity));
+    enclosureMeshes.forEach(m=>setAlpha(m,confidenceView ? value : ENCLOSURE_OPACITY));
+  }
   function refreshColors(){
     const mode=$('colorBy').value;
     surfMeshes.forEach(m=>{ let c; if(mode==='floor') c=FLOOR_COLORS[m.userData.floor%FLOOR_COLORS.length];
@@ -508,12 +540,6 @@ _APP_JS = r"""
       m.userData.baseColor=c; });
     winMeshes.forEach(m=>m.userData.baseColor=WINDOW_COLOR);
     enclosureMeshes.forEach(m=>m.userData.baseColor=ENCLOSURE_COLOR);
-    winMeshes.forEach(m=>{
-      if(confidenceView && !m.confidenceMaterial) m.confidenceMaterial=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
-      m.material=confidenceView ? m.confidenceMaterial : m.modelMaterial;
-    });
-    openingMeshes.forEach(m=>{m.material.opacity=confidenceView?1:m.modelOpacity;m.material.depthWrite=confidenceView;});
-    enclosureMeshes.forEach(m=>{m.material.opacity=confidenceView?1:ENCLOSURE_OPACITY;m.material.depthWrite=confidenceView;});
     for(const m of allPickables()){
       const u=m.userData;
       const color=confidenceView ? GRADE_COLORS[spatialRecord(mode,u)?.grade || 0] : u.baseColor;
@@ -662,8 +688,8 @@ _APP_JS = r"""
   function edgeVisible(e){ const f=parseInt($('floorSel').value,10); const exploded=parseFloat($('explode').value)>0;
     if(meshActive() && ($('meshMode').value==='mesh'||!$('showEdges').checked)) return false;
     if(!partVisible(e,f,exploded)) return false;
-    if(e.kind==='enclosure-region') return $('showEnclosure').checked;
-    return (e.kind==='window') ? $('showWin').checked : (e.kind==='opening') ? $('showOpen').checked : $('showWalls').checked; }
+    if(e.kind==='enclosure-region') return layerVisible('showEnclosure');
+    return layerVisible(e.kind==='window' ? 'showWin' : e.kind==='opening' ? 'showOpen' : 'showWalls'); }
   function segDist(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy||1;
     let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
     return (px-(ax+t*dx))**2 + (py-(ay+t*dy))**2; }
@@ -855,29 +881,34 @@ _APP_JS = r"""
   // At explode=0 the duplicate of each coincident reciprocal pair is HIDDEN (solid
   // clean shell, no gaps, no z-fight); at explode>0 ALL faces show (each zone a
   // closed box) separated by the offset.
+  function layerVisible(id){
+    const input=$(id);
+    return confidenceView ? input.defaultChecked : input.checked;
+  }
   function applyFilter(){ const f=parseInt($('floorSel').value,10);
     const exploded=parseFloat($('explode').value)>0;
     const comparison=meshActive(), mode=$('meshMode').value;
     const fills=!comparison || mode==='blend', contours=!comparison || mode!=='mesh';
-    const sw=$('showWalls').checked, swin=$('showWin').checked, se=$('showEdges').checked;
+    const sw=layerVisible('showWalls'), swin=layerVisible('showWin'), se=layerVisible('showEdges');
+    const openings=layerVisible('showOpen'), enclosures=layerVisible('showEnclosure');
     const okF=(u)=>partVisible(u,f,exploded);
     surfMeshes.forEach(m=>m.visible = fills && sw && okF(m.userData));
     winMeshes.forEach(m=>m.visible = fills && swin && okF(m.userData));
-    openingMeshes.forEach(m=>m.visible=fills && $('showOpen').checked && okF(m.userData));
+    openingMeshes.forEach(m=>m.visible=fills && openings && okF(m.userData));
     for(const side of pairedSides){
-      const m=side.mesh,u=m.userData, layer=u.kind==='opening' ? $('showOpen').checked : sw;
+      const m=side.mesh,u=m.userData, layer=u.kind==='opening' ? openings : sw;
       side.enabled=fills && layer && onFloor(u,f) && side.owners.some(z=>
         onFloor({zone:z,floor:zoneFloor[z]},f) && (!exploded || m.position.distanceToSquared(explodeOffset(z))<1e-12));
       m.material.polygonOffset=side.enabled && !side.peer;
       m.material.polygonOffsetFactor=-1;m.material.polygonOffsetUnits=-2;
     }
     faceCamera();
-    enclosureMeshes.forEach(m=>m.visible=fills && $('showEnclosure').checked && okF(m.userData));
-    edgeSegs.forEach(e=>{e.visible = contours && se && okF(e.userData) && (e.userData.kind!=='opening'||$('showOpen').checked);
+    enclosureMeshes.forEach(m=>m.visible=fills && enclosures && okF(m.userData));
+    edgeSegs.forEach(e=>{e.visible = contours && se && okF(e.userData) && (e.userData.kind!=='opening'||openings);
       e.material.color.setHex(e.userData.kind==='opening' ? (comparison?0xec820e:e.userData.baseColor) : (comparison?0xc51b80:0x303030));});
     windowEdges.forEach(e=>e.visible=comparison && contours && se && swin && okF(e.userData));
-    logicalLines.forEach(e=>e.visible=contours && $('showLogical').checked && okF(e.userData));
-    enclosureLines.forEach(e=>e.visible=contours && $('showEnclosure').checked && okF(e.userData));
+    logicalLines.forEach(e=>e.visible=contours && layerVisible('showLogical') && okF(e.userData));
+    enclosureLines.forEach(e=>e.visible=contours && enclosures && okF(e.userData));
     referenceGroup.visible=comparison;
     referenceMeshes.forEach(m=>{const v=parseFloat($('meshOpacity').value)*m.userData.alphaFactor;
       m.material.opacity=v; m.material.transparent=v<1||m.userData.alphaMode==='BLEND';
@@ -902,8 +933,6 @@ _APP_JS = r"""
   function row(k,v){ return '<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>'; }
   function updateStats(){
     const count=n=>n.toLocaleString(GEO.locale);
-    $('counts').innerHTML=row('[[msg:zones]]',count((GEO.zones||[]).length))+row('[[msg:surfaces]]',count(SURF.length))+
-      row('[[msg:windows]]',count(WINS.length))+row(SOURCE?'[[msg:Elevation groups]]':'[[msg:floors]]',count(BASES.length));
     $('dimensions').innerHTML=row('[[msg:Width]]',size.x.toFixed(2)+' m')+row('[[msg:Depth]]',size.y.toFixed(2)+' m')+
       row('[[msg:Height]]',size.z.toFixed(2)+' m');
     $('elementStats').hidden=!SOURCE;
@@ -915,18 +944,18 @@ _APP_JS = r"""
   }
   updateStats();
 
-  // ---- room-type legend (shown in zone mode: colour swatch → room type) ----
+  // ---- legends ----
   function updateLegend(mode){
     const el=$('legend'); if(!el) return;
     $('confidenceLegend').hidden=!confidenceView;
     $('confidenceUnit').textContent=msg(mode==='zone'||mode==='floor' ? 'zone' : 'surface');
     $('confidenceScale').innerHTML=[5,4,3,2,1,0].map(g=>'<li><i style="background:'+hex6(GRADE_COLORS[g])+
       '"></i><span>'+(g ? g+' · ' : '')+esc(msg(GRADE_LABELS[g]))+'</span></li>').join('');
-    $('legendGroup').hidden=confidenceView || mode!=='zone' || !HAS_ROLES;
+    $('legendGroup').hidden=confidenceView || !HAS_ROLES;
     if($('legendGroup').hidden){el.innerHTML='';return;}
-    const present=[], seen=new Set();
-    (GEO.zones||[]).forEach(z=>{ const r=roleOf(z)||'untyped'; if(!seen.has(r)){ seen.add(r); present.push(r);} });
-    present.sort();
+    const floor=Number($('floorSel').value);
+    const visibleZones=(GEO.zones||[]).filter(z=>onFloor({zone:z,floor:zoneFloor[z]},floor));
+    const present=[...new Set(visibleZones.map(z=>roleOf(z)||'untyped'))].sort();
     let h='';
     present.forEach(r=>{ const c=(r==='untyped')?ROLE_DEFAULT:(ROLE_COLORS[r]??ROLE_DEFAULT);
       h+='<div class="lg"><span class="sw" style="background:'+hex6(c)+'"></span>'+esc(roleLabel(r))+'</div>'; });
@@ -949,13 +978,22 @@ _APP_JS = r"""
     const o=document.createElement('option'); o.value=i; o.textContent=floorLabel(i); fs.appendChild(o);});
   const viewTabs=[$('modelTab'),$('confidenceTab')];
   function setViewMode(confidence){
+    if(confidence===confidenceView) return;
+    const opacity=$('opacity');
+    if(confidence) modelOpacity=Number(opacity.value);
+    opacity.value=confidence ? '0.75' : String(modelOpacity);
     confidenceView=confidence;clearOutlines();
+    renderer.setTransparentSort(confidence ? sortConfidenceFaces : null);
+    showRangeValue(opacity);
+    applyOpacity();
     const active=viewTabs[confidence?1:0];
     for(const tab of viewTabs){
       tab.setAttribute('aria-selected',String(tab===active));tab.tabIndex=tab===active?0:-1;
     }
     $('stage').setAttribute('aria-labelledby',active.id);
     $('meshControls').hidden=confidence || !reference;
+    $('layerControls').hidden=confidence;
+    $('sectionControls').hidden=confidence;
     refreshColors();applyFilter();selectionOutlines();
   }
   for(const tab of viewTabs){
@@ -972,17 +1010,16 @@ _APP_JS = r"""
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
   $('showOpen').onchange=applyFilter; $('showLogical').onchange=applyFilter; $('showEnclosure').onchange=applyFilter;
   $('showMesh').onchange=applyFilter; $('meshMode').onchange=applyFilter; $('meshOpacity').oninput=applyFilter;
-  $('opacity').oninput=e=>{const v=parseFloat(e.target.value); surfMeshes.forEach(m=>{
-    m.material.opacity=v; m.material.transparent=v<1;});};
+  $('opacity').oninput=applyOpacity;
   $('explode').oninput=applyExplode; $('explodeMode').onchange=applyExplode;
+  function showRangeValue(input){
+    $(input.id+'Value').value=Math.round(Number(input.value)*100)+'%';
+    const fill=(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min));
+    input.style.setProperty('--progress',fill*100+'%');
+  }
   for(const id of ['opacity','explode','meshOpacity']){
-    const input=$(id),output=$(id+'Value');
-    const showValue=()=>{
-      output.value=Math.round(Number(input.value)*100)+'%';
-      const fill=(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min));
-      input.style.setProperty('--progress',fill*100+'%');
-    };
-    input.addEventListener('input',showValue);showValue();
+    const input=$(id);
+    input.addEventListener('input',()=>showRangeValue(input));showRangeValue(input);
   }
   $('measure').onclick=()=>{ measuring ? clearMeasure() : startMeasure(); };  // toggle
   $('clearMeasure').onclick=clearMeasure;
@@ -1005,7 +1042,7 @@ _APP_JS = r"""
   }
   $('locale').onchange=e=>applyLocale(e.target.value);
   applyLocale('en');
-  refreshColors(); applyExplode(); defaultView();
+  applyOpacity(); refreshColors(); applyExplode(); defaultView();
   new ResizeObserver(()=>{
     const w=viewport.clientWidth,h=viewport.clientHeight;
     if(!w || !h) return;
@@ -1047,50 +1084,49 @@ _PANEL_HTML = r"""
     <div id="sel" aria-live="polite"></div>
   </section>
   <aside id="panel">
-    <section id="confidenceLegend" hidden>
-      <div class="legend-heading"><h2>[[msg:Spatial confidence]]</h2><span id="confidenceUnit"></span></div>
-      <ul id="confidenceScale"></ul>
-    </section>
-    <div id="rinfo">
-      <section id="hud">
-        <h2>[[msg:Statistics]]</h2>
-        <div id="counts"></div>
+    <div class="panel-scroll">
+      <section id="hud" aria-label="[[msg:Statistics]]">
         <div id="dimensions" aria-label="[[msg:Dimensions]]"></div>
-        <details id="elementStats"><summary>[[msg:Building elements]]</summary><div id="elementCounts"></div></details>
+        <details id="elementStats" open><summary>[[msg:Building elements]]</summary><div id="elementCounts"></div></details>
+      </section>
+      <section class="settings" aria-label="[[msg:View settings]]">
+        <details open><summary>[[msg:display]]</summary>
+          <div class="parameter">
+            <label for="opacity">[[msg:Opacity]]</label><output id="opacityValue" for="opacity">100%</output>
+            <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="1">
+          </div>
+          <div class="parameter">
+            <label for="explode">[[msg:exploded view]]</label><output id="explodeValue" for="explode">0%</output>
+            <input type="range" id="explode" min="0" max="1" step="0.02" value="0">
+            <select id="explodeMode" aria-label="[[msg:exploded view]]"><option value="floor">[[msg:by floor]]</option><option value="zone">[[msg:by zone]]</option></select>
+          </div>
+        </details>
+        <details id="meshControls" hidden><summary>[[msg:Comparison]]</summary>
+          <div class="checks"><label class="chk"><input type="checkbox" id="showMesh"> [[msg:叠加原始 textured mesh]]</label></div>
+          <select id="meshMode" aria-label="[[msg:Comparison]]"><option value="outline">[[msg:贴图 + BIM轮廓]]</option><option value="blend">[[msg:贴图 + BIM实体]]</option><option value="mesh">[[msg:仅贴图]]</option></select>
+          <div class="parameter">
+            <label for="meshOpacity">[[msg:贴图透明度]]</label><output id="meshOpacityValue" for="meshOpacity">100%</output>
+            <input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1">
+          </div>
+          <p id="meshStatus" role="status"></p>
+        </details>
+        <details id="layerControls"><summary>[[msg:Layers]]</summary><div class="checks">
+          <label class="chk"><input type="checkbox" id="showWalls" checked> [[msg:wall / floor / roof faces]]</label>
+          <label class="chk"><input type="checkbox" id="showWin" checked> [[msg:windows]]</label>
+          <label class="chk"><input type="checkbox" id="showOpen" checked> [[msg:门 / 空开口]]</label>
+          <label class="chk"><input type="checkbox" id="showEdges" checked> [[msg:edges]]</label>
+          <label class="chk"><input type="checkbox" id="showLogical"> [[msg:逻辑空间边界（细虚线）]]</label>
+          <label class="chk"><input type="checkbox" id="showEnclosure" checked> [[msg:开敞 / 未知辅助面]]</label>
+        </div></details>
+        <details id="sectionControls"><summary>[[msg:section cuts]]</summary><div id="sections"></div></details>
       </section>
     </div>
-    <section class="settings">
-      <h2>[[msg:View settings]]</h2>
-      <details open><summary>[[msg:display]]</summary>
-        <div class="parameter">
-          <label for="opacity">[[msg:wall opacity]]</label><output id="opacityValue" for="opacity">100%</output>
-          <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="1">
-        </div>
-        <div class="parameter">
-          <label for="explode">[[msg:exploded view]]</label><output id="explodeValue" for="explode">0%</output>
-          <input type="range" id="explode" min="0" max="1" step="0.02" value="0">
-          <select id="explodeMode" aria-label="[[msg:exploded view]]"><option value="floor">[[msg:by floor]]</option><option value="zone">[[msg:by zone]]</option></select>
-        </div>
-      </details>
-      <details><summary>[[msg:Layers]]</summary><div class="checks">
-        <label class="chk"><input type="checkbox" id="showWalls" checked> [[msg:wall / floor / roof faces]]</label>
-        <label class="chk"><input type="checkbox" id="showWin" checked> [[msg:windows]]</label>
-        <label class="chk"><input type="checkbox" id="showOpen" checked> [[msg:门 / 空开口]]</label>
-        <label class="chk"><input type="checkbox" id="showEdges" checked> [[msg:edges]]</label>
-        <label class="chk"><input type="checkbox" id="showLogical"> [[msg:逻辑空间边界（细虚线）]]</label>
-        <label class="chk"><input type="checkbox" id="showEnclosure" checked> [[msg:开敞 / 未知辅助面]]</label>
-      </div></details>
-      <details><summary>[[msg:section cuts]]</summary><div id="sections"></div></details>
-      <details id="meshControls" hidden><summary>[[msg:Comparison]]</summary>
-        <div class="checks"><label class="chk"><input type="checkbox" id="showMesh"> [[msg:叠加原始 textured mesh]]</label></div>
-        <select id="meshMode" aria-label="[[msg:Comparison]]"><option value="outline">[[msg:贴图 + BIM轮廓]]</option><option value="blend">[[msg:贴图 + BIM实体]]</option><option value="mesh">[[msg:仅贴图]]</option></select>
-        <div class="parameter">
-          <label for="meshOpacity">[[msg:贴图透明度]]</label><output id="meshOpacityValue" for="meshOpacity">100%</output>
-          <input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1">
-        </div>
-        <p id="meshStatus" role="status"></p>
-      </details>
-      <details id="legendGroup"><summary>[[msg:Room types]]</summary><div id="legend"></div></details>
+    <section id="legendGroup" class="panel-legend" aria-labelledby="roomLegendTitle" hidden>
+      <h2 id="roomLegendTitle">[[msg:Room types]]</h2><div id="legend"></div>
+    </section>
+    <section id="confidenceLegend" class="panel-legend" aria-labelledby="confidenceLegendTitle" hidden>
+      <div class="legend-heading"><h2 id="confidenceLegendTitle">[[msg:Spatial confidence]]</h2><span id="confidenceUnit"></span></div>
+      <ul id="confidenceScale"></ul>
     </section>
   </aside>
 </main>
@@ -1176,33 +1212,27 @@ _STYLE = r"""
   #sel .kv,#elementCounts .kv {padding:3px 0;font-size:13px;}
   #sel .kv b {min-width:0;overflow-wrap:anywhere;text-align:right;}
   #sel .kv span {flex:none;}
-  #panel {min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable;border-left:1px solid var(--line);padding:clamp(18px,1.65vw,28px);background:var(--sheet);}
-  #panel h2 {font-size:clamp(18px,1.4vw,23px);line-height:1.27;font-weight:670;letter-spacing:-.035em;}
-  #confidenceLegend {position:sticky;top:0;z-index:1;background:var(--sheet);border-bottom:1px solid var(--line);margin-bottom:17px;padding:0 0 13px;}
+  #panel {--panel-inset:clamp(18px,1.65vw,28px);display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border-left:1px solid var(--line);background:var(--sheet);}
+  .panel-scroll {flex:1;min-height:0;overflow-y:auto;padding:var(--panel-inset);}
+  .panel-legend {flex:none;max-height:32%;overflow-y:auto;border-top:1px solid var(--line);padding:14px var(--panel-inset) 17px;background:#fafbfd;}
+  .panel-legend h2 {font-size:14px;line-height:1.35;font-weight:650;}
   .legend-heading {display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
   #confidenceUnit {font-size:12px;color:var(--muted);}
   #confidenceScale {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 9px;padding:0;list-style:none;margin:10px 0 0;}
   #confidenceScale li {display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink);}
   #confidenceScale i {width:16px;height:11px;}
-  #counts {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:16px 0 12px;}
-  #counts .kv,#dimensions .kv {display:flex;gap:2px;align-items:flex-start;flex-direction:column;}
-  #counts .kv {flex-direction:column-reverse;padding:10px 1px 11px;}
-  #counts .kv:nth-child(2n) {border-left:1px solid var(--line);padding-left:18px;}
-  #counts .kv:nth-child(-n+2) {border-bottom:1px solid var(--line);}
-  #counts .kv b {font-size:clamp(22px,1.8vw,30px);line-height:1.08;letter-spacing:-.04em;font-weight:640;}
-  #counts .kv span,#dimensions .kv span {font-size:13px;}
-  #dimensions {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 0;border-block:1px solid var(--line);}
-  #dimensions .kv {gap:3px;}
+  #dimensions .kv span {font-size:13px;}
+  #dimensions {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:0 0 14px;border-bottom:1px solid var(--line);}
+  #dimensions .kv {display:flex;flex-direction:column;align-items:flex-start;gap:3px;}
   #dimensions .kv + .kv {padding-left:10px;border-left:1px solid var(--line);}
-  #dimensions b {font-size:14px;white-space:nowrap;}
-  .settings {margin-top:22px;}
-  .settings h2 {margin-bottom:10px!important;}
+  #dimensions b {font-size:16px;white-space:nowrap;}
+  .settings {margin-top:6px;}
   #panel details {border-bottom:1px solid var(--line);}
   #panel summary {position:relative;padding:11px 2px 11px 18px;font-size:14px;font-weight:590;list-style:none;cursor:pointer;border-radius:2px;}
   #panel summary::-webkit-details-marker {display:none;}
   #panel summary:before {content:"";position:absolute;top:calc(50% - 4px);left:3px;width:6px;height:6px;border-right:1.5px solid #5b687c;border-bottom:1.5px solid #5b687c;transform:rotate(-45deg);}
   #panel details[open]>summary:before {transform:rotate(45deg);}
-  #elementCounts,.checks,#legend,#sections {padding:0 1px 12px;}
+  #elementCounts,.checks,#sections {padding:0 1px 12px;}
   .parameter {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 10px;margin:2px 0 13px;}
   .parameter label,.checks,.parameter select,#meshMode {font-size:14px;}
   .sec {font-size:13px;}
@@ -1223,9 +1253,9 @@ _STYLE = r"""
   #meshMode {width:100%;margin:0 0 13px;}
   #meshStatus {color:var(--muted);font-size:12px;margin-bottom:12px;}
   #meshStatus:empty {display:none;}
-  #legend {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}
-  .lg {display:flex;align-items:center;gap:7px;font-size:12px;overflow-wrap:anywhere;}
-  .sw {display:inline-block;width:12px;height:12px;flex:none;border-radius:3px;border:1px solid #0002;}
+  #legend {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin-top:9px;}
+  .lg {display:flex;align-items:baseline;gap:6px;font-size:12px;line-height:1.35;overflow-wrap:anywhere;}
+  .sw {display:inline-block;align-self:flex-start;margin-top:3px;width:10px;height:10px;flex:none;border-radius:2px;border:1px solid #0002;}
   @media (max-width:800px) and (orientation:portrait), (max-width:650px) {
     html,body {height:auto;min-height:100%;}
     body {overflow:auto;}
@@ -1236,12 +1266,8 @@ _STYLE = r"""
     .head-actions button {padding:7px 9px;font-size:12px;}
     .viewer {display:block;}
     .stage {height:60vh;height:60svh;min-height:300px;max-height:640px;}
-    #panel {overflow:visible;scrollbar-gutter:auto;border-left:none;border-top:1px solid var(--line);padding:18px 20px 26px;}
-    #counts {grid-template-columns:repeat(4,minmax(0,1fr));margin:12px 0 10px;}
-    #counts .kv,#counts .kv:nth-child(2n),#counts .kv:nth-child(-n+2) {padding:2px 3px 2px 8px;border:none;}
-    #counts .kv:first-child {padding-left:0;}
-    #counts .kv + .kv {border-left:1px solid var(--line);}
-    #counts .kv span {font-size:11px;}
+    #panel {overflow:visible;border-left:none;border-top:1px solid var(--line);}
+    .panel-scroll,.panel-legend {flex:none;max-height:none;overflow:visible;}
     .view-filters {gap:5px;}
     .filter {padding-left:6px;gap:1px;}
     .filter>span {font-size:11px;}

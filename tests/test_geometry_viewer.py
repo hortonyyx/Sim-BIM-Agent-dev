@@ -262,6 +262,17 @@ def test_viewer_colours_zones_by_room_type():
     assert 'MeshBasicMaterial' in html  # flat fill → whole zone one uniform colour (no lighting wash)
 
 
+def test_viewer_sidebar_orders_controls_and_uses_standalone_legends():
+    html = rgv.build_viewer_html(_GEO, locale="en")
+    sidebar = html.split('<aside id="panel">', 1)[1].split("</aside>", 1)[0]
+    assert 'id="counts"' not in sidebar
+    entries = ['id="dimensions"', '<details id="elementStats" open>', 'data-i18n="display"',
+               'id="meshControls"', 'id="layerControls"', 'id="sectionControls"',
+               '<section id="legendGroup"', '<section id="confidenceLegend"']
+    offsets = [sidebar.index(entry) for entry in entries]
+    assert offsets == sorted(offsets)
+
+
 def test_viewer_without_roles_falls_back_to_white_zone_fill():
     data = copy.deepcopy(_GEO)
     for space in data["source_model"]["spaces"]:
@@ -619,6 +630,29 @@ def _node_result(tmp_path, code):
     script.write_text(code, encoding="utf-8")
     result = subprocess.run([node, str(script)], capture_output=True, encoding="utf-8", check=True)
     return json.loads(result.stdout)
+
+
+def test_confidence_opacity_reaches_every_fill_and_restores_model_materials(tmp_path):
+    script = rgv.app_js()
+    apply_opacity = script[script.index("  function applyOpacity("):script.index("  function refreshColors(")]
+    result = _node_result(tmp_path, f"const THREE=require({json.dumps(str(rgv._VENDOR / 'three.min.js'))});\n" + """
+const mesh=()=>new THREE.Mesh(), surfMeshes=[mesh()], winMeshes=[mesh()], openingMeshes=[mesh()], enclosureMeshes=[mesh()];
+const modelWindow=winMeshes[0].modelMaterial=new THREE.MeshStandardMaterial(), ENCLOSURE_OPACITY=.2;
+openingMeshes[0].modelOpacity=.7;
+let confidenceView=true, value=.75;
+const $=()=>({value});
+""" + apply_opacity + """
+const capture=()=>[surfMeshes,winMeshes,openingMeshes,enclosureMeshes].map(([m])=>
+  [m.material.opacity,m.material.transparent,m.material.depthWrite]);
+applyOpacity();const initial=capture();
+value=1;applyOpacity();const solid=capture();
+value=.35;confidenceView=false;applyOpacity();
+console.log(JSON.stringify({initial,solid,restored:capture(),sameGlass:winMeshes[0].material===modelWindow}));
+""")
+    assert result["initial"] == [[.75, True, False]] * 4
+    assert result["solid"] == [[1, False, True]] * 4
+    assert result["restored"] == [[.35, True, True], [1, False, True], [.7, True, False], [.2, True, False]]
+    assert result["sameGlass"]
 
 
 @pytest.mark.parametrize("ring,holes", [

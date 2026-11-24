@@ -549,6 +549,15 @@ other evidence and summarize that evidence and its limits. Use coverage="partial
 if required scope is unfinished."""
 
 
+SPATIAL_GRADE_SCALE = """Grade each object's reconstructed position, shape and extent against the supplied evidence.
+5 Direct evidence: a source specific to this object shows its location and principal dimensions.
+4 Strong support: most geometry is documented with a minor estimate, or a documented typical-storey
+template applies to this object on the target storey. Cite the template and what establishes the repetition.
+3 Partial support: some geometry is anchored, but an important boundary or dimension remains inferred.
+2 Indirect support: a contextual clue suggests the object's approximate location or shape.
+1 Assumed: the inputs give no applicable geometric evidence for the adopted location or shape."""
+
+
 def describe_orchestrator_inputs(manifest: dict) -> str:
     """Present admitted material identities without guessing content from filenames."""
     lines = ["Materials supplied for this building:"]
@@ -569,6 +578,7 @@ def describe_orchestrator_inputs(manifest: dict) -> str:
                      "bilingual observation, qualifying uncertainty. Record thickness and its source separately. Use "
                      "get_bim_reference('sim_inspection') and batch by shared evidence with inspection_json. "
                      "The user's thickness candidates in millimetres are in inputs().thickness_candidates_mm.")
+        lines.append(SPATIAL_GRADE_SCALE)
     return "\n".join(lines)
 
 
@@ -606,10 +616,13 @@ inspect_candidate/read_candidate_items for actual source IDs. An example fragmen
 {"kind":"space","floor_ids":["F1"],"spatial":{"grade":4,
 "reason":{"en":"Plan outlines the rooms; section height is approximate.","zh":"平面可见房间轮廓，层高为估算。"},
 "source_refs":["image:plan.png#F1 room outlines"]}}
-Spatial grade concerns geometry alone: 5 directly documented extent and dimensions; 4 mostly documented,
-with a minor dimension inferred; 3 some dimensions or boundaries observed, others inferred; 2 indirect
-support for an approximate location/shape; 1 chiefly assumed. Identify the actual spatial observation,
-transfer or gap in a short public reason in both languages. Choose grade from its architectural meaning.
+""" + SPATIAL_GRADE_SCALE + """
+A plan designated for a storey range or a matching measured module can establish a repeat. A shared
+floor name, room use or copied model geometry cannot establish it. A repeated facade and slab rhythm
+can support transferring an envelope without establishing the same tenant partitions or door locations.
+Assess setbacks, transfer storeys and changed openings against evidence for their own geometry.
+In the short bilingual reason, identify the observation or template, the link to this object and the
+principal uncertainty. Assign each grade on evidence, without targeting a distribution.
 For a grade above 1 cite at least one admitted source. Grade 1 may cite an empty list when inputs give
 no spatial clues. Never grade geometry from room use, material, thickness or number of references.
 Each source_refs entry is one of image:<exact admitted filename>, view:view_NNNN, mesh:original,

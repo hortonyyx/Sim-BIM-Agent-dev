@@ -322,7 +322,7 @@ _ZH = {
     "edge": "边线",
     "all floors": "所有楼层",
     "display": "显示",
-    "wall opacity": "墙体透明度",
+    "Opacity": "不透明度",
     "exploded view": "分解视图",
     "by floor": "按楼层",
     "by zone": "按空间",
@@ -396,8 +396,8 @@ def localize_template(template: str, locale: str, *, javascript: bool = False) -
 
 _VIEWER_LABELS = {
     "Model": "模型", "Confidence": "置信度", "Viewer mode": "查看模式", "Spatial confidence": "空间置信度",
-    "Unassessed": "未评估", "Assumed": "假设建模", "Mostly inferred": "推断为主", "Partly inferred": "部分推断",
-    "Mostly observed": "观察为主", "Direct evidence": "直接有据", "Evidence and reasoning": "查看依据",
+    "Unassessed": "未评估", "Assumed": "假设建模", "Indirect support": "间接佐证", "Partial support": "部分佐证",
+    "Strong support": "充分佐证", "Direct evidence": "直接证据", "Evidence and reasoning": "查看依据",
     "Material": "材料", "Thickness": "厚度", "Not applicable": "不适用", "Not recorded": "未记录",
     "Modeled volume": "模型体积", "Storey volume": "本层体积", "Face area": "表面积",
     "Length": "长度", "Parent face": "所属面", "Type": "类型", "Space count": "空间数",
