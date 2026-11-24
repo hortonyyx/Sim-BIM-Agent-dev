@@ -1253,14 +1253,14 @@ _PANEL_HTML = r"""
   <section class="stage" id="stage" role="tabpanel" aria-labelledby="modelTab">
     <div id="app"></div>
     <button type="button" id="northHandle" title="[[msg:Adjust north]]" aria-label="[[msg:Adjust north]]" aria-controls="northForm" aria-expanded="false" hidden></button>
-    <div id="northForm" role="group" aria-label="[[msg:Adjust north]]" hidden>
+    <div id="northForm" class="viewer-card" role="group" aria-label="[[msg:Adjust north]]" hidden>
       <label for="northBearing">[[msg:North bearing]]</label>
-      <div class="north-values">
+      <small id="northReference">[[msg:Clockwise from model +Y]]</small>
+      <div class="card-actions">
         <div class="north-number"><input type="number" id="northBearing" step="5" aria-describedby="northReference"><span aria-hidden="true">°</span></div>
         <button type="button" id="northCancel" title="[[msg:Cancel north adjustment]]" aria-label="[[msg:Cancel north adjustment]]"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
         <button type="button" id="northApply" title="[[msg:Confirm north bearing]]" aria-label="[[msg:Confirm north bearing]]"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg></button>
       </div>
-      <small id="northReference">[[msg:Clockwise from model +Y]]</small>
       <small id="northStorageHint" hidden>[[msg:Changes are available in this tab only.]]</small>
     </div>
     <div id="northSaveStatus" role="status" hidden>[[msg:Changes are available in this tab only.]]</div>
@@ -1277,18 +1277,18 @@ _PANEL_HTML = r"""
         <button type="button" id="reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1 7M4 4v6h6"/></svg><span>[[msg:reset view]]</span></button>
       </div>
     </div>
-    <div id="sel" aria-live="polite"></div>
-    <section id="editPanel" aria-labelledby="editHeading" hidden>
+    <div id="sel" class="viewer-card" aria-live="polite"></div>
+    <section id="editPanel" class="viewer-card" aria-labelledby="editHeading" hidden>
       <div class="edit-heading"><h2 id="editHeading"><label for="editInstructions">[[msg:Overall changes]]</label></h2><span id="noteCount"></span></div>
-      <textarea id="editInstructions" rows="3" placeholder="[[msg:Describe changes to the model…]]"></textarea>
+      <textarea id="editInstructions" rows="4" placeholder="[[msg:Describe changes to the model…]]"></textarea>
       <p id="editHint" role="status" hidden>[[msg:Confirm the object note or click empty space to discard it.]]</p>
       <p id="draftStorageStatus" role="status" hidden>[[msg:Changes are available in this tab only.]]</p>
-      <button type="button" id="rebuild">[[msg:Rebuild]]</button>
+      <div class="card-actions"><button type="button" id="rebuild">[[msg:Rebuild]]</button></div>
     </section>
-    <dialog id="revisionPreview" aria-labelledby="previewTitle" aria-describedby="previewSummary">
+    <dialog id="revisionPreview" class="viewer-card" aria-labelledby="previewTitle" aria-describedby="previewSummary">
       <h2 id="previewTitle">[[msg:Preview rebuild?]]</h2>
       <p id="previewSummary">[[msg:Return to Model with the current geometry. Your notes stay in Edit for the next round.]]</p>
-      <div class="preview-actions"><button type="button" id="cancelRebuild" autofocus>[[msg:Cancel]]</button>
+      <div class="card-actions"><button type="button" id="cancelRebuild" autofocus>[[msg:Cancel]]</button>
         <button type="button" id="confirmRebuild">[[msg:Confirm preview]]</button></div>
     </dialog>
     <div id="viewerNotice" role="status" hidden>[[msg:Preview complete. Your notes are in Edit.]]</div>
@@ -1343,24 +1343,28 @@ _PANEL_HTML = r"""
 """
 
 _STYLE = r"""
-  :root {color-scheme:light;--ink:#19212e;--muted:#586575;--line:#d9dee6;--blue:#244edc;--sheet:#fff;font:14px/1.45 "Work Sans","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;color:var(--ink);background:white;}
+  :root {color-scheme:light;--ink:#19212e;--muted:#586575;--line:#d9dee6;--blue:#244edc;--sheet:#fff;
+    --card-line:#bac7d6;--card-radius:11px;--card-shadow:0 6px 24px #2236551c;--card-inset:clamp(16px,1.2vw,21px);--card-footer:#f3f6fa;
+    font:14px/1.45 "Work Sans","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;color:var(--ink);background:white;}
   * {box-sizing:border-box;}
   [hidden] {display:none!important;}
+  .viewer-card {color:var(--ink);background:var(--sheet);border:1px solid var(--card-line);border-radius:var(--card-radius);box-shadow:var(--card-shadow);}
+  .card-actions {display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:11px var(--card-inset);background:var(--card-footer);border-top:1px solid var(--line);}
+  .card-actions button {min-height:37px;border-radius:6px;}
   #northHandle {position:absolute;transform:translate(-50%,-50%);border:0;border-radius:50%;padding:0;background:transparent;touch-action:none;cursor:grab;}
   #northHandle:is(:hover,:focus-visible,[aria-expanded="true"]) {outline:2px solid #5479d7;outline-offset:1px;background:#446bde0d;}
   #northHandle:active {cursor:grabbing;}
-  #northForm {position:absolute;z-index:6;display:grid;gap:7px;width:176px;padding:12px;border:1px solid #c4cddd;border-radius:8px;background:#fff;box-shadow:0 4px 18px #1a32521c;}
-  #northForm label {color:var(--ink);font-weight:650;font-size:13px;}
-  #northReference {color:var(--muted);font-size:11px;}
-  #northStorageHint {font-size:11px;color:#805b16;}
+  #northForm {position:absolute;z-index:6;width:min(268px,calc(100% - 24px));padding:0;overflow:hidden;}
+  #northForm label {display:block;margin:var(--card-inset) var(--card-inset) 3px;font-size:17px;line-height:1.35;font-weight:650;}
+  #northReference {display:block;margin:0 var(--card-inset) 14px;color:var(--muted);font-size:13px;}
+  #northStorageHint {display:block;padding:8px var(--card-inset);font-size:12px;color:#805b16;}
   #northSaveStatus {position:absolute;right:20px;bottom:24px;z-index:4;max-width:240px;border:1px solid #d7c498;border-radius:6px;padding:7px 11px;background:#fffaf0;color:#704f15;font-size:12px;pointer-events:none;}
-  .north-values {display:flex;gap:5px;align-items:center;}
-  .north-number {display:flex;align-items:center;flex:1;min-width:0;border:1px solid #bdc7d3;border-radius:4px;height:30px;background:white;overflow:hidden;}
+  .north-number {display:flex;align-items:center;flex:1;min-width:0;border:1px solid var(--card-line);border-radius:6px;height:39px;background:white;overflow:hidden;}
   .north-number:focus-within {outline:2px solid #7190ef;}
-  .north-number input {min-width:0;width:100%;height:100%;border:0;padding:0 0 0 6px;font-variant-numeric:tabular-nums;}
+  .north-number input {min-width:0;width:100%;height:100%;border:0;padding:0 0 0 10px;font-size:16px;font-variant-numeric:tabular-nums;}
   .north-number input:focus-visible {outline:0;}
-  .north-number span {padding:0 5px 0 1px;color:var(--muted);}
-  #northForm button {width:30px;height:30px;padding:5px;}
+  .north-number span {padding:0 9px 0 2px;color:var(--muted);}
+  #northForm button {width:39px;height:39px;padding:8px;}
   #northApply {background:var(--blue);color:white;border-color:var(--blue);}
   #northApply:disabled {opacity:.4;cursor:default;}
   html,body {height:100%;margin:0;}
@@ -1406,37 +1410,38 @@ _STYLE = r"""
   .measure-label {display:block;font-size:12px;line-height:1.4;font-weight:650;color:#f5f8fc;}
   .measure-value {display:block;margin:2px 0 0;color:#ff91b9;font-size:clamp(25px,2.25vw,35px);line-height:1.08;letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
   .measure-value small {font-size:.6em;font-weight:550;color:#f5f8fc;}
-  #sel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);width:clamp(246px,28%,324px);max-height:calc(100% - 144px);overflow:auto;overscroll-behavior:contain;background:var(--sheet);border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
-  .pick-head {display:grid;gap:3px;padding:12px 15px 8px;}
-  #editPanel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);width:clamp(210px,23%,274px);
-    padding:14px;background:white;border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
-  .edit-heading,.preview-actions {display:flex;align-items:center;justify-content:space-between;gap:10px;}
-  .edit-heading h2,#revisionPreview h2 {margin:0;font-size:15px;font-weight:650;}
-  #noteCount {font-size:12px;color:var(--muted);white-space:nowrap;}
-  #editInstructions {display:block;width:100%;min-height:70px;resize:vertical;max-height:23vh;margin:11px 0;padding:8px 9px;box-sizing:border-box;
-    font:inherit;line-height:1.45;color:var(--ink);border:1px solid #c6cfda;border-radius:5px;}
-  #editInstructions::placeholder {color:#667385;}
-  #editPanel p {font-size:12px;color:var(--muted);margin:0 0 9px;}
-  #rebuild,#confirmRebuild {background:var(--blue);border-color:var(--blue);color:white;}
-  #rebuild {width:100%;justify-content:center;}
+  #sel,#editPanel {position:absolute;left:clamp(12px,1.7vw,26px);top:50%;transform:translateY(-50%);
+    max-height:calc(100% - 144px);overflow:auto;overscroll-behavior:contain;}
+  #sel {width:clamp(266px,29%,352px);}
+  .pick-head {display:grid;gap:3px;padding:14px var(--card-inset) 8px;}
+  #editPanel {width:clamp(308px,32%,372px);padding:0;}
+  .edit-heading {display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:var(--card-inset) var(--card-inset) 8px;}
+  .edit-heading h2 {font-size:17px;line-height:1.35;font-weight:650;}
+  #noteCount {font-size:13px;color:var(--muted);white-space:nowrap;}
+  #editInstructions {display:block;width:calc(100% - 2 * var(--card-inset));min-height:116px;resize:vertical;max-height:36vh;margin:0 var(--card-inset) 12px;padding:7px 2px;box-sizing:border-box;
+    font:inherit;font-size:15px;line-height:1.6;color:var(--ink);background:var(--sheet);border:0;}
+  #editInstructions::placeholder {color:var(--muted);}
+  #editInstructions:focus-visible {outline:2px solid #a3b6ef;outline-offset:3px;border-radius:3px;}
+  #editPanel p {font-size:13px;color:var(--muted);margin:0 var(--card-inset) 12px;}
+  #rebuild,#confirmRebuild {background:var(--blue);border-color:var(--blue);color:white;padding:8px 16px;}
   #rebuild:disabled {background:#e8ecf2;border-color:#e8ecf2;color:#606c7d;cursor:default;}
-  #revisionPreview {width:min(365px,85vw);padding:20px 22px;border:1px solid #bbc6d5;border-radius:9px;color:var(--ink);box-shadow:0 12px 45px #1822353d;}
+  #revisionPreview {width:min(480px,calc(100vw - 48px));padding:0;overflow:hidden;}
   #revisionPreview::backdrop {background:#17233550;}
-  #revisionPreview h2 {font-size:18px;}
-  #previewSummary {font-size:14px;color:var(--muted);margin:9px 0 18px;line-height:1.5;}
-  .preview-actions {justify-content:flex-end;}
+  #revisionPreview h2 {font-size:20px;line-height:1.35;font-weight:650;margin:22px 22px 8px;}
+  #previewSummary {font-size:15px;color:var(--muted);margin:0 22px 22px;line-height:1.6;}
+  #revisionPreview .card-actions {padding:12px 22px;}
   #viewerNotice {position:absolute;bottom:24px;left:50%;transform:translateX(-50%);border-radius:6px;
     background:#243047;color:white;font-size:13px;padding:8px 13px;pointer-events:none;}
   .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
   .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
-  .pick-fields {padding:0 15px 8px;}
-  .pick-metrics {display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px 15px;background:#f3f6fa;border-top:1px solid var(--line);}
+  .pick-fields {padding:0 var(--card-inset) 8px;}
+  .pick-metrics {display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px var(--card-inset);background:var(--card-footer);border-top:1px solid var(--line);}
   .pick-metric {display:grid;align-content:start;flex:1 1 auto;gap:2px;}
   .pick-metric span {font-size:12px;color:var(--muted);}
   .pick-metric b {font-size:19px;line-height:1.2;font-weight:630;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .pick-metric small {font-size:12px;font-weight:500;color:var(--muted);}
   .pick-fields:empty,.pick-metrics:empty {display:none;}
-  .surface-attributes {display:grid;gap:9px;padding:11px 15px 12px;border-top:1px solid var(--line);}
+  .surface-attributes {display:grid;gap:9px;padding:11px var(--card-inset) 12px;border-top:1px solid var(--line);}
   .material-observation {display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:baseline;}
   .material-observation>span {color:var(--muted);font-size:12px;}
   .material-observation p {grid-column:1/-1;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere;}
@@ -1445,14 +1450,14 @@ _STYLE = r"""
   .surface-attribute>div {text-align:right;overflow-wrap:anywhere;font-size:13px;font-weight:580;}
   .attr-value {display:block;}
   .source-tag {display:table;margin:2px 0 0 auto;padding:0 5px;color:#48576b;background:#eef1f5;border-radius:3px;font-size:11px;line-height:1.45;font-weight:500;}
-  .confidence-row {display:flex;gap:8px;align-items:baseline;justify-content:space-between;padding:10px 15px;border-top:1px solid var(--line);font-size:12px;}
+  .confidence-row {display:flex;gap:8px;align-items:baseline;justify-content:space-between;padding:10px var(--card-inset);border-top:1px solid var(--line);font-size:12px;}
   .confidence-row>span {color:var(--muted);}
   .confidence-row b {display:inline-flex;gap:5px;align-items:center;font-size:12px;text-align:right;}
   .confidence-row i,#confidenceScale i {display:inline-block;flex:none;width:10px;height:10px;border:1px solid #24123226;border-radius:3px;}
   .confidence-reason summary {cursor:pointer;list-style:none;}
   .confidence-reason summary b:after {content:"";border-right:1px solid;border-bottom:1px solid;width:5px;height:5px;transform:rotate(45deg);margin:-3px 1px 0 3px;}
   .confidence-reason[open] summary b:after {transform:rotate(225deg);margin-top:3px;}
-  .confidence-reason p {font-size:13px;line-height:1.5;padding:0 15px 12px;overflow-wrap:anywhere;}
+  .confidence-reason p {font-size:13px;line-height:1.5;padding:0 var(--card-inset) 12px;overflow-wrap:anywhere;}
   .kv {display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
   .kv span {color:var(--muted);}
   .kv b {font-variant-numeric:tabular-nums;font-weight:600;}

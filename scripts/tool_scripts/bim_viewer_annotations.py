@@ -2,15 +2,16 @@
 
 ANNOTATION_MARKUP = r"""
     <div id="annotationLayer" hidden></div>
-    <form id="annotationEditor" role="dialog" aria-labelledby="annotationTarget" hidden>
+    <form id="annotationEditor" class="viewer-card" role="dialog" aria-labelledby="annotationTarget" hidden>
       <div class="annotation-heading">
         <strong id="annotationTarget"></strong>
+        <span id="annotationCount" aria-live="polite" hidden></span>
+      </div>
+      <textarea id="annotationText" rows="4"></textarea>
+      <div class="card-actions">
         <button type="button" id="deleteAnnotation" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7m4-7v7"/></svg>
         </button>
-      </div>
-      <div class="annotation-input">
-        <textarea id="annotationText" rows="2"></textarea>
         <button type="submit" id="confirmAnnotation" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 5 5L20 6"/></svg></button>
       </div>
     </form>
@@ -18,37 +19,46 @@ ANNOTATION_MARKUP = r"""
 
 ANNOTATION_CSS = r"""
   #annotationLayer {position:absolute;inset:0;pointer-events:none;overflow:hidden;}
-  .annotation-pin {position:absolute;pointer-events:auto;display:flex;align-items:center;gap:6px;max-width:min(200px,26%);
-    transform:translate(-5px,-50%);padding:4px 8px 4px 4px;border:1px solid #e5b7ba;border-radius:5px;
-    background:#fff;color:#62232a;font-size:12px;line-height:1.4;text-align:left;box-shadow:0 2px 6px #45151918;}
-  .annotation-pin::before {content:"";flex:none;width:7px;height:7px;border-radius:50%;background:#d52f43;}
-  .annotation-pin span {overflow:hidden;text-overflow:ellipsis;}
-  .annotation-pin.flip:not(.compact) {transform:translate(calc(-100% + 5px),-50%);flex-direction:row-reverse;padding:4px 4px 4px 8px;}
-  .annotation-pin.compact {padding:4px;border-radius:50%;transform:translate(-50%,-50%);}
+  .annotation-leaders {position:absolute;width:100%;height:100%;fill:none;stroke:#8592a3;stroke-width:1;}
+  .annotation-pin {position:absolute;pointer-events:auto;display:flex;align-items:flex-start;justify-content:start;gap:9px;
+    width:max-content;max-width:min(320px,38%);padding:10px 14px;color:var(--ink);font-size:14px;line-height:1.45;
+    font-weight:450;text-align:start;white-space:normal;}
+  .annotation-pin::before {content:"";flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:#d53845;}
+  .annotation-pin span {min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;
+    overflow-wrap:anywhere;white-space:pre-wrap;}
+  .annotation-pin.compact {width:18px;height:18px;align-items:center;justify-content:center;padding:0;border-radius:50%;}
+  .annotation-pin.compact::before {margin:0;}
   .annotation-pin.compact span {display:none;}
-  .annotation-pin:focus-visible,.annotation-pin:hover {outline:2px solid #d54555;outline-offset:1px;z-index:1;background:#fff7f7;}
-  #annotationEditor {position:absolute;z-index:3;width:min(242px,calc(100% - 20px));box-sizing:border-box;
-    padding:9px 11px 11px;background:#fff;border:1px solid #e4a7ae;border-radius:8px;
-    color:#202b3d;box-shadow:0 5px 19px #3e213126;}
-  .annotation-heading,.annotation-input {display:flex;align-items:center;gap:8px;}
-  .annotation-heading {justify-content:space-between;min-height:20px;margin-bottom:6px;}
-  #annotationTarget {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:1.4;}
-  #annotationText {box-sizing:border-box;min-width:0;flex:1;resize:vertical;min-height:46px;max-height:22vh;
-    font:inherit;font-size:13px;line-height:1.45;color:inherit;padding:5px 7px;border:1px solid #bac5d1;border-radius:4px;}
-  #deleteAnnotation,#confirmAnnotation {width:28px;height:28px;padding:3px;flex:none;}
-  #deleteAnnotation {border:0;color:#7c5d65;background:transparent;}
-  #confirmAnnotation {color:#fff;background:#a82639;border-color:#a82639;}
-  #confirmAnnotation:disabled {background:#e5dce0;border-color:#e5dce0;color:#7b7076;}
+  .annotation-pin:hover,.annotation-pin:focus-visible {border-color:#889ab2;z-index:1;}
+  #annotationEditor {position:absolute;z-index:3;display:grid;width:min(clamp(366px,38%,416px),calc(100% - 24px));
+    overflow:hidden;color:var(--ink);}
+  .annotation-heading {display:flex;align-items:center;justify-content:space-between;gap:10px;
+    margin:var(--card-inset) var(--card-inset) 8px;}
+  #annotationTarget {font-size:17px;line-height:1.35;font-weight:650;}
+  #annotationCount {color:var(--muted);font-size:13px;}
+  #annotationText {box-sizing:border-box;width:calc(100% - 2 * var(--card-inset));min-height:108px;max-height:clamp(108px,28vh,260px);
+    margin:0 var(--card-inset) 12px;padding:7px 2px;resize:none;font:inherit;font-size:16px;line-height:1.55;
+    color:inherit;border:0;background:transparent;outline:0;}
+  #annotationText::placeholder {color:var(--muted);}
+  #annotationEditor:focus-within {border-color:#91a6bf;}
+  #deleteAnnotation,#confirmAnnotation {width:36px;height:36px;padding:0;border-radius:9px;}
+  #deleteAnnotation {background:transparent;border-color:transparent;color:var(--muted);}
+  #deleteAnnotation:hover {background:#f1f4f8;}
+  #confirmAnnotation {margin-left:auto;color:#fff;background:var(--blue);border-color:var(--blue);}
+  #confirmAnnotation:disabled {background:#e8ecf2;border-color:#e8ecf2;color:#748093;cursor:default;}
 """
 
 ANNOTATION_JS = r"""
   const editMarkers=(()=>{
     const layer=$('annotationLayer'), form=$('annotationEditor'), input=$('annotationText');
     const heading=$('annotationTarget'), confirm=$('confirmAnnotation'), remove=$('deleteAnnotation');
+    const leaders=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    leaders.setAttribute('class','annotation-leaders');leaders.setAttribute('aria-hidden','true');
+    const overlays=[$('editPanel'),document.querySelector('.view-filters'),document.querySelector('.stage-tools'),$('northForm'),$('northHandle')];
     const highlighted=new Set(), byTarget=new Map(), byAnchor=new Map();
     const pins=[], projected=new THREE.Vector3();
     let targets=[], editingId=null, indexed=false;
-    let renderedNotes=null, renderedView=null, renderedLocale=null;
+    let renderedNotes=null, renderedView=null, renderedLocale=null, previousLayout='';
     const localized=(en,zh)=>locale==='en' ? en : zh;
     const notes=()=>viewerDraft.state.notes;
     const faceName=u=>String(u.publicName || u.name || u.boundaryId || u.zone);
@@ -103,11 +113,19 @@ ANNOTATION_JS = r"""
       return !!saved && (input.value.trim()!==saved.text || targets.length!==saved.targets.length ||
         targets.some((t,i)=>key(t)!==key(saved.targets[i])));
     }
+    function fitText(){
+      if(form.hidden) return;
+      const scroll=input.scrollTop;
+      input.style.height='0';
+      input.style.height=input.scrollHeight+'px';
+      input.scrollTop=scroll;
+    }
+    window.addEventListener('resize',fitText);
     function editorLabels(){
-      const names=targets.map(t=>t.label);
-      heading.textContent=names.length===1 ? names[0] :
-        localized(names.length+' objects selected','已选 '+names.length+' 个构件');
-      heading.title=names.join(' · ');
+      heading.textContent=editingId ? localized('Edit comment','编辑批注') : localized('Add a comment','添加批注');
+      const count=$('annotationCount');
+      count.hidden=targets.length<2;
+      count.textContent=count.hidden ? '' : localized(targets.length+' selected','已选 '+targets.length+' 项');
       input.placeholder=localized('Describe the change…','描述要做的修改…');
       input.setAttribute('aria-label',localized('Object note','构件批注'));
       for(const [button,label] of [[confirm,localized('Confirm note','确认批注')],[remove,localized('Delete note','删除批注')]]){
@@ -115,6 +133,7 @@ ANNOTATION_JS = r"""
       }
       confirm.disabled=!input.value.trim();remove.hidden=!editingId;
       form.hidden=!editView || !targets.length;
+      fitText();
     }
     function pickTarget(hit,kind,extend){
       if(!hit || !['floor','zone','surface'].includes(kind)){cancel();return;}
@@ -155,6 +174,7 @@ ANNOTATION_JS = r"""
       cancel();
     };
     input.oninput=()=>{
+      fitText();
       confirm.disabled=!input.value.trim();
       if(!pending()) $('editHint').hidden=true;
     };
@@ -169,18 +189,20 @@ ANNOTATION_JS = r"""
     });
     function makePin(note,target){
       const el=document.createElement('button'), text=document.createElement('span');
-      el.type='button';el.className='annotation-pin';el.hidden=true;el.dataset.noteId=note.id;
-      el.title=target.label+' · '+note.text;el.setAttribute('aria-label',el.title);
+      const line=document.createElementNS(leaders.namespaceURI,'line');
+      leaders.appendChild(line);
+      el.type='button';el.className='annotation-pin viewer-card';el.hidden=true;el.dataset.noteId=note.id;
+      el.title=note.text;el.setAttribute('aria-label',localized('Edit comment: ','编辑批注，')+note.text);
       text.textContent=note.text;el.appendChild(text);el.onclick=()=>open(note);
       layer.appendChild(el);
-      return {el,target};
+      return {el,target,line};
     }
     function sync(force=false){
       const saved=notes(), snapshot=editView ? JSON.stringify(saved) : '';
       if(!force && renderedView===editView && renderedLocale===locale && renderedNotes===snapshot) return;
       renderedView=editView;renderedLocale=locale;renderedNotes=snapshot;
       if(editView) indexMeshes();
-      layer.replaceChildren();pins.length=0;layer.hidden=!editView;
+      leaders.replaceChildren();layer.replaceChildren(leaders);pins.length=0;layer.hidden=!editView;previousLayout='';
       if(editView){
         if(editingId && !saved.some(note=>note.id===editingId)) editingId=null;
         for(const note of saved){
@@ -204,40 +226,62 @@ ANNOTATION_JS = r"""
       if(el.style.left!==left) el.style.left=left;
       if(el.style.top!==top) el.style.top=top;
     }
-    function frame(){
-      if(!editView || (!pins.length && !targets.length)) return;
-      const width=viewport.clientWidth,height=viewport.clientHeight;
-      const occupied=[];
-      for(const group of pins){
-        let labeled=false;
-        for(const {el,target} of group){
-          const point=screenPoint(target,width,height);
-          if(el.hidden!==!point) el.hidden=!point;
-          if(!point) continue;
-          el.classList.toggle('compact',labeled);
-          el.classList.toggle('flip',point.x>width-Math.min(200,width*.26));
-          let y=point.y;
-          if(!labeled){
-            for(const prev of occupied){
-              if(Math.abs(prev.y-y)<25 && Math.abs(prev.x-point.x)<128) y=prev.y+25;
-            }
-            occupied.push({x:point.x,y});
+    // Try either side of the anchor, then the nearest free row above or below an obstacle.
+    function anchoredBox(point,w,h,width,height,occupied,offsetX,offsetY){
+      const within=(value,max)=>Math.max(8,Math.min(value,max-8));
+      const anchor={left:point.x-6,top:point.y-6,right:point.x+6,bottom:point.y+6};
+      const obstacles=[anchor,...occupied], preferredY=point.y+offsetY;
+      let best=null, leastOverlap=Infinity, shortest=Infinity;
+      for(const idealX of [point.x+offsetX,point.x-offsetX-w]){
+        const x=within(idealX,width-w);
+        const near=obstacles.filter(r=>x<r.right+6 && x+w>r.left-6);
+        const rows=[preferredY,...near.flatMap(r=>[r.top-h-6,r.bottom+6])];
+        for(const row of rows){
+          const y=within(row,height-h);
+          const overlap=near.reduce((area,r)=>area+
+            (Math.min(x+w,r.right+6)-Math.max(x,r.left-6))*
+            Math.max(0,Math.min(y+h,r.bottom+6)-Math.max(y,r.top-6)),0);
+          const distance=Math.abs(x-idealX)+Math.abs(y-preferredY);
+          if(overlap<leastOverlap || (overlap===leastOverlap && distance<shortest)){
+            best={left:x,right:x+w,top:y,bottom:y+h};leastOverlap=overlap;shortest=distance;
+            if(!distance && !overlap) return best;
           }
-          place(el,point.x,Math.min(height-13,y));labeled=true;
         }
       }
-      if(!targets.length) return;
-      const active=targets[targets.length-1],position=screenPoint(active,width,height);
-      if(!position && form.style.left) return;
-      const point=position || {x:width/2,y:height/2};
-      const w=form.offsetWidth,h=form.offsetHeight,panel=$('editPanel');
-      let x=point.x+w+16<width ? point.x+16 : point.x-w-16;
-      const y=Math.max(8,Math.min(height-h-8,point.y+12));
-      if(panel && !panel.hidden){
-        const right=panel.offsetLeft+panel.offsetWidth, top=panel.offsetTop-panel.offsetHeight/2;
-        if(x<right+8 && y+h>top && y<top+panel.offsetHeight) x=right+8;
+      return best;
+    }
+    function frame(){
+      if(!editView || (!pins.length && !targets.length)) return;
+      const view=viewport.getBoundingClientRect(),width=view.width,height=view.height;
+      const occupied=overlays.filter(el=>!el.hidden).map(el=>{
+        const r=el.getBoundingClientRect();
+        return {left:r.left-view.left,top:r.top-view.top,right:r.right-view.left,bottom:r.bottom-view.top};
+      });
+      const points=pins.map(group=>group.map(pin=>screenPoint(pin.target,width,height)));
+      const active=targets.length ? screenPoint(targets[targets.length-1],width,height) : null;
+      const layout=JSON.stringify([width,height,form.offsetHeight,occupied,points,active]);
+      if(previousLayout===layout) return;
+      previousLayout=layout;
+      if(targets.length){
+        const point=active || {x:width/2,y:height/2};
+        const box=anchoredBox(point,form.offsetWidth,form.offsetHeight,width,height,occupied,24,16);
+        place(form,box.left,box.top);occupied.push(box);
       }
-      place(form,Math.max(8,Math.min(width-w-8,x)),y);
+      pins.forEach((group,g)=>{
+        let labeled=false;
+        group.forEach(({el,line},i)=>{
+          const point=points[g][i];
+          el.hidden=!point;line.style.display='none';
+          if(!point) return;
+          el.classList.toggle('compact',labeled);
+          if(labeled){place(el,point.x-el.offsetWidth/2,point.y-el.offsetHeight/2);return;}
+          const box=anchoredBox(point,el.offsetWidth,el.offsetHeight,width,height,occupied,12,-18);
+          place(el,box.left,box.top);occupied.push(box);labeled=true;
+          const x=Math.min(box.right,Math.max(box.left,point.x)),y=Math.min(box.bottom,Math.max(box.top,point.y));
+          line.setAttribute('x1',point.x);line.setAttribute('y1',point.y);
+          line.setAttribute('x2',x);line.setAttribute('y2',y);line.style.display='';
+        });
+      });
     }
     return {highlighted,pickTarget,cancel,pending,sync,frame};
   })();
