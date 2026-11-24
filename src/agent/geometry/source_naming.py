@@ -216,10 +216,11 @@ def public_reference_text(value: object, references: dict) -> str:
     return re.sub(pattern, lambda match: references[match[0]], text)
 
 
-def viewer_names(data: dict, parts: dict) -> dict:
+def viewer_names(data: dict, parts: dict, *, names: dict | None = None) -> dict:
     """Name disposable clickable fragments without rewriting IDs or geometry."""
     source = data.get("source_model") or {}
-    names = public_names_for_display(source)
+    if names is None:
+        names = public_names_for_display(source)
     derived = source.get("derived", {})
     surfaces = {s["name"]: names.get("boundaries", {}).get(derived.get("surfaces", {}).get(s["name"], s["name"]), s["name"])
                 for s in data.get("surfaces", [])}
@@ -249,7 +250,7 @@ def viewer_names(data: dict, parts: dict) -> dict:
         rank = {i:n for n,i in enumerate(order, 1)}
         edges[obj["name"]] = [f"{objects[obj['name']]}_Edge{rank[i]}" for i in range(len(vs))]
     floors = sorted(source.get("floors", []), key=lambda f: (f["z_floor"], f["id"]))
-    return {"floors": [{"id": f["id"], "name": f"F{i}",
+    return {"floors": [{"id": f["id"], "name": names.get("floors", {}).get(f["id"], f"F{i}"),
                        "source_name": f.get("name") or f["id"], "z_floor": f["z_floor"]}
                       for i, f in enumerate(floors, 1)],
             "spaces": names.get("spaces", {}), "objects": objects, "parts": fragment_names,

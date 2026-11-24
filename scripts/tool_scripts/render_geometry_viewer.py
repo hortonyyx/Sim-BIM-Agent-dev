@@ -87,12 +87,13 @@ _APP_JS = r"""
     const type=ROOM_TYPES[role] || ROOM_TYPES.unknown;
     return locale==='en' ? type.label_en : type.label_zh+(bilingual?' · '+type.label_en:'');
   }
-  function spaceName(zone){
+  const sourceIdOfZone=zone=>SOURCE_MAP.zones?.[zone] || zone;
+  function authoredSpaceName(zone){
     const record=GEO.room_names[zone] || {};
     if(record.name) return record.role!=='unknown' ? roleLabel(record.role,false) : record.name;
-    const role=roleOf(zone);
-    return role && role!=='unknown' ? roleLabel(role,false) : msg('Room');
+    return '';
   }
+  const spaceName=zone=>GEO.public_names?.spaces?.[sourceIdOfZone(zone)] || authoredSpaceName(zone) || String(zone||msg('Room'));
   const ROLES = GEO.roles || {};
   const HAS_ROLES = Object.keys(ROLES).length > 0;
   const roleOf = z => (ROLES[z] || '').toString().toLowerCase();
@@ -116,13 +117,15 @@ _APP_JS = r"""
   const NAMED_FLOORS = GEO.floors || GEO.public_names?.floors || [];
   const BASES = NAMED_FLOORS.length ? NAMED_FLOORS.map(f=>f.z_floor) : cluster((floorSurf.length ? floorSurf : SURF).map(zmin));
   const sourceFloor = i => (SOURCE?.floors||[]).find(f=>f.id===NAMED_FLOORS[i]?.id);
-  const floorName = i => sourceFloor(i)?.name || (locale==='en' ? 'Floor '+(i+1) : '第 '+(i+1)+' 层');
+  const floorName=i=>NAMED_FLOORS[i]?.name || 'F'+(i+1);
+  const floorLabel=i=>{const label=sourceFloor(i)?.name;return label && label!==floorName(i) ? floorName(i)+' · '+label : floorName(i);};
   const _zFloorZ = {}, _zMinZ = {};
   SURF.forEach(s => { const z=s.zone||'?', mn=zmin(s); _zMinZ[z]=Math.min(_zMinZ[z]??1e9,mn);
     if(s.type==='Floor') _zFloorZ[z]=Math.min(_zFloorZ[z]??1e9,mn); });
   const zoneFloor = {}, zoneFloors = {};
   Object.keys(_zMinZ).forEach(z => { const sid=(SOURCE_MAP.zones||{})[z]||z;
-    const fi=NAMED_FLOORS.findIndex(f=>f.id===SOURCE_SPACES[sid]?.floor_id);
+    const owner=SOURCE_SPACES[sid]?.floor_id || GEO.primary_floors?.[sid];
+    const fi=NAMED_FLOORS.findIndex(f=>f.id===owner);
     zoneFloor[z]=fi>=0 ? fi : nearestBase(_zFloorZ[z]??_zMinZ[z], BASES);
     // Filtering follows declared source membership only. A continuous space
     // remains one volume while appearing in every storey that explicitly
@@ -199,10 +202,10 @@ _APP_JS = r"""
 
   // ---- small text labels (axes + compass) ----
   function label(txt, color, scl){
-    const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
-    x.fillStyle=color; x.font='bold 46px sans-serif'; x.textAlign='center'; x.textBaseline='middle'; x.fillText(txt,32,34);
+    const c=document.createElement('canvas');c.height=64;c.width=Math.max(64,txt.length*34);const x=c.getContext('2d');
+    x.fillStyle=color; x.font='bold 46px sans-serif'; x.textAlign='center'; x.textBaseline='middle'; x.fillText(txt,c.width/2,34);
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c), depthTest:false, transparent:true}));
-    sp.scale.set(scl, scl, 1); return sp;
+    sp.scale.set(scl*c.width/c.height, scl, 1); return sp;
   }
   // small axis ticks at the origin corner
   const guideSize=Math.max(radius*.35,Math.min(radius,Math.max(size.x,size.y)*1.2));
@@ -211,13 +214,33 @@ _APP_JS = r"""
   [['x',0xcc1111,new THREE.Vector3(aL*1.25,0,0)],['y',0x11aa11,new THREE.Vector3(0,aL*1.25,0)],
    ['z',0x1111cc,new THREE.Vector3(0,0,aL*1.25)]].forEach(([t,col,off])=>{
     const s=label(t,'#'+col.toString(16).padStart(6,'0'),aLab); s.position.copy(bb.min).add(off); scene.add(s); });
-  // North follows the same +Y reference as the model axes, even after orbiting.
-  function orientCompass(){
-    camera.updateMatrixWorld();
-    const basis=camera.matrixWorld.elements,angle=Math.atan2(basis[1],basis[5]);
-    if(Math.hypot(basis[1],basis[5])>1e-5) $('northArrow').style.transform='rotate('+angle+'rad)';
+  // Anchor the compass just outside the south edge so it orbits and exports with the model.
+  const footprint=Math.max(size.x,size.y)||radius;
+  const compassRadius=Math.max(footprint*.062,Math.min(radius*.052,footprint*.16));
+  const compass=new THREE.Group();
+  compass.name='ground-compass';
+  compass.position.set(center.x-.12*size.x,bb.min.y-2.65*compassRadius,bb.min.z+.002*compassRadius);
+  compass.scale.setScalar(compassRadius);
+  // A positive building north-axis angle is clockwise from north to building +Y.
+  const hasNorth=Number.isFinite(GEO.north_axis_deg);
+  compass.rotation.z=hasNorth ? THREE.MathUtils.degToRad(GEO.north_axis_deg) : 0;
+  const compassInk=document.createElement('canvas');compassInk.width=compassInk.height=256;
+  const pen=compassInk.getContext('2d');
+  pen.translate(128,128);
+  pen.beginPath();pen.arc(0,0,116,0,Math.PI*2);
+  pen.fillStyle='rgba(255,255,255,.90)';pen.fill();
+  pen.strokeStyle='#66768a';pen.lineWidth=8;pen.stroke();
+  for(const [tip,fill] of [[-101,'#16478b'],[91,'#96a5b4']]){
+    pen.beginPath();pen.moveTo(0,tip);pen.lineTo(25,0);pen.lineTo(0,tip<0?11:-11);pen.lineTo(-25,0);
+    pen.closePath();pen.fillStyle=fill;pen.fill();
   }
-  controls.addEventListener('change',orientCompass);
+  const rose=new THREE.Mesh(new THREE.PlaneGeometry(2,2),new THREE.MeshBasicMaterial({
+    map:new THREE.CanvasTexture(compassInk),transparent:true,depthWrite:false,side:THREE.DoubleSide
+  }));
+  compass.add(rose);
+  const northLabel=label(hasNorth?'N':'N / +Y','#16478b',.76);
+  northLabel.position.set(0,1.27,.04);compass.add(northLabel);
+  scene.add(compass);
 
   // ---- clip planes (section cuts) ----
   const AX = [
@@ -263,6 +286,16 @@ _APP_JS = r"""
     if(Math.abs(area-expected)>Math.max(1e-8,Math.abs(expected)*1e-8)) throw new Error('[[msg:Display triangulation does not cover its boundary]]');
     return {positions:loops.flat().flat(),indices};
   }
+  function ringArea3D(ring){
+    let x=0,y=0,z=0;
+    const origin=ring[0];
+    for(let i=1;i<ring.length-1;i++){
+      const a=ring[i].map((v,k)=>v-origin[k]),b=ring[i+1].map((v,k)=>v-origin[k]);
+      x+=a[1]*b[2]-a[2]*b[1];y+=a[2]*b[0]-a[0]*b[2];z+=a[0]*b[1]-a[1]*b[0];
+    }
+    return Math.hypot(x,y,z)/2;
+  }
+  const faceArea=(outer,holes=[])=>Math.max(0,ringArea3D(outer)-holes.reduce((total,r)=>total+ringArea3D(r),0));
   function ringGeom(ring, holes=[]){ const {positions:pos,indices:idx}=triangulateRings(ring,holes);
     const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
     g.setIndex(idx); g.computeVertexNormals(); return g; }
@@ -280,7 +313,7 @@ _APP_JS = r"""
     // FLAT (unlit) fill so every face of a zone renders the EXACT same colour — no
     // lighting wash that made horizontal (roof/floor) faces read near-white. Edges keep form.
     const m=new THREE.MeshBasicMaterial({side:THREE.DoubleSide, transparent:true, opacity:1});
-    const parts = Object.prototype.hasOwnProperty.call(WALL_PARTS,s.name) ? WALL_PARTS[s.name] : [{verts:s.verts,holes:[]}];
+    const parts = Object.prototype.hasOwnProperty.call(WALL_PARTS,s.name) ? WALL_PARTS[s.name] : [s];
     parts.forEach(part=>{
       const dup=part.duplicate_at_rest ?? isDup(s);
       const enclosureCondition=part.enclosure_condition || 'physical';
@@ -290,12 +323,13 @@ _APP_JS = r"""
       if(enclosureCondition==='unknown') return;
       const mesh=new THREE.Mesh(ringGeom(part.verts,part.holes||[]), m.clone());
       mesh.userData={zone, floor:fi, type:s.type||'Wall', name:s.name, kind:'surface', dup,
+        publicName:part.public_name, parentName:s.public_name, area:faceArea(part.verts,part.holes),
         occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined)};
       surfMeshes.push(mesh); root.add(mesh);
       const segments=part.edge_segments ?? [part.verts,...(part.holes||[])].flatMap(r=>r.map((v,i)=>[v,r[(i+1)%r.length]]));
       const em=new THREE.LineSegments(segmentGeom(segments), new THREE.LineBasicMaterial({color:0x303030}));
       em.userData={...mesh.userData}; edgeSegs.push(em); root.add(em);
-      surfaceEdges.push({segments,userData:mesh.userData});
+      surfaceEdges.push({segments,ranks:part.edge_ranks,userData:mesh.userData});
     });
     logicalLines.push(dashedEdge(s.verts,LOGICAL_COLOR,radius*0.018,radius*0.012,
       {zone,floor:fi,kind:'logical',dup:false}));
@@ -313,20 +347,24 @@ _APP_JS = r"""
     const key=enclosureRegionKey(r.verts), owners=enclosureRegionKeys.get(key)||[], duplicate=owners.length>0;
     enclosureRegionKeys.set(key,[...owners,zone]);
     const userData={zone,floor:fi,kind:'enclosure-region',condition:r.condition,dup:duplicate,
-      occludedBy:owners,boundaryId:r.boundary_id,baseColor:ENCLOSURE_COLOR};
+      occludedBy:owners,boundaryId:r.boundary_id,publicName:r.public_name,parentName:r.parent_name,
+      area:faceArea(r.verts,r.holes),baseColor:ENCLOSURE_COLOR};
     // This translucent face is a viewer-only aid. It makes an open extent easy
     // to see without restoring a physical wall, changing volume, or connectivity.
     const material=new THREE.MeshBasicMaterial({color:ENCLOSURE_COLOR,side:THREE.DoubleSide,
       transparent:true,opacity:ENCLOSURE_OPACITY,depthWrite:false});
     const mesh=new THREE.Mesh(ringGeom(r.verts,r.holes||[]),material); mesh.userData=userData;
     enclosureMeshes.push(mesh); root.add(mesh);
-    enclosureLines.push(dashedEdge(r.verts,ENCLOSURE_COLOR,radius*0.012,radius*0.008,{...userData}));
+    const rings=[r.verts,...(r.holes||[])];
+    rings.forEach(ring=>enclosureLines.push(dashedEdge(ring,ENCLOSURE_COLOR,radius*0.012,radius*0.008,{...userData})));
+    surfaceEdges.push({segments:rings.flatMap(ring=>ring.map((v,i)=>[v,ring[(i+1)%ring.length]])),
+      ranks:r.edge_ranks,userData});
   });
   WINS.forEach(w=>{
     const zone=zoneOfWindow(w), sv=popOut(w.verts, zone);  // proud of wall → clean + pickable
     const m=new THREE.MeshStandardMaterial({color:WINDOW_COLOR, side:THREE.DoubleSide, roughness:0.4});
     const mesh=new THREE.Mesh(ringGeom(sv), m);
-    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, kind:'window', dup:false};
+    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, publicName:w.public_name, parentName:w.parent_name, area:faceArea(w.verts), kind:'window', dup:false};
     winMeshes.push(mesh); root.add(mesh);
     // Comparison contours use the exact source geometry, without the picking offset.
     const edge=new THREE.LineSegments(edgeGeom(w.verts),new THREE.LineBasicMaterial({color:0x087d3b}));
@@ -340,7 +378,8 @@ _APP_JS = r"""
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
     mesh.userData={zone,floor:zoneFloor[zone]||0,name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
-      kind:'opening',dup,baseColor:color,sourceId:o.source_opening_id};
+      kind:'opening',dup,baseColor:color,sourceId:o.source_opening_id,publicName:o.public_name,
+      parentName:o.parent_name,area:faceArea(o.verts),spaceIds:[o.space_id,o.other_space_id].filter(Boolean)};
     openingMeshes.push(mesh);root.add(mesh);
     const em=new THREE.LineSegments(edgeGeom(o.verts),new THREE.LineBasicMaterial({color}));
     em.userData={...mesh.userData};edgeSegs.push(em);root.add(em);
@@ -411,35 +450,90 @@ _APP_JS = r"""
   function clearSelection(){ setSelection([]); inspected=null; renderInspection(); }
 
   // ---- measure (button; CONTINUOUS; CAD-style screen-space vertex snap on true geometry) ----
-  let measuring=false, measurePts=[]; const mGroup=new THREE.Group(); scene.add(mGroup);
+  let measuring=false, measurePts=[],measureLine=null;
+  const mGroup=new THREE.Group();scene.add(mGroup);
   // overlay helpers: always-on-top (depthTest off + depthWrite off + high renderOrder) so a
   // highlight is NEVER hidden behind the (transparent) faces — no need to rotate to see it.
   function topMat(color){ return new THREE.MeshBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true}); }
-  function topBall(p, color, rmul){ const s=new THREE.Mesh(new THREE.SphereGeometry(radius*(rmul||0.010),16,16), topMat(color));
-    s.position.copy(p); s.renderOrder=999; return s; }
+  const markerGeometry=new THREE.SphereGeometry(1,24,16);
+  function measureBall(name,color){
+    const ball=new THREE.Mesh(markerGeometry,topMat(color));
+    ball.name=name;ball.visible=false;ball.renderOrder=1000;
+    mGroup.add(ball);return ball;
+  }
   // a THICK highlight line as a thin cylinder — WebGL ignores LineMaterial.linewidth, so a
   // real tube is the only way to get a visibly bold line that reads at any camera angle.
-  function fatLine(a, b, color, rmul){ const dir=new THREE.Vector3().subVectors(b,a); const len=dir.length()||1e-6; const r=radius*(rmul||0.005);
-    const m=new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), topMat(color));
-    m.position.copy(a).addScaledVector(dir, 0.5);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize()); m.renderOrder=999; return m; }
-  const snap=topBall(new THREE.Vector3(), 0x00e5ff, 0.011); snap.visible=false; scene.add(snap);
+  function setLineEndpoints(line,a,b){
+    const dir=new THREE.Vector3().subVectors(b,a);
+    line.scale.y=dir.length();line.visible=line.scale.y>1e-7;
+    line.position.copy(a).addScaledVector(dir,.5);
+    if(line.visible) line.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir.normalize());
+  }
+  function fatLine(a,b,color,r){
+    const line=new THREE.Mesh(new THREE.CylinderGeometry(r,r,1,8),topMat(color));
+    line.renderOrder=999;setLineEndpoints(line,a,b);return line;
+  }
+  const snap=measureBall('vertex-snap',0x007e89);
+  const endpoints=[measureBall('measure-start',0xcd165b),measureBall('measure-end',0xcd165b)];
+  const viewPoint=new THREE.Vector3();
+  function sizeMeasureMarkers(){
+    if(!measuring) return;
+    camera.updateMatrixWorld();
+    const viewHeight=Math.max(1,viewport.clientHeight);
+    const pixelRadius=1/(viewHeight*camera.projectionMatrix.elements[5]);
+    const touch=viewport.clientWidth<560||matchMedia('(pointer: coarse)').matches;
+    for(const ball of mGroup.children){
+      if(!ball.visible) continue;
+      const depth=Math.max(camera.near,-viewPoint.copy(ball.position).applyMatrix4(camera.matrixWorldInverse).z);
+      const unit=depth*pixelRadius;
+      if(ball===measureLine){
+        // Cylinder height is world-space length. Only its two radial axes follow zoom.
+        ball.scale.x=ball.scale.z=3*unit;
+      }else{
+        const diameter=ball===snap ? (touch?18:15) : (touch?15:12);
+        ball.scale.setScalar(diameter*unit);
+      }
+    }
+  }
+  controls.addEventListener('change',sizeMeasureMarkers);
+  function positionMeasurePair(){
+    measurePts.forEach((vertex,i)=>{
+      endpoints[i].position.copy(vertex.v).add(explodeOffset(vertex.zone));
+      endpoints[i].visible=true;
+    });
+    if(measurePts.length===2){
+      const [a,b]=endpoints;
+      if(measureLine) setLineEndpoints(measureLine,a.position,b.position);
+      else {measureLine=fatLine(a.position,b.position,0xcd165b,1);mGroup.add(measureLine);}
+    }
+    sizeMeasureMarkers();
+  }
   const CAND=[];  // {v: true world Vector3, zone}
   SURF.forEach(s=>s.verts.forEach(v=>CAND.push({v:new THREE.Vector3(v[0],v[1],v[2]), zone:s.zone||'?'})));
   WINS.forEach(w=>{const z=zoneOfWindow(w); w.verts.forEach(v=>CAND.push({v:new THREE.Vector3(v[0],v[1],v[2]), zone:z}));});
   OPENS.forEach(o=>o.verts.forEach(v=>CAND.push({v:new THREE.Vector3(...v),zone:_surfZoneByName[o.parent]})));
-  function clearPair(){ while(mGroup.children.length) mGroup.remove(mGroup.children[0]); measurePts=[]; }
+  function clearPair(){
+    if(measureLine){
+      mGroup.remove(measureLine);measureLine.geometry.dispose();measureLine.material.dispose();measureLine=null;
+    }
+    endpoints.forEach(ball=>{ball.visible=false;});measurePts=[];
+  }
   function clearMeasure(){ measuring=false; snap.visible=false; clearPair();
     $('meas').style.display='none'; renderer.domElement.style.cursor='default'; }
-  function startMeasure(){ clearMeasure(); measuring=true; renderer.domElement.style.cursor='crosshair';
+  function startMeasure(){ clearMeasure();clearSelection();measuring=true;renderer.domElement.style.cursor='crosshair';
     $('meas').style.display='block'; renderMeasurement(); }
   function renderMeasurement(){
     if(!measuring) return;
-    const distance=measurePts.length===2 ? measurePts[0].distanceTo(measurePts[1]) : null;
-    $('meas').textContent=distance!==null ? '[[msg:distance: ]]'+distance.toFixed(3)+'[[msg: m  (click=next, Esc=exit)]]' :
-      (measurePts.length ? '[[msg:measure: snap vertex 2  (Esc to exit)]]' : '[[msg:measure: snap vertex 1  (Esc to exit)]]');
+    const distance=measurePts.length===2 ? measurePts[0].v.distanceTo(measurePts[1].v) : null;
+    const card=$('meas');
+    card.classList.toggle('has-distance',distance!==null);
+    if(distance===null){
+      card.textContent=measurePts.length ? msg('Select the second vertex') : msg('Select the first vertex');
+      return;
+    }
+    card.innerHTML='<span class="measure-label">'+esc(msg('Distance'))+'</span>'+
+      '<strong class="measure-value">'+distance.toFixed(3)+' <small>m</small></strong>';
   }
-  function marker(p){ mGroup.add(topBall(p, 0xd81b60, 0.011)); }
   // Picking follows wall opacity: when walls are OPAQUE you can only snap/select what is visibly
   // in front (a candidate hidden behind a face is skipped); turn DOWN wall opacity to reach the
   // geometry behind. Keeps the precise screen-nearest aim within the tolerance.
@@ -456,26 +550,26 @@ _APP_JS = r"""
       if(!onFloor({zone:c.zone,floor:zoneFloor[c.zone]},parseInt($('floorSel').value,10))) continue;
       if(!comparisonPlanes().every(plane=>plane.distanceToPoint(w)>=-0.0001)) continue;
       if(p.z<-1||p.z>1) continue; const sx=(p.x*0.5+0.5)*r.width, sy=(-p.y*0.5+0.5)*r.height;
-      const d=(sx-cx)**2+(sy-cy)**2; if(d<bd && (thru || !occluded(w))){ bd=d; best=w; } }
+      const d=(sx-cx)**2+(sy-cy)**2; if(d<bd && (thru || !occluded(w))){ bd=d; best=c; } }
     return best; }
 
   // ---- edge selection on true geometry ----
   const EDGES=[];
-  function pushEdges(verts, zone, floor, dup, kind, name){
-    verts.forEach((v,i)=>EDGES.push({a:new THREE.Vector3(...v),b:new THREE.Vector3(...verts[(i+1)%verts.length]),
-      zone,floor,dup,kind,name}));
+  function pushRingEdges(obj,userData){
+    obj.verts.forEach((v,i)=>EDGES.push({...userData,
+      a:new THREE.Vector3(...v),b:new THREE.Vector3(...obj.verts[(i+1)%obj.verts.length]),
+      edgeRank:obj.edge_ranks[i]}));
   }
-  surfaceEdges.forEach(({segments,userData})=>segments.forEach(([a,b])=>{
-    EDGES.push({...userData,a:new THREE.Vector3(...a),b:new THREE.Vector3(...b)});
+  surfaceEdges.forEach(({segments,ranks,userData})=>segments.forEach(([a,b],i)=>{
+    EDGES.push({...userData,a:new THREE.Vector3(...a),b:new THREE.Vector3(...b),edgeRank:ranks[i]});
   }));
-  WINS.forEach(w=>{ const z=zoneOfWindow(w); pushEdges(w.verts, z, zoneFloor[z]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), false, 'window', w.name); });
-  OPENS.forEach(o=>{const z=_surfZoneByName[o.parent], start=EDGES.length;
-    pushEdges(o.verts,z,zoneFloor[z]||0,Boolean(o.partner&&o.name>o.partner),'opening',o.name);
-    EDGES.slice(start).forEach(e=>e.occludedBy=[o.other_space_id]);});
+  WINS.forEach((w,i)=>pushRingEdges(w,winMeshes[i].userData));
+  OPENS.forEach((o,i)=>pushRingEdges(o,openingMeshes[i].userData));
   // only pick an edge whose source face is currently shown (same predicate as applyFilter)
   function edgeVisible(e){ const f=parseInt($('floorSel').value,10); const exploded=parseFloat($('explode').value)>0;
     if(meshActive() && ($('meshMode').value==='mesh'||!$('showEdges').checked)) return false;
     if(!partVisible(e,f,exploded)) return false;
+    if(e.kind==='enclosure-region') return $('showEnclosure').checked;
     return (e.kind==='window') ? $('showWin').checked : (e.kind==='opening') ? $('showOpen').checked : $('showWalls').checked; }
   function segDist(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy||1;
     let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
@@ -491,7 +585,7 @@ _APP_JS = r"""
       const d=segDist(cx,cy,ax,ay,bx,by);   // opaque: skip an edge hidden behind a face (use its midpoint)
       if(d<bd && (thru || !occluded(A.clone().add(B).multiplyScalar(0.5)))){ bd=d; best={e,A,B}; } }
     clearSelection(); if(!best) return;
-    selGroup.add(fatLine(best.A, best.B, SEL_COLOR, 0.006));   // whole edge as one thick, always-on-top line
+    selGroup.add(fatLine(best.A, best.B, SEL_COLOR, radius*0.006));   // whole edge as one thick, always-on-top line
     showInspection('edge',best.e); }
 
   // ---- selection picking (face raycast, for click-select only) ----
@@ -553,30 +647,56 @@ _APP_JS = r"""
   function renderInspection(){
     const el=$('sel'); el.style.display=inspected ? 'block' : 'none';
     if(!inspected){el.replaceChildren();return;}
-    const {mode,item}=inspected, u=item.userData || item;
-    const floors=selectionFloors(mode,item,u);
-    let storey=floors.map(floorName).join(' / '),name,use;
-    if(mode==='zone'){name=spaceName(u.zone);use=roleLabel(roleOf(u.zone));}
-    else if(mode==='floor'){
-      const i=inspected.floor;
-      name=storey=floorName(i);
-      const roles=new Set(ZONES.filter(z=>(storeysByZone[z]||[]).includes(i)).map(roleOf));
-      use=[...roles].map(r=>roleLabel(r)).join(' · ')||msg('Storey');
+    const {mode,item,floor}=inspected, u=item.userData || item;
+    let name, fields=[], quantities=[];
+    const storeys=()=>selectionFloors(mode,item,u).map(floorLabel).join(' / ');
+    if(mode==='floor' || mode==='zone'){
+      let metrics;
+      if(mode==='zone'){
+        name=spaceName(u.zone);
+        const authored=authoredSpaceName(u.zone);
+        fields=[['Authored name',authored!==name && authored!==roleLabel(roleOf(u.zone),false) && authored],
+          ['Storey',storeys()],['Function',roleLabel(roleOf(u.zone))]];
+        metrics=GEO.metrics.spaces[sourceIdOfZone(u.zone)] || {};
+      }else{
+        name=floorName(floor);
+        const source=sourceFloor(floor) || {};
+        metrics=GEO.metrics.floors[source.id] || {};
+        fields=[['Authored name',source.name!==name && source.name],['Spaces',metrics.space_count]];
+        quantities.push(['Elevation',source.z_floor,'m']);
+      }
+      quantities.push(['Projected area',metrics.area_m2,'m²'],['Modeled volume',metrics.volume_m3,'m³']);
     }else{
-      const type=msg(component(u));
-      name=authoredComponent(u) || spaceName(u.zone)+' · '+type;
-      use=type;
-      if(mode==='edge'){name+=' · '+msg('Edge');use=type+' · '+msg('Edge');}
+      name=u.publicName;
+      if(mode==='edge'){
+        name=u.publicName+'_Edge'+u.edgeRank;
+        fields.push(['Parent face',u.publicName]);
+        quantities.push(['Length',u.a.distanceTo(u.b),'m']);
+      }else{
+        const authored=authoredComponent(u);
+        fields.push(['Authored name',authored!==name && authored],['Parent face',u.parentName!==name && u.parentName]);
+        quantities.push(['Face area',u.area,'m²']);
+      }
+      fields.push(['Type',msg(component(u))],['Room',spaceName(u.zone)],['Storey',storeys()]);
+      if(mode==='surface' && u.spaceIds?.length>1){
+        fields.push(['Connected spaces',u.spaceIds.map(id=>spaceName(zoneForSpace[id]||id)).join(' ↔ ')]);
+      }
     }
-    el.innerHTML=[[msg('Name'),name],[msg('Storey'),storey],[msg('Function'),use]]
-      .map(([key,value])=>row(esc(key),esc(value))).join('');
+    el.dataset.mode=mode;
+    const rows=fields.filter(([,v])=>v!==undefined && v!==null && v!==false && v!=='')
+      .map(([k,v])=>row(esc(msg(k)),esc(v))).join('');
+    const metrics=quantities.filter(([,v])=>Number.isFinite(v)).map(([key,value,unit])=>{
+      const number=value.toLocaleString(locale,{minimumFractionDigits:2,maximumFractionDigits:2});
+      return '<div class="pick-metric"><span>'+esc(msg(key))+'</span><b>'+number+' <small>'+unit+'</small></b></div>';
+    }).join('');
+    el.innerHTML='<header class="pick-head"><span class="pick-kind">'+esc(msg(mode))+'</span><strong class="pick-name">'+
+      esc(name)+'</strong></header><div class="pick-fields">'+rows+'</div><div class="pick-metrics">'+metrics+'</div>';
   }
   function handleClick(ev){
     if(measuring){ const r=renderer.domElement.getBoundingClientRect();
       const p=snapPick(ev.clientX-r.left, ev.clientY-r.top); if(!p) return;
       if(measurePts.length>=2) clearPair();  // continuous: a new click starts a fresh pair (only latest shown)
-      marker(p); measurePts.push(p);
-      if(measurePts.length===2) mGroup.add(fatLine(measurePts[0],measurePts[1],0xd81b60,0.004));
+      snap.visible=false;measurePts.push(p);positionMeasurePair();
       renderMeasurement();
       return; }
     const mode=$('colorBy').value;
@@ -601,7 +721,8 @@ _APP_JS = r"""
     const moved=Math.hypot(e.clientX-downXY[0], e.clientY-downXY[1]); downXY=null; if(moved<=5) handleClick(e); });
   renderer.domElement.addEventListener('pointermove', e=>{ if(!measuring) return;
     const r=renderer.domElement.getBoundingClientRect(); const p=snapPick(e.clientX-r.left, e.clientY-r.top);
-    if(p){ snap.position.copy(p); snap.visible=true; } else snap.visible=false; });
+    if(p){ snap.position.copy(p.v).add(explodeOffset(p.zone));snap.visible=true;sizeMeasureMarkers(); } else snap.visible=false; });
+  renderer.domElement.addEventListener('pointerleave',()=>{snap.visible=false;});
 
   // ---- display toggles + explode ----
   // At explode=0 the duplicate of each coincident reciprocal pair is HIDDEN (solid
@@ -639,6 +760,7 @@ _APP_JS = r"""
     openingMeshes.forEach(m=>m.position.copy(explodeOffset(m.userData.zone)));
     enclosureMeshes.forEach(m=>m.position.copy(explodeOffset(m.userData.zone)));
     edgeSegs.concat(logicalLines,enclosureLines).forEach(e=>e.position.copy(explodeOffset(e.userData.zone)));
+    if(measuring){snap.visible=false;positionMeasurePair();}
     applyFilter(); }  // re-evaluate dup visibility when crossing explode 0 ↔ >0
 
   // ---- right-side info (structured) ----
@@ -685,7 +807,7 @@ _APP_JS = r"""
   // ---- floor select + wiring ----
   const fs=$('floorSel'); BASES.forEach((b,i)=>{
     if(!SURF.some(s=>onFloor({zone:s.zone,floor:zoneFloor[s.zone]},i))) return;
-    const o=document.createElement('option'); o.value=i; o.textContent=floorName(i)+' (z='+b.toFixed(2)+')'; fs.appendChild(o);});
+    const o=document.createElement('option'); o.value=i; o.textContent=floorLabel(i); fs.appendChild(o);});
   $('colorBy').onchange=()=>{ refreshColors(); clearSelection(); };
   fs.onchange=()=>{clearSelection();clearMeasure();applyFilter();};
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
@@ -719,7 +841,7 @@ _APP_JS = r"""
     for(const attr of ['title','aria-label','placeholder']){
       document.querySelectorAll('[data-i18n-'+attr+']').forEach(el=>el.setAttribute(attr,msg(el.getAttribute('data-i18n-'+attr))));
     }
-    Array.from(fs.options).filter(o=>Number(o.value)>=0).forEach(o=>{o.textContent=floorName(Number(o.value));});
+    Array.from(fs.options).filter(o=>Number(o.value)>=0).forEach(o=>{o.textContent=floorLabel(Number(o.value));});
     updateStats();updateLegend($('colorBy').value);renderInspection();renderMeasurement();applyFilter();
   }
   $('locale').onchange=e=>applyLocale(e.target.value);
@@ -730,6 +852,7 @@ _APP_JS = r"""
     if(!w || !h) return;
     camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false);
     if(!cameraMoved) defaultView();
+    sizeMeasureMarkers();
   }).observe(viewport);
   (function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
 })();
@@ -746,7 +869,6 @@ _PANEL_HTML = r"""
 <main class="viewer">
   <section class="stage">
     <div id="app"></div>
-    <div class="compass" aria-hidden="true"><span>N</span><svg viewBox="0 0 24 24"><g id="northArrow"><path fill="#34445a" d="m12 2 4 12-4-2-4 2z"/><path fill="#b5bfcb" d="m12 22-4-12 4 2 4-2z"/></g></svg></div>
     <div class="view-filters">
       <label class="filter" for="colorBy"><span>[[msg:select by]]</span><select id="colorBy"><option value="zone">[[msg:zone]]</option><option value="floor">[[msg:floor]]</option><option value="surface">[[msg:surface]]</option><option value="edge">[[msg:edge]]</option></select></label>
       <label class="filter" for="floorSel"><span>[[msg:楼层]]</span><select id="floorSel"><option value="-1">[[msg:all floors]]</option></select></label>
@@ -833,9 +955,6 @@ _STYLE = r"""
   .stage {position:relative;isolation:isolate;min-width:0;min-height:0;overflow:hidden;background:#f4f6f8;}
   #app {position:absolute;inset:0;}
   #app canvas {display:block;width:100%;height:100%;touch-action:none;}
-  .compass {position:absolute;right:clamp(12px,1.7vw,26px);top:clamp(12px,1.7vw,24px);display:grid;justify-items:center;gap:1px;pointer-events:none;color:#546479;font:600 10px/1 "Segoe UI",sans-serif;}
-  .compass svg {width:28px;height:28px;border:1px solid #cad2dd;border-radius:50%;background:#ffffffa8;}
-  #northArrow {transform-origin:12px 12px;}
   .view-filters {position:absolute;left:clamp(12px,1.7vw,26px);top:clamp(12px,1.7vw,24px);align-items:stretch;max-width:calc(100% - 24px);}
   .filter {min-width:0;display:flex;align-items:center;gap:5px;background:#fff;border:1px solid #c6cfda;border-radius:5px;padding-left:10px;box-shadow:0 1px 3px #2236550c;}
   .filter>span {white-space:nowrap;font-size:12px;color:var(--muted);}
@@ -847,9 +966,22 @@ _STYLE = r"""
   #clearMeasure {display:none;}
   .stage-tools:has(#meas[style*="block"]) #measure {border-color:var(--blue);color:var(--blue);background:#eff3ff;}
   .stage-tools:has(#meas[style*="block"]) #clearMeasure {display:inline-flex;}
-  #meas {padding:6px 10px;border-radius:5px;background:#283858;color:#fff;font-size:12px;}
-  #sel {position:absolute;bottom:clamp(12px,1.7vw,24px);right:clamp(12px,1.7vw,24px);width:min(290px,46%);max-height:37%;overflow:auto;padding:12px 15px;background:#fff;border:1px solid #bfcbda;border-radius:7px;box-shadow:0 5px 20px #22365516;}
-  #sel .hh {font-size:14px;font-weight:650;margin-bottom:7px;}
+  #meas {padding:9px 14px;border-radius:7px;background:#182940;color:#fff;font-size:14px;box-shadow:0 3px 13px #15284236;}
+  #meas.has-distance {padding:11px 17px 12px;border-left:4px solid #fb74a8;}
+  .measure-label {display:block;font-size:12px;line-height:1.4;font-weight:650;color:#f5f8fc;}
+  .measure-value {display:block;margin:2px 0 0;color:#ff91b9;font-size:clamp(25px,2.25vw,35px);line-height:1.08;letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
+  .measure-value small {font-size:.6em;font-weight:550;color:#f5f8fc;}
+  #sel {position:absolute;bottom:clamp(12px,1.7vw,24px);right:clamp(12px,1.7vw,24px);width:min(352px,48%);max-height:52%;overflow:auto;overscroll-behavior:contain;background:var(--sheet);border:1px solid #bac7d6;border-radius:9px;box-shadow:0 5px 22px #2236551c;}
+  .pick-head {display:grid;gap:3px;padding:12px 15px 8px;}
+  .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
+  .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
+  .pick-fields {padding:0 15px 8px;}
+  .pick-metrics {display:flex;flex-wrap:wrap;gap:10px 16px;padding:10px 15px;background:#f3f6fa;border-top:1px solid var(--line);}
+  .pick-metric {display:grid;align-content:start;flex:1 1 auto;gap:2px;}
+  .pick-metric span {font-size:12px;color:var(--muted);}
+  .pick-metric b {font-size:19px;line-height:1.2;font-weight:630;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .pick-metric small {font-size:12px;font-weight:500;color:var(--muted);}
+  .pick-fields:empty,.pick-metrics:empty {display:none;}
   .kv {display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
   .kv span {color:var(--muted);}
   .kv b {font-variant-numeric:tabular-nums;font-weight:600;}
@@ -920,7 +1052,12 @@ _STYLE = r"""
     .filter {padding-left:6px;gap:1px;}
     .filter>span {font-size:11px;}
     .filter select {font-size:12px;padding:6px 3px;max-width:30vw;}
-    #sel {bottom:55px;width:min(260px,72%);padding:9px 12px;}
+    .stage-tools {inset:12px;display:flex;align-items:flex-start;flex-direction:column;justify-content:flex-end;pointer-events:none;}
+    .stage-tools .tool-row {pointer-events:auto;}
+    #meas {position:absolute;top:43px;left:0;}
+    #meas.has-distance {padding:7px 12px 8px;}
+    #sel {bottom:56px;width:min(320px,calc(100% - 24px));max-height:calc(100% - 102px);}
+    .pick-head {padding-top:9px;}
   }
   @media (max-height:530px) and (min-width:651px) { .masthead {height:46px;} }
 """
@@ -977,6 +1114,59 @@ def _viewer_source(source: dict) -> dict:
     return result
 
 
+def _edge_ranks(segments) -> list[int]:
+    from src.agent.geometry.source_naming import geometry_key
+
+    keys = [geometry_key(segment) for segment in segments]
+    ranks = {key: index for index, key in enumerate(sorted(set(keys)), 1)}
+    return [ranks[key] for key in keys]
+
+
+def _ring_edges(rings):
+    return [(v, ring[(i + 1) % len(ring)]) for ring in rings for i, v in enumerate(ring)]
+
+
+def _selection_names(data: dict, geo: dict) -> None:
+    """Public room, face and side-specific opening names, plus selectable segment ranks."""
+    from src.agent.geometry.source_naming import viewer_names
+
+    source = data.get("source_model") or {}
+    parts = geo["visible_wall_parts"]
+    complete = (source.get("schema_version") in ("source_bim_v2", "source_bim_v3") and
+                source.get("floors") and source.get("spaces") and
+                all(f.get("footprint") for f in source["floors"]) and all(s.get("polygon") for s in source["spaces"])
+                and "boundaries" in source and "openings" in source and "opening_hosts" in source
+                and all(o.get("id") in source["opening_hosts"] for o in source["openings"]))
+    if complete:
+        names = viewer_names(data, parts)
+    else:
+        from scripts.tool_scripts.bim_viewer_legacy_names import legacy_viewer_names
+        names = legacy_viewer_names(data, parts, geo["roles"])
+        geo["public_names"]["floors"] = names["floors"]
+        geo["primary_floors"] = names["primary_floors"]
+    geo["public_names"]["spaces"] = names["spaces"]
+    objects = names["objects"]
+    for surface in geo["surfaces"]:
+        name = surface["name"]
+        surface["public_name"] = objects.get(name, name)
+        if name not in parts:
+            surface["edge_ranks"] = _edge_ranks(_ring_edges([surface["verts"], *surface.get("holes", [])]))
+        for i, part in enumerate(parts.get(name, [])):
+            part["public_name"] = names["parts"][name][i]
+            segments = part.get("edge_segments")
+            if segments is None:
+                segments = _ring_edges([part["verts"], *part.get("holes", [])])
+            part["edge_ranks"] = _edge_ranks(segments)
+    for obj in [*geo["windows"], *geo["openings"]]:
+        obj["public_name"] = objects.get(obj["name"], obj["name"])
+        obj["parent_name"] = objects.get(obj["parent"], obj["parent"])
+        obj["edge_ranks"] = _edge_ranks(_ring_edges([obj["verts"]]))
+    for i, region in enumerate(geo["enclosure_regions"]):
+        region["public_name"] = names["regions"][i]
+        region["parent_name"] = region["public_name"].rsplit("_", 1)[0]
+        region["edge_ranks"] = _edge_ranks(_ring_edges([region["verts"], *region.get("holes", [])]))
+
+
 def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | None = None,
                       mesh_path: Path | None = None, locale: str = "zh-CN") -> str:
     three_js = (_VENDOR / "three.min.js").read_text(encoding="utf-8")
@@ -984,29 +1174,40 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     from src.agent.geometry.openings import visible_wall_parts
 
     source = data.get("source_model") or {}
+    coordinate_system = source.get("coordinate_system") or data.get("coordinate_system") or {}
+    north_axis = coordinate_system.get("north_axis", data.get("north_axis"))
+    if isinstance(north_axis, dict):
+        north_axis = north_axis.get("value_deg")
     parts = data["display_surface_parts"] if "display_surface_parts" in data else visible_wall_parts(data)
     part_keys = ("verts", "holes", "duplicate_at_rest", "occluded_by", "edge_segments", "enclosure_condition")
     geo = {
         "locale": "en",
+        "north_axis_deg": north_axis if type(north_axis) in (float, int) else None,
         "messages": viewer_messages(_HTML, _PANEL_HTML, _APP_JS),
         "zones": data.get("zones", []),
-        "surfaces": [_fields(s, ("name", "zone", "type", "obc", "obc_obj", "verts")) for s in data.get("surfaces", ())],
+        "surfaces": [_fields(s, ("name", "zone", "type", "obc", "obc_obj", "verts", "holes")) for s in data.get("surfaces", ())],
         "windows": [_fields(w, ("name", "parent", "verts")) for w in data.get("windows", ())],
         "openings": [_fields(o, ("name", "parent", "verts", "source_opening_id", "kind", "space_id",
                                  "other_space_id", "state", "partner")) for o in data.get("openings", ())],
         "visible_wall_parts": {name: [_fields(p, part_keys) for p in rows] for name, rows in parts.items()},
         "enclosure_regions": [_fields(r, ("boundary_id", "space_id", "condition", "verts", "holes"))
                               for r in data.get("enclosure_regions", ())],
-        "roles": dict(roles if roles is not None else data.get("roles", {})),
+        "roles": dict(roles) if roles is not None else {
+            **{r["name"]: r["role"] for r in data.get("zone_meta", []) if r.get("name") and r.get("role")},
+            **data.get("roles", {})},
         "source_model": _viewer_source(source) if source else None,
     }
     from src.agent.roles import ROOM_TYPES
     geo["room_types"] = room_type_labels(ROOM_TYPES)
     # Coincident core/elevation groups need their old, stable sort order.
-    named_floors = sorted((geo["source_model"] or {}).get("floors", ()), key=lambda f: (f["z_floor"], f["id"]))
+    named_floors = sorted((f for f in (geo["source_model"] or {}).get("floors", ()) if f.get("z_floor") is not None),
+                          key=lambda f: (f["z_floor"], f["id"]))
     geo["public_names"] = {"floors": [
         {"id": f["id"], "name": f"F{i}", "source_name": f.get("name") or f["id"], "z_floor": f["z_floor"]}
         for i, f in enumerate(named_floors, 1)]}
+    _selection_names(data, geo)
+    from src.agent.geometry.viewer_metrics import viewer_metrics
+    geo["metrics"] = viewer_metrics(source)
     if mesh_path is not None:
         from src.agent.geometry.mesh_observation import MeshObservation
         mesh = MeshObservation(mesh_path).viewer_payload(source.get("mesh_frame"))
@@ -1031,7 +1232,7 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
         if not space:
             continue
         indices = [i for i, floor in enumerate(named_floors)
-                   if space["floor_id"] == floor["id"]
+                   if space.get("floor_id") == floor["id"]
                    or sid in source_floors.get(floor["id"], {}).get("spanning_space_ids", [])]
         if indices:
             memberships[zone] = indices

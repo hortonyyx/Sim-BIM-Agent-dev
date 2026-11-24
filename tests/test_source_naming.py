@@ -132,7 +132,8 @@ def test_horizontal_apertures_have_stable_both_side_names_and_render_without_mut
     rendered = build_viewer_html(source_view_geometry(s), title="Horizontal aperture regression")
     markup, payload = rendered.split("window.GEO = ", 1)
     embedded = json.loads(payload.split(";</script>", 1)[0])
-    assert len(embedded["openings"]) == 4
+    assert {o["public_name"] for o in embedded["openings"]} == {
+        name for side in names["opening_sides"].values() for name in side.values()}
     assert "Z01_Ceiling_Opening1" not in markup and "Z02_Floor_Opening1" not in markup
     assert embedded["messages"]["Passage"] == ["Passage", "通道"]
     assert s == before

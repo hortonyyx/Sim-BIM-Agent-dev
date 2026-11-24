@@ -2,6 +2,10 @@
   "schema": 1,
   "default": "fast",
   "modules": {
+    "tests/test_viewer_metrics.py": {
+      "group": "fast",
+      "reason": "Offline projected areas and modeled volumes for zone and floor inspection cards"
+    },
     "tests/test_viewer_publication.py": {
       "group": "targeted",
       "reason": "Atomic, digest-bound publication of a single offline Sim-BIM viewer"
