@@ -152,7 +152,8 @@ def test_mesh_frame_and_overlay_reach_stdio_and_preserve_saved_geometry(tmp_path
             html = (run/candidate/'viewer.html').read_text(encoding='utf-8')
             start = html.index('window.GEO = ') + len('window.GEO = ')
             embedded = json.loads(html[start:html.index(';</script>', start)])
-            assert embedded['textured_mesh']['mesh_frame'] == source['mesh_frame']
+            assert embedded['textured_mesh']['mesh_frame'] == {
+                key: source['mesh_frame'][key] for key in ('mesh_sha256', 'yaw_degrees', 'translation_m')}
             assert embedded['textured_mesh']['face_count'] == 12
             assert embedded['source_model']['source_model_sha256'] == source['source_model_sha256']
             for key in ('spaces','boundaries','openings','connections'):
@@ -188,7 +189,8 @@ def test_precision_audit_preserves_admitted_mesh_and_viewer(tmp_path, monkeypatc
     html = (path/'viewer.html').read_text(encoding='utf-8')
     start = html.index('window.GEO = ') + len('window.GEO = ')
     embedded = json.loads(html[start:html.index(';</script>', start)])
-    assert embedded['textured_mesh']['mesh_frame'] == value['mesh_frame']
+    assert embedded['textured_mesh']['mesh_frame'] == {
+        key: value['mesh_frame'][key] for key in ('mesh_sha256', 'yaw_degrees', 'translation_m')}
     assert embedded['textured_mesh']['face_count'] == 12
     assert (path/'viewer.html').read_bytes() == viewer_bytes
     assert (path/'source_model.json').read_bytes() == source_bytes

@@ -130,7 +130,11 @@ def test_horizontal_apertures_have_stable_both_side_names_and_render_without_mut
     assert set(names["opening_sides"]["south"].values()) == {"Z01_Ceiling_Opening1", "Z02_Floor_Opening1"}
     assert set(names["opening_sides"]["north"].values()) == {"Z01_Ceiling_Opening2", "Z02_Floor_Opening2"}
     rendered = build_viewer_html(source_view_geometry(s), title="Horizontal aperture regression")
-    assert "Z01_Ceiling_Opening1" in rendered and "Z02_Floor_Opening1" in rendered
+    markup, payload = rendered.split("window.GEO = ", 1)
+    embedded = json.loads(payload.split(";</script>", 1)[0])
+    assert len(embedded["openings"]) == 4
+    assert "Z01_Ceiling_Opening1" not in markup and "Z02_Floor_Opening1" not in markup
+    assert embedded["messages"]["Passage"] == ["Passage", "通道"]
     assert s == before
     s["openings"].reverse()
     for opening in s["openings"]:
@@ -338,7 +342,7 @@ def test_delivery_and_viewer_prose_use_public_names_but_keep_saved_evidence(tmp_
     else:
         assert "BIM 候选与实际检查" in page and ">打开模型</a>" in page
         assert "未关联此开口的高度依据" in page and ">West</td>" not in page
-    # Evidence stays in the localized report; the viewer carries the saved source as data.
+    # The localized audit report retains the original evidence.
     assert f'Check {names["openings"]["shared"]} between {names["spaces"]["west"]} and {names["spaces"]["east"]}.' in page
     assert f'Room {names["spaces"]["west"]} on F1; window {names["openings"]["high"]}' in page
     assert "&lt;unconfirmed&gt;" in page and "images/west.png" in page

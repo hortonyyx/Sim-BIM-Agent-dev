@@ -7,7 +7,7 @@ import json
 import pytest
 from PIL import Image
 
-from scripts.tool_scripts.render_geometry_viewer import build_viewer_html, wall_properties
+from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
 from src.agent.geometry_model.parse import parse_geometry
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.component_attributes import thickness_record, validate_component_attributes
@@ -301,26 +301,31 @@ def test_floor_assembly_rebinds_duplicate_local_ids_and_retains_values_on_reload
     assert bind_wall_readings(source, reloaded["wall_readings"])["component_attributes"] == source["component_attributes"]
 
 
-def test_viewer_shows_known_unknown_and_conflicting_values_with_basis(example):
+def test_wall_thickness_evidence_stays_in_workspace_source(example):
     plan, _, metadata, source = example
     source.update(bind_wall_readings(source, [wall_reading_input(plan, metadata)]))
     source["source_model_sha256"] = _digest({k: v for k, v in source.items() if k != "source_model_sha256"})
-    properties = wall_properties(source)
-    known = next(k for k, v in properties.items() if v["thickness_m"] == .2)
-    unknown = next(v for v in properties.values() if v["thickness_m"] is None)
-    assert properties[known]["basis"] == [_known()["basis"]]
-    assert properties[known]["reference_side"] == "negative_face"
-    assert properties[known]["evidence_status"] == "observed"
-    assert unknown["evidence_status"] == "unknown"
+    reading = _known()
+    known = [r for r in source["wall_references"] if r["evidence_status"] == "observed"]
+    unknown = [r for r in source["wall_references"] if r["evidence_status"] == "unknown"]
+    assert known and unknown
+    for row in known:
+        assert row["thickness_m"] == reading["thickness_m"]
+        assert row["reference_side"] == reading["reference_side"]
+        assert row["reference_basis"] == reading["basis"]
+        assert reading["source_refs"][0] in row["source_refs"]
+    assert all(r["thickness_m"] is None and r["reference_side"] == "unknown" for r in unknown)
+    assert all(r["reference_basis"] and reading["source_refs"][0] not in r["source_refs"] for r in unknown)
+    attributes = source["component_attributes"]
+    assert {bid for r in attributes for bid in r["boundary_ids"]} == {bid for r in known for bid in r["boundary_ids"]}
+    assert all(r["thickness_m"] == .2 and r["basis"] == reading["basis"] for r in attributes)
+
     page = build_viewer_html(source_view_geometry(source))
-    start = page.index("window.GEO = ") + len("window.GEO = ")
-    embedded = json.loads(page[start:page.index(";</script>", start)])
-    assert embedded["wall_properties"] == properties
-    for record in source["component_attributes"]:
-        if known in record["boundary_ids"]:
-            record["thickness_m"] = .25
-    assert wall_properties(source)[known]["conflict"]
-    assert wall_properties(source)[known]["thickness_m"] is None
+    payload = page.split("window.GEO = ", 1)[1].split(";</script>", 1)[0]
+    assert json.loads(payload)["surfaces"]
+    for field in ("wall_properties", "wall_references", "component_attributes", "reference_basis"):
+        assert f'"{field}"' not in payload
+    assert reading["basis"] not in payload and reading["source_refs"][0] not in payload
 
 
 def test_tool_build_and_assembly_keep_thickness_without_model_calls(tmp_path):

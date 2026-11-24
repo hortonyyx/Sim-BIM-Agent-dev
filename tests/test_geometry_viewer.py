@@ -97,7 +97,9 @@ def test_enclosure_projection_uses_one_viewer_only_aid_for_open_and_unknown():
     html = rgv.build_viewer_html(data, title="semi-open")
     start = html.index("window.GEO = ") + len("window.GEO = ")
     embedded = json.loads(html[start:html.index(";</script>", start)])
-    assert embedded["enclosure_regions"] == data["enclosure_regions"]
+    assert embedded["enclosure_regions"] == [
+        {k: v for k, v in row.items() if k in ("boundary_id", "space_id", "condition", "verts", "holes")}
+        for row in data["enclosure_regions"]]
     assert embedded["visible_wall_parts"]["w1"][1]["enclosure_condition"] == "unknown"
     assert "LineDashedMaterial" in html and "ENCLOSURE_COLOR" in html and "ENCLOSURE_OPACITY" in html
     assert "allPickables().filter" in html and "raycaster.params.Line.threshold" in html
@@ -192,6 +194,20 @@ def test_geometry_cannot_break_out_of_script():
     assert "\\u003c/script\\u003e" in html  # the evil close-tag was escaped
 
 
+def test_public_html_omits_workspace_evidence_from_the_embedded_model():
+    data = copy.deepcopy(_GEO)
+    private = "private-evidence-for-reconstruction-qa"
+    source = data["source_model"]
+    source.update(validation={"note": private}, generation={"provenance": private}, corrections=[private])
+    for group in ("spaces", "floors", "boundaries", "openings"):
+        source[group][0].update(source_refs=[private], assumptions=[private])
+    data["surfaces"][0]["original_observation"] = private
+    data["enclosure_regions"] = [{"boundary_id": "w1", "space_id": "Z1", "condition": "unknown",
+                                  "verts": data["surfaces"][0]["verts"], "source_refs": [private]}]
+    assert private not in rgv.build_viewer_html(data)
+    assert source["spaces"][0]["source_refs"] == [private]
+
+
 def test_model_title_cannot_change_the_viewer_brand_or_inject_markup():
     html = rgv.build_viewer_html(_GEO, title="<b>&x")
     assert "<title>Sim-BIM</title>" in html and "<b>&x" not in html
@@ -273,7 +289,9 @@ def test_viewer_uses_declared_source_floors():
     html = rgv.build_viewer_html(_GEO, title="source floors")
     start = html.index("window.GEO = ") + len("window.GEO = ")
     geo = json.loads(html[start:html.index(";</script>", start)])
-    assert geo["source_model"] == _GEO["source_model"]
+    floor_fields = ("id", "name", "z_floor", "height")
+    assert geo["source_model"]["floors"] == [
+        {key: original[key] for key in floor_fields} for original in _GEO["source_model"]["floors"]]
     assert [row["id"] for row in geo["public_names"]["floors"]] == ["F1", "F2"]
     assert geo["floor_memberships"] == {"Z1": [0], "Z2": [1]}
 
@@ -288,6 +306,80 @@ def test_discover_roles_reads_only_display_geometry_metadata(tmp_path):
     assert rgv.discover_roles(path) == {"Z1": "office", "Z2": "meeting"}
     path.write_text(json.dumps({"zones": ["Z1", "Z2"]}), encoding="utf-8")
     assert rgv.discover_roles(path) == {}
+
+
+@pytest.mark.parametrize("run_locale", ["en", "zh-CN"])
+def test_viewer_starts_in_english_and_embeds_the_bilingual_room_catalog(run_locale):
+    model = copy.deepcopy(_GEO)
+    model["roles"] = {"Z1": "办公室", "Z2": "会议室"}
+    model["source_model"]["spaces"][0]["name"] = "101"
+    model["source_model"]["spaces"][1]["name"] = "Z02_F2_Meeting"
+    page = rgv.build_viewer_html(model, locale=run_locale)
+    markup = page.split("<script>", 1)[0]
+    payload = json.loads(page.split("window.GEO = ", 1)[1].split(";</script>", 1)[0])
+    assert '<html lang="en"' in markup and '>All floors<' in markup
+    assert payload["locale"] == "en"
+    assert payload["room_names"] == {"Z1": {"name": "101", "role": "unknown"}}
+    assert payload["roles"] == {"Z1": "office", "Z2": "conference/meeting/multipurpose"}
+    assert payload["messages"]["select by"] == ["Select by", "选择对象"]
+    assert payload["messages"]["Elevation groups"] == ["Elevation groups", "高程分组"]
+    for role in ["office", "office/enclosed", "corridor", "conference/meeting/multipurpose",
+                 "lounge/breakroom", "shaft", "electrical/mechanical", "retail", "restroom", "stairwell", "lobby"]:
+        labels = payload["room_types"][role]
+        assert labels["label_en"].isascii() and not labels["label_zh"].isascii()
+
+
+def test_live_selection_only_exposes_architectural_fields_in_both_languages(tmp_path):
+    model = copy.deepcopy(_GEO)
+    model["roles"] = {"Z1": "办公室", "Z2": "会议室"}
+    model["source_model"]["spaces"][0]["name"] = "101"
+    page = rgv.build_viewer_html(model)
+    payload = page.split("window.GEO = ", 1)[1].split(";</script>", 1)[0]
+    script = rgv.app_js()
+
+    def section(start, end):
+        return script[script.index(start):script.index(end)]
+
+    inspector = section("  const surfaceByName=", "  function handleClick(")
+    output = _node_result(tmp_path, "const GEO="+payload+";"+r"""
+const el={style:{},replaceChildren(){}}, $=()=>el, row=(k,v)=>JSON.stringify([k,v])+'\n';
+let inspected=null;
+const SURF=GEO.surfaces,OPENS=[{name:'test-open',kind:'door'}],SOURCE=GEO.source_model;
+const SOURCE_MAP={},SOURCE_BOUNDARIES={},SOURCE_SPACES={},ZONES=GEO.zones;
+const zoneFloors={Z1:[0],Z2:[1]},zoneFloor={Z1:0,Z2:1},verticalCore=()=>false;
+const floorName=i=>['G','1F'][i],ROOM_TYPES=GEO.room_types;
+""" + section("  let locale = ", "  const SURF =")
+        + section("  function roleLabel(", "  // Geometry is drawn")
+        + inspector + r"""
+const result={};
+for(const lang of ['en','zh-CN']){
+  locale=lang;
+  const cases=[
+    ['zone',{zone:'Z1',floor:0}],
+    ['zone',{zone:'Z2',floor:1}],
+    ['floor',{zone:'Z1',floor:0}],
+    ['surface',{kind:'surface',zone:'Z1',floor:0,type:'Wall',name:'w1'}],
+    ['surface',{kind:'opening',zone:'Z1',floor:0,name:'test-open'}],
+    ['surface',{kind:'window',zone:'Z1',floor:0,name:'win1'}],
+    ['surface',{kind:'enclosure-region',zone:'Z1',floor:0,condition:'open'}],
+    ['edge',{kind:'surface',zone:'Z1',floor:0,name:'w1'}]
+  ];
+  result[lang]=cases.map(([mode,item])=>{showInspection(mode,item,0);
+    return el.innerHTML.trim().split('\n').map(x=>JSON.parse(x));});
+}
+console.log(JSON.stringify(result));
+""")
+    for lang, fields in [("en", ["Name", "Storey", "Function"]), ("zh-CN", ["名称", "楼层", "功能"])]:
+        for selection in output[lang]:
+            assert [k for k, v in selection] == fields
+            assert all(v for k, v in selection)
+        assert output[lang][0][0][1] == "101"
+    assert output["en"][0][-1][1] == "Office"
+    assert output["zh-CN"][0][-1][1] == "办公 · Office"
+    assert output["en"][1][0][1] == "Meeting / multipurpose room"
+    assert output["en"][1][1][1] == "1F"
+    assert [selection[-1][1] for selection in output["en"][3:]] == [
+        "Exterior wall", "Door", "Window", "Open boundary", "Exterior wall · Edge"]
 
 
 def test_app_js_parses_with_node(tmp_path):
@@ -308,7 +400,7 @@ def _node_result(tmp_path, code):
         pytest.skip("node is required to execute viewer geometry")
     script = tmp_path / "viewer_properties.cjs"
     script.write_text(code, encoding="utf-8")
-    result = subprocess.run([node, str(script)], capture_output=True, text=True, check=True)
+    result = subprocess.run([node, str(script)], capture_output=True, encoding="utf-8", check=True)
     return json.loads(result.stdout)
 
 

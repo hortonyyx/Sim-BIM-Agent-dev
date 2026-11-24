@@ -83,8 +83,6 @@ _APP_JS = r"""
   const ROOM_TYPES = GEO.room_types || {};
   const ROLE_COLORS = Object.fromEntries(Object.entries(ROOM_TYPES).map(([k,v])=>[k,parseInt(v.color.slice(1),16)]));
   const ROLE_DEFAULT = ROLE_COLORS.unknown ?? 0xc9ced4;
-  const NAMES = GEO.public_names || {};
-  const objectName = n => (NAMES.objects||{})[n] || n;
   function roleLabel(role, bilingual=true){
     const type=ROOM_TYPES[role] || ROOM_TYPES.unknown;
     return locale==='en' ? type.label_en : type.label_zh+(bilingual?' · '+type.label_en:'');
@@ -115,7 +113,7 @@ _APP_JS = r"""
     const b=[]; for(const z of u) if(!b.length||Math.abs(z-b[b.length-1])>0.3) b.push(z); return b.length?b:[0]; }
   function nearestBase(z,bases){ let bi=0,bd=1e9; bases.forEach((b,i)=>{const d=Math.abs(z-b); if(d<bd){bd=d;bi=i;}}); return bi; }
   const floorSurf = SURF.filter(s => s.type === 'Floor');
-  const NAMED_FLOORS = NAMES.floors || [];
+  const NAMED_FLOORS = GEO.floors || GEO.public_names?.floors || [];
   const BASES = NAMED_FLOORS.length ? NAMED_FLOORS.map(f=>f.z_floor) : cluster((floorSurf.length ? floorSurf : SURF).map(zmin));
   const sourceFloor = i => (SOURCE?.floors||[]).find(f=>f.id===NAMED_FLOORS[i]?.id);
   const floorName = i => sourceFloor(i)?.name || (locale==='en' ? 'Floor '+(i+1) : '第 '+(i+1)+' 层');
@@ -283,7 +281,7 @@ _APP_JS = r"""
     // lighting wash that made horizontal (roof/floor) faces read near-white. Edges keep form.
     const m=new THREE.MeshBasicMaterial({side:THREE.DoubleSide, transparent:true, opacity:1});
     const parts = Object.prototype.hasOwnProperty.call(WALL_PARTS,s.name) ? WALL_PARTS[s.name] : [{verts:s.verts,holes:[]}];
-    parts.forEach((part,partIndex)=>{
+    parts.forEach(part=>{
       const dup=part.duplicate_at_rest ?? isDup(s);
       const enclosureCondition=part.enclosure_condition || 'physical';
       // Unknown patches are represented by the enclosure-region helper below.
@@ -292,14 +290,12 @@ _APP_JS = r"""
       if(enclosureCondition==='unknown') return;
       const mesh=new THREE.Mesh(ringGeom(part.verts,part.holes||[]), m.clone());
       mesh.userData={zone, floor:fi, type:s.type||'Wall', name:s.name, kind:'surface', dup,
-        occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined),
-        enclosureCondition, publicName:(NAMES.parts||{})[s.name]?.[partIndex] || objectName(s.name),
-        area:polyArea(part.verts)-(part.holes||[]).reduce((sum,r)=>sum+polyArea(r),0)};
+        occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined)};
       surfMeshes.push(mesh); root.add(mesh);
       const segments=part.edge_segments ?? [part.verts,...(part.holes||[])].flatMap(r=>r.map((v,i)=>[v,r[(i+1)%r.length]]));
       const em=new THREE.LineSegments(segmentGeom(segments), new THREE.LineBasicMaterial({color:0x303030}));
       em.userData={...mesh.userData}; edgeSegs.push(em); root.add(em);
-      surfaceEdges.push({segments,userData:mesh.userData,name:s.name});
+      surfaceEdges.push({segments,userData:mesh.userData});
     });
     logicalLines.push(dashedEdge(s.verts,LOGICAL_COLOR,radius*0.018,radius*0.012,
       {zone,floor:fi,kind:'logical',dup:false}));
@@ -309,7 +305,7 @@ _APP_JS = r"""
   function enclosureRegionKey(ring){
     return ring.map(v=>v.map(x=>Math.round(x*1e6)/1e6).join(',')).sort().join('|');
   }
-  ENC_REGIONS.forEach((r,regionIndex)=>{
+  ENC_REGIONS.forEach(r=>{
     if(!(r.verts||[]).length) return;
     const sourceBoundary=SOURCE_BOUNDARIES[r.boundary_id] || {};
     const zone=r.space_id || sourceBoundary.space_id || '?';
@@ -317,10 +313,7 @@ _APP_JS = r"""
     const key=enclosureRegionKey(r.verts), owners=enclosureRegionKeys.get(key)||[], duplicate=owners.length>0;
     enclosureRegionKeys.set(key,[...owners,zone]);
     const userData={zone,floor:fi,kind:'enclosure-region',condition:r.condition,dup:duplicate,
-      occludedBy:owners,
-      publicName:(NAMES.regions||[])[regionIndex] || objectName(r.boundary_id),
-      boundaryId:r.boundary_id,area:polyArea(r.verts),sourceRefs:r.source_refs||[],assumptions:r.assumptions||[],
-      evidenceKind:r.evidence_kind,baseColor:ENCLOSURE_COLOR};
+      occludedBy:owners,boundaryId:r.boundary_id,baseColor:ENCLOSURE_COLOR};
     // This translucent face is a viewer-only aid. It makes an open extent easy
     // to see without restoring a physical wall, changing volume, or connectivity.
     const material=new THREE.MeshBasicMaterial({color:ENCLOSURE_COLOR,side:THREE.DoubleSide,
@@ -333,7 +326,7 @@ _APP_JS = r"""
     const zone=zoneOfWindow(w), sv=popOut(w.verts, zone);  // proud of wall → clean + pickable
     const m=new THREE.MeshStandardMaterial({color:WINDOW_COLOR, side:THREE.DoubleSide, roughness:0.4});
     const mesh=new THREE.Mesh(ringGeom(sv), m);
-    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), type:'Window', name:w.name, parent:w.parent, kind:'window', dup:false, area:polyArea(w.verts)};
+    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, kind:'window', dup:false};
     winMeshes.push(mesh); root.add(mesh);
     // Comparison contours use the exact source geometry, without the picking offset.
     const edge=new THREE.LineSegments(edgeGeom(w.verts),new THREE.LineBasicMaterial({color:0x087d3b}));
@@ -345,10 +338,9 @@ _APP_JS = r"""
     const m=new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide,transparent:true,
       opacity:o.state==='closed'?0.7:0.12,depthWrite:false});
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
-    mesh.userData={zone,floor:zoneFloor[zone]||0,type:o.kind==='door'?'Door':'Passage',name:o.name,
+    mesh.userData={zone,floor:zoneFloor[zone]||0,name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
-      parent:o.parent,kind:'opening',dup,area:polyArea(o.verts),baseColor:color,sourceId:o.source_opening_id,
-      spaceId:o.space_id,otherSpaceId:o.other_space_id,state:o.state};
+      kind:'opening',dup,baseColor:color,sourceId:o.source_opening_id};
     openingMeshes.push(mesh);root.add(mesh);
     const em=new THREE.LineSegments(edgeGeom(o.verts),new THREE.LineBasicMaterial({color}));
     em.userData={...mesh.userData};edgeSegs.push(em);root.add(em);
@@ -398,10 +390,6 @@ _APP_JS = r"""
     referenceMeshes.forEach(m=>{m.material.clippingPlanes=p; m.material.needsUpdate=true;});
     edgeSegs.concat(logicalLines,enclosureLines,windowEdges).forEach(e=>{e.material.clippingPlanes=p; e.material.needsUpdate=true;}); }
 
-  // ---- geometric measures (on TRUE geometry) ----
-  function polyArea(r){ let nx=0,ny=0,nz=0; const n=r.length;  // Newell → planar polygon area
-    for(let i=0;i<n;i++){ const a=r[i],b=r[(i+1)%n]; nx+=(a[1]-b[1])*(a[2]+b[2]); ny+=(a[2]-b[2])*(a[0]+b[0]); nz+=(a[0]-b[0])*(a[1]+b[1]); }
-    return Math.hypot(nx,ny,nz)/2; }
   // ---- select-by modes + uniform-colour selection ----
   let selected=new Set(); const selGroup=new THREE.Group(); scene.add(selGroup);
   function refreshColors(){
@@ -471,16 +459,14 @@ _APP_JS = r"""
       const d=(sx-cx)**2+(sy-cy)**2; if(d<bd && (thru || !occluded(w))){ bd=d; best=w; } }
     return best; }
 
-  // ---- edge select (screen-space nearest segment → length) ----
-  const EDGES=[];  // {a,b: true world Vector3, zone, len, floor, dup, kind}
-  function pushEdges(verts, zone, floor, dup, kind, name){ for(let i=0;i<verts.length;i++){ const a=verts[i], b=verts[(i+1)%verts.length];
-    EDGES.push({a:new THREE.Vector3(a[0],a[1],a[2]), b:new THREE.Vector3(b[0],b[1],b[2]), zone, floor, dup, kind,
-      publicName:(NAMES.edges||{})[name]?.[i] || objectName(name)+"_Edge"+(i+1), parentName:objectName(name), sourceName:name,
-      len:Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])}); } }
-  surfaceEdges.forEach(({segments,userData:u,name})=>segments.forEach(([a,b],i)=>{
-    EDGES.push({...u,a:new THREE.Vector3(...a),b:new THREE.Vector3(...b),
-      publicName:u.publicName+'_Edge'+(i+1),parentName:objectName(name),sourceName:name,
-      len:Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])});
+  // ---- edge selection on true geometry ----
+  const EDGES=[];
+  function pushEdges(verts, zone, floor, dup, kind, name){
+    verts.forEach((v,i)=>EDGES.push({a:new THREE.Vector3(...v),b:new THREE.Vector3(...verts[(i+1)%verts.length]),
+      zone,floor,dup,kind,name}));
+  }
+  surfaceEdges.forEach(({segments,userData})=>segments.forEach(([a,b])=>{
+    EDGES.push({...userData,a:new THREE.Vector3(...a),b:new THREE.Vector3(...b)});
   }));
   WINS.forEach(w=>{ const z=zoneOfWindow(w); pushEdges(w.verts, z, zoneFloor[z]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), false, 'window', w.name); });
   OPENS.forEach(o=>{const z=_surfZoneByName[o.parent], start=EDGES.length;
@@ -520,7 +506,7 @@ _APP_JS = r"""
   const openingByName=new Map(OPENS.map(o=>[o.name,o]));
   const sourceOpenings=new Map((SOURCE?.openings||[]).map(o=>[o.id,o]));
   function component(u){
-    const key=u.name || u.sourceName;
+    const key=u.name;
     const surface=surfaceByName.get(key);
     if(u.kind==='window') return 'Window';
     if(u.kind==='opening') return openingByName.get(key)?.kind==='door' ? 'Door' : 'Passage';
@@ -556,7 +542,7 @@ _APP_JS = r"""
     return touching.length ? touching : floors;
   }
   function authoredComponent(u){
-    const key=u.name || u.sourceName;
+    const key=u.name;
     const source=(u.kind==='window' || u.kind==='opening') ?
       sourceOpenings.get(u.sourceId || SOURCE_MAP.windows?.[key] || SOURCE_MAP.openings?.[key] || key) :
       SOURCE_BOUNDARIES[u.boundaryId || SOURCE_MAP.surfaces?.[key] || key];
@@ -971,31 +957,23 @@ def discover_roles(bg_path: Path) -> dict:
     }
 
 
-def wall_properties(source: dict) -> dict:
-    """Project optional thickness evidence for selection, including unknowns.
+def _fields(record: dict, keys: tuple) -> dict:
+    return {key: record[key] for key in keys if key in record}
 
-    Component edits and reading evidence can coexist. If they disagree, expose
-    that conflict instead of silently choosing one value in the viewer.
-    """
-    result = {}
-    records = [*source.get("component_attributes", []), *source.get("wall_references", [])]
-    for boundary in source.get("boundaries", []):
-        if boundary.get("geometry_type") != "wall" or boundary.get("kind") != "physical":
-            continue
-        rows = [row for row in records
-                if boundary["id"] in row.get("boundary_ids", [row.get("boundary_id")])]
-        values = {row["thickness_m"] for row in rows if row.get("thickness_m") is not None}
-        statuses = {row["evidence_status"] for row in rows if row.get("evidence_status")}
-        sides = {row["reference_side"] for row in rows if row.get("reference_side")}
-        result[boundary["id"]] = {
-            "thickness_m": next(iter(values)) if len(values) == 1 else None,
-            "conflict": len(values) > 1,
-            "evidence_status": next(iter(statuses)) if len(statuses) == 1 else ("unknown" if not values else None),
-            "reference_side": next(iter(sides)) if len(sides) == 1 else "unknown",
-            "basis": list(dict.fromkeys(row.get("basis") or row.get("reference_basis")
-                                        for row in rows if row.get("basis") or row.get("reference_basis"))),
-            "source_refs": list(dict.fromkeys(ref for row in rows for ref in row.get("source_refs", []))),
-        }
+
+def _viewer_source(source: dict) -> dict:
+    """Keep model identity, counts and selection metadata without packaging the run journal."""
+    result = _fields(source, ("schema_version", "source_model_sha256"))
+    result["derived"] = _fields(source.get("derived", {}), ("zones", "surfaces", "windows", "openings"))
+    labels = ("name", "display_name", "label")
+    for group, fields in {
+        "floors": ("id", "name", "z_floor", "height"),
+        "spaces": ("id", "floor_id", "role", "enclosure"),
+        "boundaries": ("id", "space_id", "enclosure", *labels),
+        "openings": ("id", "kind", *labels),
+        "connections": ("opening_id", "kind", "space_ids", "exterior", "state"),
+    }.items():
+        result[group] = [_fields(row, fields) for row in source.get(group, ())]
     return result
 
 
@@ -1005,31 +983,38 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     orbit_js = (_VENDOR / "OrbitControls.js").read_text(encoding="utf-8")
     from src.agent.geometry.openings import visible_wall_parts
 
+    source = data.get("source_model") or {}
+    parts = data["display_surface_parts"] if "display_surface_parts" in data else visible_wall_parts(data)
+    part_keys = ("verts", "holes", "duplicate_at_rest", "occluded_by", "edge_segments", "enclosure_condition")
     geo = {
         "locale": "en",
         "messages": viewer_messages(_HTML, _PANEL_HTML, _APP_JS),
         "zones": data.get("zones", []),
-        "surfaces": data.get("surfaces", []),
-        "windows": data.get("windows", []),
-        "openings": data.get("openings", []),
-        "visible_wall_parts": data["display_surface_parts"] if "display_surface_parts" in data else visible_wall_parts(data),
-        "enclosure_regions": data.get("enclosure_regions", []),
+        "surfaces": [_fields(s, ("name", "zone", "type", "obc", "obc_obj", "verts")) for s in data.get("surfaces", ())],
+        "windows": [_fields(w, ("name", "parent", "verts")) for w in data.get("windows", ())],
+        "openings": [_fields(o, ("name", "parent", "verts", "source_opening_id", "kind", "space_id",
+                                 "other_space_id", "state", "partner")) for o in data.get("openings", ())],
+        "visible_wall_parts": {name: [_fields(p, part_keys) for p in rows] for name, rows in parts.items()},
+        "enclosure_regions": [_fields(r, ("boundary_id", "space_id", "condition", "verts", "holes"))
+                              for r in data.get("enclosure_regions", ())],
         "roles": dict(roles if roles is not None else data.get("roles", {})),
-        "source_model": data.get("source_model"),
+        "source_model": _viewer_source(source) if source else None,
     }
     from src.agent.roles import ROOM_TYPES
-    from src.agent.geometry.source_naming import viewer_names
     geo["room_types"] = room_type_labels(ROOM_TYPES)
-    geo["public_names"] = viewer_names(data, geo["visible_wall_parts"])
-    source = data.get("source_model") or {}
+    # Coincident core/elevation groups need their old, stable sort order.
+    named_floors = sorted((geo["source_model"] or {}).get("floors", ()), key=lambda f: (f["z_floor"], f["id"]))
+    geo["public_names"] = {"floors": [
+        {"id": f["id"], "name": f"F{i}", "source_name": f.get("name") or f["id"], "z_floor": f["z_floor"]}
+        for i, f in enumerate(named_floors, 1)]}
     if mesh_path is not None:
         from src.agent.geometry.mesh_observation import MeshObservation
-        geo["textured_mesh"] = MeshObservation(mesh_path).viewer_payload(source.get("mesh_frame"))
-    geo["wall_properties"] = wall_properties(source)
+        mesh = MeshObservation(mesh_path).viewer_payload(source.get("mesh_frame"))
+        mesh["mesh_frame"] = _fields(mesh["mesh_frame"], ("mesh_sha256", "yaw_degrees", "translation_m"))
+        geo["textured_mesh"] = mesh
     spaces = {row["id"]: row for row in source.get("spaces", [])}
     source_floors = {row["id"]: row for row in source.get("floors", [])}
     zone_map = source.get("derived", {}).get("zones", {})
-    named_floors = geo["public_names"]["floors"]
     memberships = {}
     room_names = {}
     for zone in geo["zones"]:
