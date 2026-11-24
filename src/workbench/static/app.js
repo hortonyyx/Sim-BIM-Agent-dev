@@ -132,7 +132,7 @@ function renderRun() {
   if (!run) return;
   panel.classList.toggle('error',run.status==='failed'); panel.append(el('strong','',t(active && !alreadyRunning ? 'previousRunning' : run.status)));
   const activity=el('a','link-button',t('activity'));
-  activity.href=activityUrl(run.id); panel.append(activity);
+  activity.href=activityUrl(run.id,active); panel.append(activity);
   if (run.message) {
     const details=el('details','hint'); details.append(el('summary','',t('diagnostic')),el('p','',run.message)); panel.append(details);
   }
