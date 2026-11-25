@@ -23,7 +23,7 @@
     "-m",
     "src.agent.version_fingerprints"
   ],
-  "current_runtime_version": "runtime-v70-20261125",
+  "current_runtime_version": "runtime-v71-20261125",
   "current_domain_version": "domain-v201-20261125",
   "runtime_versions": {
     "runtime-v46-20261101": {
@@ -7261,6 +7261,360 @@
         "src/workbench/static/viewer.html": {
           "kind": "runtime",
           "sha256": "1a63137d7abf7fa287b7623d9e31d8230b07e8f1d802ce2200a11f93cc472c43"
+        },
+        "src/workbench/storage.py": {
+          "kind": "runtime",
+          "sha256": "c195af4eb73f02fd4f167d0e47412b322bd795ba41b53bccc640697dd382559f"
+        },
+        "src/workbench/trace.py": {
+          "kind": "runtime",
+          "sha256": "69db7857c4c4900908a0e682a000579e021b794b1eb4203e576ce7046ae5bc29"
+        },
+        "uv.lock": {
+          "kind": "runtime",
+          "sha256": "a9c71210eb87584abc2340b1abc89709cee01e5004a46b9cc7f9f4cf3b18968b"
+        }
+      }
+    },
+    "runtime-v71-20261125": {
+      "source_commit": "d1ac3e6070a507d23118f36c030b86ac18d9bc3e",
+      "coverage": "automatic_directories",
+      "files": {
+        "AI_agent/workflow/configs/deepseek_harness.yml": {
+          "kind": "runtime",
+          "sha256": "69fd2ff44ae4402f24e569332eec598f12fa629841b0df978f50bb1d2f7e8339"
+        },
+        "pyproject.toml": {
+          "kind": "runtime",
+          "sha256": "ba07678b7889a35f0ed4e35cd6eef02e1fcd2e43ece37930f65f0cfa5cc49e96"
+        },
+        "src/__init__.py": {
+          "kind": "runtime",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "src/agent_runtime/__init__.py": {
+          "kind": "runtime",
+          "sha256": "4918215bfac9a0974a2600798d987f7cf83c5b9bd4c6dc64d2b814ddde1bb8bc"
+        },
+        "src/agent_runtime/accounting.py": {
+          "kind": "runtime",
+          "sha256": "e00b1efc927a4d3de7ac796a9076757f232b64339bf09d52a5796e8a143afca1"
+        },
+        "src/agent_runtime/adapter.py": {
+          "kind": "runtime",
+          "sha256": "247752329ca7dbd45cb058b9a386426b331dce22801093c76fd869928bb56211"
+        },
+        "src/agent_runtime/agent_registry.py": {
+          "kind": "runtime",
+          "sha256": "25eda359e48aa353dc6b963673f11650bdf4c7c2c4eec4f744d1bb62359d2ebe"
+        },
+        "src/agent_runtime/anthropic.py": {
+          "kind": "runtime",
+          "sha256": "6dfdf4b548232ed77cb9ba4d1a26ca737a2322cb3edfb10bccb2a1373e828e06"
+        },
+        "src/agent_runtime/anthropic_binding.py": {
+          "kind": "runtime",
+          "sha256": "7a7213186683cbd7a607d78f00c469a7dcec0d201cdc51ed44ac6fc2418431c1"
+        },
+        "src/agent_runtime/budget.py": {
+          "kind": "runtime",
+          "sha256": "e31d1fef46efd0a346fa70ae06beb056fa8074c3aa7207ddbf45c96acf224ae6"
+        },
+        "src/agent_runtime/budget_projection.py": {
+          "kind": "runtime",
+          "sha256": "d6a95640de2215a53ef7b8ceba34327b0cbd6dbedc02fb66b1fa3bc43f9eb267"
+        },
+        "src/agent_runtime/budget_recovery.py": {
+          "kind": "runtime",
+          "sha256": "15306934e24c72c93a01ce0d7919f4e8a1e42adc703a12303532de99f2bc8ab8"
+        },
+        "src/agent_runtime/call_quota.py": {
+          "kind": "runtime",
+          "sha256": "9e0832b7ce16c3b80a9a30c42910400e67fbb87eac4dc5abed63d7d23ddd2dde"
+        },
+        "src/agent_runtime/connections.py": {
+          "kind": "runtime",
+          "sha256": "217c9c5d25a8c84211776284ead34295355fd6db24471d3a2d5647c6e5822c78"
+        },
+        "src/agent_runtime/context.py": {
+          "kind": "runtime",
+          "sha256": "ec30feee8e07549c4ba3428385f4556bbac00b4f6eb5cca9f65de31613b400ad"
+        },
+        "src/agent_runtime/context_continuation.py": {
+          "kind": "runtime",
+          "sha256": "1d458f111fe611c419cf52e05df0e8544e4c713afb1123243f21ba57f1270c59"
+        },
+        "src/agent_runtime/continuation.py": {
+          "kind": "runtime",
+          "sha256": "6b00abb573e3ad215d5b34b6d459b2dcf47ce06ff1e4353807f58cdaeadaa167"
+        },
+        "src/agent_runtime/control.py": {
+          "kind": "runtime",
+          "sha256": "b59e36be6cf4ed7fe97cec0b630704363fe4b9e8543bee49fafa2f12792a876b"
+        },
+        "src/agent_runtime/dispatch.py": {
+          "kind": "runtime",
+          "sha256": "b6086b8ab216879dbe95797fa8c93aee2d0ed97769fbe5653e4eb89608001295"
+        },
+        "src/agent_runtime/estimation.py": {
+          "kind": "runtime",
+          "sha256": "5d547956df3dead915eb4b5b02ef7702606491a6509cdfdeefef13fa8ee3af2c"
+        },
+        "src/agent_runtime/failures.py": {
+          "kind": "runtime",
+          "sha256": "5b00179c2a1ad9dfc73bafb9cba9dbe687ca53d61ae5cfc4c00149a50ac3e516"
+        },
+        "src/agent_runtime/go_direct.py": {
+          "kind": "runtime",
+          "sha256": "6a9ff884dd7c7a548cd9435d172a5d4e114bf676d8d14515168f81aaa5ac1a40"
+        },
+        "src/agent_runtime/image_capture.py": {
+          "kind": "runtime",
+          "sha256": "9f5e7b79a33a851e0ff9829dda453342f6772427ee258b9818257f52dfd50721"
+        },
+        "src/agent_runtime/json_tree.py": {
+          "kind": "runtime",
+          "sha256": "9aeea569c2fb7f6040df1c334c1c11a3816f0f3ef6f100bb2b59a80b37474d3e"
+        },
+        "src/agent_runtime/loop.py": {
+          "kind": "runtime",
+          "sha256": "ba8fc5cc0eae9b1c4137899a5dd2505a5eb11b0866cccf406f46404ef8d83cc0"
+        },
+        "src/agent_runtime/mcp_tools.py": {
+          "kind": "runtime",
+          "sha256": "7b461e59e84e18e80f680933a6df3bf1b590f7896bba58d704f8a6834ede334c"
+        },
+        "src/agent_runtime/model_profiles.json": {
+          "kind": "runtime",
+          "sha256": "c00cdeff9cbf67b63c003f32e7ca95069ff3bc8485e70fb4dc838a3a715a0d02"
+        },
+        "src/agent_runtime/network_recovery.py": {
+          "kind": "runtime",
+          "sha256": "9f1865fac456d3d3c84f7eb0511fb714b2e743ec0827eb72025f3ee7dabd4abd"
+        },
+        "src/agent_runtime/openai_subscription.py": {
+          "kind": "runtime",
+          "sha256": "3db4c73758c42b5521ec6bd80f4e4329b3c28f7b109d8cf26183488018efe4f5"
+        },
+        "src/agent_runtime/opencode_go.py": {
+          "kind": "runtime",
+          "sha256": "e05d929257d165ac47a90b1bcbb5050c39d566355be6003170614fa8ec9e2c21"
+        },
+        "src/agent_runtime/output_limits.py": {
+          "kind": "runtime",
+          "sha256": "94e2313841eba9d951d325e67a14e276f040f3d0039fdcc8298616c72ed4783d"
+        },
+        "src/agent_runtime/providers.py": {
+          "kind": "runtime",
+          "sha256": "be7e0fef108385d0c7df54a6f27797ee35cffdc07020a24e7f969cc835007c6e"
+        },
+        "src/agent_runtime/responses.py": {
+          "kind": "runtime",
+          "sha256": "4e80d7be6ce65cea4334ce5a74a9d22808fc4c7da2fcf925c5892cfa423f5848"
+        },
+        "src/agent_runtime/route_dispatch.json": {
+          "kind": "runtime",
+          "sha256": "587407f13140678ce6c1bce67295f15276972c392b1ecf6a3e69ef29de9a94c0"
+        },
+        "src/agent_runtime/run_paths.py": {
+          "kind": "runtime",
+          "sha256": "9fbd66bc8f918a66682b786550e442567a7ec51f813832023f70ca8ed4a094aa"
+        },
+        "src/agent_runtime/store.py": {
+          "kind": "runtime",
+          "sha256": "f32ba75408c9a8666db7559e5c377ecfce4e851c7be1118d280fbc167598097d"
+        },
+        "src/agent_runtime/timing.py": {
+          "kind": "runtime",
+          "sha256": "de2111e8ff646712154c4533b52f43e2909316627842f1f4f0b390b7ba13919d"
+        },
+        "src/agent_runtime/versions.py": {
+          "kind": "runtime",
+          "sha256": "b6678c8386e020cc1c41514127f896e0d151ddd33db7fa845a034ec8e5b1da08"
+        },
+        "src/dsh_runtime/__init__.py": {
+          "kind": "runtime",
+          "sha256": "7a6eb1cf88e38a92ab7056fd46f09cc3b6b9df44e86fca1336a1e6383e986c01"
+        },
+        "src/dsh_runtime/__main__.py": {
+          "kind": "runtime",
+          "sha256": "52599717c0fc98e3c25187622b183a83d582b90854d2509bd739eb655844c75e"
+        },
+        "src/dsh_runtime/chat_protocol.py": {
+          "kind": "runtime",
+          "sha256": "637d90cf55fe0d44fb146b6dd8dd9263740acf524ed9edbb3e89524471199ce7"
+        },
+        "src/dsh_runtime/completion.py": {
+          "kind": "runtime",
+          "sha256": "d02ddfe937707b1f21c83cbf688085b9dae6d02396651bd7afa484ca8d76910f"
+        },
+        "src/dsh_runtime/continuation.py": {
+          "kind": "runtime",
+          "sha256": "19722a9b4dc87533427dd7f07d5612ec355d871f3a8e32d6093512576757e88e"
+        },
+        "src/dsh_runtime/credentials.py": {
+          "kind": "runtime",
+          "sha256": "a6125c14a3b58911ae70c72941454a82d6f41a174e9baca09a6893897b2a28db"
+        },
+        "src/dsh_runtime/handoff.py": {
+          "kind": "runtime",
+          "sha256": "13486dc885d7503e8c8dbf8db52ad3485036b869da81f79c9ec04207a65e8072"
+        },
+        "src/dsh_runtime/host-network.cjs": {
+          "kind": "runtime",
+          "sha256": "06984ae8016fa71efdbc2346ebb11ae0f911150658e319330f1cb1c917f783b3"
+        },
+        "src/dsh_runtime/image_history.py": {
+          "kind": "runtime",
+          "sha256": "f700b73c082aea67f21d120e15dd54d06fc773ad24b97a9aedecdb0d2f57a329"
+        },
+        "src/dsh_runtime/launcher.py": {
+          "kind": "runtime",
+          "sha256": "e26444c5a9b65fa403783816a83c326347b77a0cc3366740117c27807fe8994e"
+        },
+        "src/dsh_runtime/lifecycle.py": {
+          "kind": "runtime",
+          "sha256": "411125b2ef9482f81aff5689d747cc211abac10b423d04a0bf5b70a5e91e39b2"
+        },
+        "src/dsh_runtime/lifecycle_evidence.py": {
+          "kind": "runtime",
+          "sha256": "15f2e277dbbd0e26fd9f1299590e7647139b44992efea71e933450ce1cedf164"
+        },
+        "src/dsh_runtime/model_routes.py": {
+          "kind": "runtime",
+          "sha256": "665ca1a8bc824c41bfdf48762c85d8e0fd6a386465ac982a563152525e7b3a01"
+        },
+        "src/dsh_runtime/observer_closeout.py": {
+          "kind": "runtime",
+          "sha256": "2577c84f4756953038a6fb9a5484c914c52d2ab661c46c99a69e795bbd7cbea4"
+        },
+        "src/dsh_runtime/product.py": {
+          "kind": "runtime",
+          "sha256": "b89316091463cb993870508d8e4026db1d90c0b9c00e4224d723123eb87e4f06"
+        },
+        "src/dsh_runtime/profile.py": {
+          "kind": "runtime",
+          "sha256": "a70fa0789f2b8b26154116d7a3c3fafbcadec7f464ed0d3098202e17bc73586c"
+        },
+        "src/dsh_runtime/relay.py": {
+          "kind": "runtime",
+          "sha256": "fd01bec31153c85de042f77204dd47d84d8919e4ecd1099d6675210d5c1a90d0"
+        },
+        "src/dsh_runtime/transport.py": {
+          "kind": "runtime",
+          "sha256": "9f9ce3c396474ec65ca9f5a01b862a667e8b86ad5f2f52240410a67a79e4565a"
+        },
+        "src/harness_contracts/__init__.py": {
+          "kind": "runtime",
+          "sha256": "e227ea1b99f9d03694725018d5198749c2f5fcc3ad55f245269e9d8c6badf7dd"
+        },
+        "src/harness_contracts/base.py": {
+          "kind": "runtime",
+          "sha256": "464d26d3d36443e0ac874c256ea21ee01c945e207d0424468f0f19a3064b08c0"
+        },
+        "src/harness_contracts/budget.py": {
+          "kind": "runtime",
+          "sha256": "1ebfb1badb42b06b5bb080884a2a6e385b1adb64bc5c9fe152139c8cc35b5d5a"
+        },
+        "src/harness_contracts/events.py": {
+          "kind": "runtime",
+          "sha256": "0bb37b55ad1eec93da9eedb5d1198cdd1e67ef10a37b86e03c6d6e11b96fa82e"
+        },
+        "src/harness_contracts/incremental.py": {
+          "kind": "runtime",
+          "sha256": "5a7d17f676beda236df74618f65369370eb7fcff3a72ac7edae2cce79130ec29"
+        },
+        "src/harness_contracts/refs.py": {
+          "kind": "runtime",
+          "sha256": "9b05f49eb980e8dd79d9427ec16865b7ab136fc51fa139f75ec04f74e8a67a0a"
+        },
+        "src/harness_contracts/roles.py": {
+          "kind": "runtime",
+          "sha256": "08080b3efb84d2345920380f509ad50685b438bd53c8cd0e6fa54a82a70d9c67"
+        },
+        "src/harness_contracts/usage.py": {
+          "kind": "runtime",
+          "sha256": "193d31d451f5914e12166589b860052d4d62874f2b3949d14a2a45265df749ce"
+        },
+        "src/harness_contracts/validation.py": {
+          "kind": "runtime",
+          "sha256": "f4d922e26270cf2a0c5e18fdd62b8a938b06ee569b12b70dbb22e6b714ff6007"
+        },
+        "src/utils/file_lock.py": {
+          "kind": "runtime",
+          "sha256": "4826e78aa4204551a09c9c6961e5a87edfa933605e6dab6f7110ec58908c6eaf"
+        },
+        "src/workbench/__init__.py": {
+          "kind": "runtime",
+          "sha256": "bb251db8fe7dd4f841690e2e297bff061889fbbbe8d8affbf8a67fedfaf901a6"
+        },
+        "src/workbench/connections.py": {
+          "kind": "runtime",
+          "sha256": "18f5e819d270c89d76583ca2e96c8aa466cb30371b58b910c83ba44e7328f37e"
+        },
+        "src/workbench/custom_connections.py": {
+          "kind": "runtime",
+          "sha256": "2975cf5d70a2981119dfc23cb65413d5f1dd954ae9f8951ca871bba5dd41c6e8"
+        },
+        "src/workbench/runs.py": {
+          "kind": "runtime",
+          "sha256": "78627f74c58b92a2d839cd316b0f287d961f192a2b143a02d13f3bb4c1ff8e15"
+        },
+        "src/workbench/server.py": {
+          "kind": "runtime",
+          "sha256": "fa4b5f5d5f080e3a30dd0c6d2c41b49ac36d4d58b6db8fc846847546e13f6e55"
+        },
+        "src/workbench/static/app.js": {
+          "kind": "runtime",
+          "sha256": "7d8e0fe2d586ede9dff3c01aeda10b25ee9e0c3b6563a4b6e0c6007a56e786dd"
+        },
+        "src/workbench/static/connection-form.js": {
+          "kind": "runtime",
+          "sha256": "2ba686f200e9cccd0ded7d50b62c01e17c074d3274a975999e0a7d43bc5c2469"
+        },
+        "src/workbench/static/dom.js": {
+          "kind": "runtime",
+          "sha256": "84e917aa7cf9380e13e148343a1509a9b9fd7fd85d041240e6c6a8ee9501b287"
+        },
+        "src/workbench/static/index.html": {
+          "kind": "runtime",
+          "sha256": "4a4c80d6b35315bed5c43c4b6312435cc8eb43ac4e660c2fa99003bb02170050"
+        },
+        "src/workbench/static/language.js": {
+          "kind": "runtime",
+          "sha256": "c07592f8b99f628ac52760c01430da0e22b1eb781e52331c7e548d5c45211b3d"
+        },
+        "src/workbench/static/mark.svg": {
+          "kind": "runtime",
+          "sha256": "513d6e60ea377f71ed1f35e7d143f2793bd11ecfb868553d89c3468fabe01315"
+        },
+        "src/workbench/static/preview.js": {
+          "kind": "runtime",
+          "sha256": "4afe26a02ecc814b6d204c43f4a36ecba4c891037c8c31c94f0f308f54fe34d7"
+        },
+        "src/workbench/static/run.html": {
+          "kind": "runtime",
+          "sha256": "567d4b21b685cdf7e73cb611e493afba02cf771bba7891a8bd62177c0c22e04c"
+        },
+        "src/workbench/static/run.js": {
+          "kind": "runtime",
+          "sha256": "7c36b2c3c04ad33f36983d46fe9f31d73ce10263ad2fd5a688e575f444f2d9b9"
+        },
+        "src/workbench/static/style.css": {
+          "kind": "runtime",
+          "sha256": "ddca7680fce827c424904d2b1a4f1f7bedc8c16095ce46747b34aa241c70bd46"
+        },
+        "src/workbench/static/thickness.js": {
+          "kind": "runtime",
+          "sha256": "86648e33bd51f568472fbf759f2d53bf9d16dc447e4ccbaef0dd5e78f360773f"
+        },
+        "src/workbench/static/viewer-draft.js": {
+          "kind": "runtime",
+          "sha256": "7b0b79d3a11fe4b997fc096a164eb281797bc2f20fcbe555a918a8d8413f5265"
+        },
+        "src/workbench/static/viewer.html": {
+          "kind": "runtime",
+          "sha256": "5f209f6a00a0346fc7d29aaa9760a0bff3de03d51b93ac6d3652013997451bb7"
         },
         "src/workbench/storage.py": {
           "kind": "runtime",
