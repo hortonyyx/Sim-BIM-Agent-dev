@@ -367,7 +367,7 @@ def test_viewer_starts_in_english_and_embeds_the_bilingual_room_catalog(run_loca
     payload = json.loads(page.split("window.GEO = ", 1)[1].split(";</script>", 1)[0])
     assert '<html lang="en"' in markup and '>All floors<' in markup
     assert payload["locale"] == "en"
-    assert payload["room_names"] == {"Z1": {"name": "101", "role": "unknown"}}
+    assert payload["public_names"]["spaces"]["Z1"].startswith("Z01_F1_")
     assert payload["roles"] == {"Z1": "office", "Z2": "conference/meeting/multipurpose"}
     assert payload["messages"]["select by"] == ["Select by", "选择对象"]
     assert payload["messages"]["Elevation groups"] == ["Elevation groups", "高程分组"]
@@ -380,7 +380,7 @@ def test_viewer_starts_in_english_and_embeds_the_bilingual_room_catalog(run_loca
 def test_selection_cards_show_canonical_identity_and_category_quantities_in_both_languages(tmp_path):
     model = copy.deepcopy(_GEO)
     model["source_model"]["spaces"][0].update(name="101", role="office")
-    model["source_model"]["floors"][0]["name"] = "G"
+    model["source_model"]["floors"][0]["name"] = "首层"
     model["source_model"]["source_model_sha256"] = "test-model"
     model["sim_inspection"] = {
         "schema_version": "sim_inspection_v1", "source_model_sha256": "test-model",
@@ -537,7 +537,7 @@ def test_standalone_display_restores_standard_names_without_inventing_source_qua
 
     model["public_names"] = {"floors": [{"id": "level-g", "name": "F9", "source_name": "Ground", "z_floor": 0}]}
     floor, = _display_payload(model)["public_names"]["floors"]
-    assert floor["source_name"] == "Ground" and floor["name"] == "F9"
+    assert floor["source_name"] == "Ground" and floor["name"] == "G"
 
 
 def test_partial_archived_source_uses_bound_names_and_preserves_host_numbers():
@@ -548,7 +548,7 @@ def test_partial_archived_source_uses_bound_names_and_preserves_host_numbers():
     source["public_names"] = {"floors": {"F1": "F9"}, "spaces": {"Z1": "Z18_F9_Office_SE"},
                               "boundaries": {"w1": "Z18_W4"}, "openings": {"win1": "Z18_W4_Win3"}}
     geo = _display_payload(model)
-    assert geo["public_names"]["floors"][0]["name"] == "F9"
+    assert geo["public_names"]["floors"][0]["name"] == "F1"
     assert geo["public_names"]["spaces"]["Z1"] == "Z18_F1_Office_SE"
     assert geo["visible_wall_parts"]["w1"][0]["public_name"] == "Z18_W4"
     assert [geo["windows"][0][k] for k in ("public_name", "parent_name")] == ["Z18_W4_Win3", "Z18_W4"]
@@ -574,6 +574,63 @@ def test_partial_legacy_labels_reserve_floor_face_and_aperture_numbers():
     assert geo["windows"][1]["public_name"] != geo["windows"][0]["public_name"]
     assert all(w["parent_name"]=="Z18_W2" and w["public_name"].startswith("Z18_W2_Win") for w in geo["windows"])
     assert geo["visible_wall_parts"]["w0"][0]["public_name"] == "Z18_W2"
+
+
+def test_partial_archive_keeps_handles_while_normalizing_a_chinese_storey():
+    model = copy.deepcopy(_GEO)
+    source = model["source_model"]
+    del source["opening_hosts"]
+    source["floors"][0]["name"] = "首层"
+    source["public_names"] = {"spaces": {"Z1": "Z32_首层_Office_NE"}}
+    geo = _display_payload(model)
+    assert geo["public_names"]["floors"][0]["name"] == "G"
+    assert geo["public_names"]["spaces"]["Z1"] == "Z32_G_Office_NE"
+    assert geo["windows"][0]["public_name"].startswith("Z32_W")
+
+
+def test_display_only_unclosed_room_uses_an_english_handle():
+    geo = _display_payload({"zones": ["前室"], "surfaces": [
+        {"zone": "前室", "name": "墙面", "type": "Wall", "verts": [[0,0,0],[2,0,0],[2,0,3],[0,0,3]]}],
+        "windows": [{"name": "窗面", "parent": "墙面", "verts": [[0.5,0,1],[1,0,1],[1,0,2],[0.5,0,2]]}]})
+    assert geo["public_names"]["spaces"]["前室"] == "Z01"
+    assert geo["surfaces"][0]["public_name"].isascii()
+    assert geo["windows"][0]["public_name"].isascii()
+    assert geo["windows"][0]["parent_name"] == geo["surfaces"][0]["public_name"]
+
+
+def test_display_archive_preserves_a_public_code_when_its_name_is_only_descriptive():
+    geo = _display_payload({"zones": ["room"], "surfaces": [{"name": "slab", "zone": "room",
+        "type": "Floor", "verts": [[0,0,0],[4,0,0],[4,4,0],[0,4,0]]}],
+        "public_names": {"floors": {"legacy-floor": "F19"}, "spaces": {"room": "Z52_F19_Office_C"}},
+        "floors": [{"id": "legacy-floor", "name": "Commercial annex", "z_floor": 0}],
+        "zone_meta": [{"name": "room", "floor_id": "legacy-floor", "role": "office"}]})
+    assert geo["public_names"]["floors"][0]["name"] == "F19"
+    assert geo["public_names"]["spaces"]["room"] == "Z52_F19_Office_C"
+
+
+def test_old_display_only_draft_keeps_its_storage_key_and_surface_anchor(tmp_path):
+    model = {"zones": ["old-zone"], "display_surface_parts": {}, "surfaces": [
+        {"name": "old-localized-wall", "zone": "old-zone", "type": "Wall",
+         "verts": [[0,0,0],[1,0,0],[1,0,2],[0,0,2]]}]}
+    geo = _display_payload(model)
+    assert geo["draft_model_id"] == "b3231f7f973389335d7612d99596722babc289947fe2746ba391d9b20cc9157d"
+    face = geo["surfaces"][0]
+    assert face["public_name"] == "Surface1" and face["draft_public_name"] == "old-localized-wall"
+    script = rgv.app_js()
+    helpers = script[script.index("    const faceName="):script.index("    function recolor()")]
+    result = _node_result(tmp_path, "const face="+json.dumps(face)+";"+"""
+const byTarget=new Map(),byAnchor=new Map();let indexed=false;
+const mesh={userData:{name:face.name,zone:face.zone,publicName:face.public_name,draftName:face.draft_public_name}};
+const allPickables=()=>[mesh],surfaceBinding=u=>['boundaries',u.name],sourceIdOfZone=z=>z,actualStoreys=()=>[];
+const hit={object:mesh,point:{clone:()=>({sub:()=>({toArray:()=>[0.5,0,1]})})}};
+""" + helpers + """
+indexMeshes();
+const old={kind:'surface',id:'old-localized-wall',surface:'old-localized-wall',zone:'old-zone'};
+const current=targetAt(hit,'surface');
+console.log(JSON.stringify({highlight:byTarget.get(key(old))?.[0]===mesh,
+  pin:byAnchor.get(anchorKey(old.zone,old.surface))?.[0]===mesh,publicLabel:current.label,sameKey:key(current)===key(old)}));
+""")
+    assert result == {"highlight": True, "pin": True, "publicLabel": "Surface1", "sameKey": True}
 
 
 @pytest.mark.parametrize("orientation", ["wall", "horizontal", "inclined"])

@@ -2,20 +2,6 @@
 from __future__ import annotations
 
 import math
-import re
-
-
-def project_storey_names(names, floors):
-    """Translate only the storey token of a public zone name; keep source IDs intact."""
-    labels = {f["name"]: str(f.get("source_name") or "").strip() or f["name"] for f in floors}
-    result = {}
-    for identity, name in names.items():
-        match = re.fullmatch(r"(Z\d+)_(F\d+)_(.+)", name)
-        if match:
-            handle, floor, rest = match.groups()
-            name = f"{handle}_{labels.get(floor, floor)}_{rest}"
-        result[identity] = name
-    return result
 
 
 _TAGS = {"from material", "inference", "from user"}

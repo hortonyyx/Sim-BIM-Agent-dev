@@ -568,6 +568,10 @@ SIM_BIM_DELIVERY_GUIDE = """Deliver the whole building as a simulation-ready Sim
 unless the user specifies a narrower scope. Use the submitted building description and block captions as
 user statements; relate them to the actual drawings, mesh and declarations. A file number in a caption
 refers to its 1-based position within that block. Where a description is silent, work from the supplied sources.
+Use stable English ASCII identifiers for storeys, zones, surfaces and openings in every interface language.
+Give each storey one compact code (e.g. G for ground, U for upper ground, O01 for an office level,
+23F for a documented 23/F, R for roof). Reuse that code in all references to the same storey.
+The exporter assigns the standard zone, surface and edge names. Preserve original drawing labels in evidence.
 Before finish_bim assess every saved zone, boundary and opening. Give a short reason in English and Chinese
 naming the spatial evidence, where it applies and the main estimate. Assign broad room-use types to zones.
 For physical surfaces record a short bilingual observation about the principal construction material and

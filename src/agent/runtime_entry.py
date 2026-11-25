@@ -100,7 +100,7 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
                           + json.dumps(thickness, ensure_ascii=False))
     if locale is not None:
         language = "Simplified Chinese" if locale == "zh-CN" else "English"
-        guide += (f"\nWrite user-facing output, names, assumptions, progress, and modelling notes in {language}. "
+        guide += (f"\nWrite progress updates, assumptions and modelling notes in {language}. "
                   "Preserve the user's original captions and filenames as evidence.\n")
     if blocks is not None:
         ordered = [{"number": n, "id": b["id"], "caption": b["caption"], "files": [

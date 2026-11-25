@@ -37,6 +37,17 @@ def png(color):
     return out.getvalue()
 
 
+def test_chinese_run_keeps_english_object_identifiers_and_original_filenames(tmp_path):
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "首层.png").write_bytes(png("white"))
+    _, guide, task = prepare_inputs(tmp_path / "run", images=images, mesh=None, building_input=None,
+        scope="首层带商业", image_kind="drawings", max_candidates=1, orchestrator=True, locale="zh-CN")
+    assert "stable English ASCII identifiers" in guide
+    assert "modelling notes in Simplified Chinese" in guide
+    assert "首层带商业" in task and "首层.png" in task
+
+
 def test_kickoff_migrates_only_unchanged_legacy_text_and_freezes_empty(workbench, tmp_path):
     from src.workbench.storage import LEGACY_DEFAULT_BRIEFS, read_project
     client, root = workbench

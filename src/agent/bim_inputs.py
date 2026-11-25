@@ -42,6 +42,7 @@ IMPLEMENTATION_FILES = (
     'src/agent/roles.py',
     'src/agent/data/room_types.json',
     'src/agent/geometry/source_naming.py',
+    'src/agent/geometry/storey_codes.py',
     'scripts/tool_scripts/render_geometry_viewer.py',
     'scripts/tool_scripts/run_bim_agent.py',
     'scripts/tool_scripts/bim_agent_guidance.py',

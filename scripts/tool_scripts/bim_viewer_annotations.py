@@ -61,7 +61,7 @@ ANNOTATION_JS = r"""
     let renderedNotes=null, renderedView=null, renderedLocale=null, previousLayout='';
     const localized=(en,zh)=>locale==='en' ? en : zh;
     const notes=()=>viewerDraft.state.notes;
-    const faceName=u=>String(u.publicName || u.name || u.boundaryId || u.zone);
+    const faceName=u=>u.draftName ?? u.publicName;
     const targetKey=(kind,id,surface)=>JSON.stringify(kind==='surface' ? [kind,id,surface] : [kind,id]);
     const key=t=>targetKey(t.kind,t.id,t.surface);
     const floorId=i=>String(NAMED_FLOORS[i]?.id ?? i);
@@ -92,7 +92,7 @@ ANNOTATION_JS = r"""
       }else if(kind==='zone'){
         id=sourceIdOfZone(u.zone);label=spaceName(u.zone);
       }else{
-        id=surfaceBinding(u)[1];label=surface;
+        id=surfaceBinding(u)[1];label=u.publicName;
       }
       return {kind,id:String(id),label:String(label),zone:String(u.zone),surface,
         point:hit.point.clone().sub(mesh.position).toArray()};

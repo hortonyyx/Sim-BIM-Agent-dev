@@ -7,10 +7,12 @@ from shapely.ops import polygonize, unary_union
 
 from scripts.tool_scripts.bim_display_language import room_role
 from src.agent.geometry.source_naming import build_public_names, viewer_names
+from src.agent.geometry.storey_codes import public_storey_codes
 
 
-_FLOOR = re.compile(r"F[1-9]\d*")
-_SPACE = re.compile(r"Z\d+_F\d+_[A-Za-z0-9_-]+_(?:NE|NW|SE|SW|N|S|E|W|C)\d*")
+_FLOOR = re.compile(r"(?:[A-Z][A-Z0-9-]*|[0-9]+F)")
+_SPACE = re.compile(r"Z[0-9]+_[^_]+_[A-Za-z0-9_-]+_(?:NE|NW|SE|SW|N|S|E|W|C)[0-9]*")
+_OLD_DRAFT_SPACE = re.compile(r"Z\d+_F\d+_[A-Za-z0-9_-]+_(?:NE|NW|SE|SW|N|S|E|W|C)\d*")
 _FACE = re.compile(r"Z\d+_(?:W\d+|Floor\d*|Roof\d*|Ceiling\d*)")
 _OPENING = re.compile(_FACE.pattern + r"_(?:Door|Opening|Win)\d+")
 
@@ -76,7 +78,7 @@ def _zone_outline(faces):
     return list(outline.exterior.coords)[:-1] if outline.geom_type == "Polygon" else []
 
 
-def legacy_viewer_names(data, parts, roles):
+def legacy_viewer_names(data, parts, roles, *, draft_anchors=False):
     source = data.get("source_model") or {}
     derived = {k: dict(v) for k, v in (source.get("derived") or {}).items()
                if k in ("zones", "surfaces", "windows", "openings") and isinstance(v, dict)}
@@ -157,18 +159,24 @@ def legacy_viewer_names(data, parts, roles):
     saved_rooms = {}
     for zone in data.get("zones", []):
         sid = derived["zones"].get(zone, zone)
-        label = _saved(_SPACE, attached.get("spaces", {}).get(sid), attached.get("spaces", {}).get(zone),
+        label = _saved(_OLD_DRAFT_SPACE if draft_anchors else _SPACE,
+                       attached.get("spaces", {}).get(sid), attached.get("spaces", {}).get(zone),
                        spaces.get(sid, {}).get("public_name"), metadata.get(zone, {}).get("public_name"), zone)
         if label:
             saved_rooms[sid] = label
     room_levels = defaultdict(set)
     for sid, label in saved_rooms.items():
-        if sid in spaces:
-            room_levels[spaces[sid]["floor_id"]].add(label.split("_", 2)[1])
+        level = label.split("_", 2)[1]
+        if sid in spaces and _FLOOR.fullmatch(level):
+            room_levels[spaces[sid]["floor_id"]].add(level)
     for fid, levels in room_levels.items():
         if len(levels) == 1:
             floor_aliases.setdefault(fid, next(iter(levels)))
-    floor_names = _available_handles(names["floors"], floor_aliases, "F")
+    floor_names = public_storey_codes([
+        {**floor, "name": floor.get("source_name") or floor.get("name"),
+         "archived_code": floor_aliases.get(fid) or _saved(_FLOOR, floor.get("name"))}
+        for fid, floor in floors.items()
+    ])
     names["floors"] = floor_names
     room_handles = {sid: label.split("_", 1)[0] for sid, label in names["spaces"].items()}
     assigned = _available_handles(room_handles, {sid: v.split("_", 1)[0] for sid, v in saved_rooms.items()}, "Z")
@@ -176,8 +184,18 @@ def legacy_viewer_names(data, parts, roles):
     for sid in assigned:
         original = saved_rooms.get(sid) or names["spaces"][sid]
         _, level, suffix = original.split("_", 2)
-        floor = floor_names.get(spaces.get(sid, {}).get("floor_id"), level)
-        names["spaces"][sid] = f"{assigned[sid]}_{floor}_{suffix}"
+        floor = floor_names.get(spaces.get(sid, {}).get("floor_id")) or _saved(_FLOOR, level)
+        names["spaces"][sid] = f"{assigned[sid]}_{floor}_{suffix}" if floor else assigned[sid]
+    # A display archive may have only one wall of a room. Retain a unique English
+    # handle even though its footprint and therefore its quadrant are unavailable.
+    display_ids = {derived["zones"].get(z, z) for z in data.get("zones", [])}
+    occupied = set(assigned.values())
+    number = 1
+    for sid in sorted(display_ids - names["spaces"].keys()):
+        while (handle := f"Z{number:02d}") in occupied:
+            number += 1
+        names["spaces"][sid] = handle
+        occupied.add(handle)
     faces = {}
     for obj in data.get("surfaces", []):
         key = obj["name"]
@@ -206,7 +224,7 @@ def legacy_viewer_names(data, parts, roles):
             aperture_sides[(oid, bid)] = (original, label)
     for (oid, bid), label in _child_names(aperture_sides).items():
         names["opening_sides"].setdefault(oid, {})[bid] = label
-    result = viewer_names({**data, "source_model": naming_source}, parts, names=names)
+    result = viewer_names({**data, "source_model": naming_source}, parts, names=names, draft_anchors=draft_anchors)
     for row in result["floors"]:
         floor = floors[row["id"]]
         row["source_name"] = floor.get("source_name") or floor.get("name")

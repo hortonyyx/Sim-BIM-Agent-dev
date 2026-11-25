@@ -25,7 +25,7 @@ from scripts.tool_scripts.bim_display_language import (
     room_role, room_type_labels, viewer_markup, viewer_messages, viewer_script,
 )
 from scripts.tool_scripts.bim_viewer_annotations import ANNOTATION_CSS, ANNOTATION_JS, ANNOTATION_MARKUP
-from scripts.tool_scripts.bim_viewer_inspection import project_storey_names, public_inspection
+from scripts.tool_scripts.bim_viewer_inspection import public_inspection
 
 _VENDOR = Path(__file__).resolve().parent / "vendor"
 
@@ -96,12 +96,7 @@ _APP_JS = r"""
     return locale==='en' ? type.label_en : type.label_zh+(bilingual?' · '+type.label_en:'');
   }
   const sourceIdOfZone=zone=>SOURCE_MAP.zones?.[zone] || zone;
-  function authoredSpaceName(zone){
-    const record=GEO.room_names[zone] || {};
-    if(record.name) return record.role!=='unknown' ? roleLabel(record.role,false) : record.name;
-    return '';
-  }
-  const spaceName=zone=>GEO.public_names?.spaces?.[sourceIdOfZone(zone)] || authoredSpaceName(zone) || String(zone||msg('Room'));
+  const spaceName=zone=>GEO.public_names.spaces[sourceIdOfZone(zone)] || 'Room';
   const ROLES = GEO.roles || {};
   const HAS_ROLES = Object.keys(ROLES).length > 0;
   const roleOf = z => (ROLES[z] || '').toString().toLowerCase();
@@ -122,10 +117,10 @@ _APP_JS = r"""
     const b=[]; for(const z of u) if(!b.length||Math.abs(z-b[b.length-1])>0.3) b.push(z); return b.length?b:[0]; }
   function nearestBase(z,bases){ let bi=0,bd=1e9; bases.forEach((b,i)=>{const d=Math.abs(z-b); if(d<bd){bd=d;bi=i;}}); return bi; }
   const floorSurf = SURF.filter(s => s.type === 'Floor');
-  const NAMED_FLOORS = GEO.floors || GEO.public_names?.floors || [];
+  const NAMED_FLOORS = GEO.public_names.floors;
   const BASES = NAMED_FLOORS.length ? NAMED_FLOORS.map(f=>f.z_floor) : cluster((floorSurf.length ? floorSurf : SURF).map(zmin));
   const sourceFloor = i => (SOURCE?.floors||[]).find(f=>f.id===NAMED_FLOORS[i]?.id);
-  const floorLabel=i=>String(NAMED_FLOORS[i]?.source_name ?? '').trim() || NAMED_FLOORS[i]?.name || 'F'+(i+1);
+  const floorLabel=i=>NAMED_FLOORS[i]?.name || 'F'+(i+1);
   const _zFloorZ = {}, _zMinZ = {};
   SURF.forEach(s => { const z=s.zone||'?', mn=zmin(s); _zMinZ[z]=Math.min(_zMinZ[z]??1e9,mn);
     if(s.type==='Floor') _zFloorZ[z]=Math.min(_zFloorZ[z]??1e9,mn); });
@@ -468,7 +463,7 @@ _APP_JS = r"""
       if(enclosureCondition==='unknown') return;
       const mesh=new THREE.Mesh(ringGeom(part.verts,part.holes||[]), m.clone());
       mesh.userData={zone, floor:fi, type:s.type||'Wall', name:s.name, kind:'surface', dup,
-        publicName:part.public_name, parentName:s.public_name, area:faceArea(part.verts,part.holes),
+        publicName:part.public_name, draftName:part.draft_public_name, parentName:s.public_name, area:faceArea(part.verts,part.holes),
         occludedBy:part.occluded_by ?? (s.obc_obj ? [_surfZoneByName[s.obc_obj]] : undefined)};
       surfMeshes.push(mesh); root.add(mesh);
       registerSide(mesh,part.verts,part.holes||[],s);
@@ -493,7 +488,7 @@ _APP_JS = r"""
     const key=enclosureRegionKey(r.verts), owners=enclosureRegionKeys.get(key)||[], duplicate=owners.length>0;
     enclosureRegionKeys.set(key,[...owners,zone]);
     const userData={zone,floor:fi,kind:'enclosure-region',condition:r.condition,dup:duplicate,
-      occludedBy:owners,boundaryId:r.boundary_id,publicName:r.public_name,parentName:r.parent_name,
+      occludedBy:owners,boundaryId:r.boundary_id,publicName:r.public_name,draftName:r.draft_public_name,parentName:r.parent_name,
       area:faceArea(r.verts,r.holes),baseColor:ENCLOSURE_COLOR};
     // This translucent face is a viewer-only aid. It makes an open extent easy
     // to see without restoring a physical wall, changing volume, or connectivity.
@@ -510,7 +505,7 @@ _APP_JS = r"""
     const zone=zoneOfWindow(w), sv=popOut(w.verts, zone);  // proud of wall → clean + pickable
     const m=new THREE.MeshStandardMaterial({color:WINDOW_COLOR, side:THREE.DoubleSide, roughness:0.4});
     const mesh=new THREE.Mesh(ringGeom(sv), m);
-    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, publicName:w.public_name, parentName:w.parent_name, host:w.parent, area:faceArea(w.verts), kind:'window', dup:false};
+    mesh.userData={zone, floor:zoneFloor[zone]??nearestBase(Math.min(...w.verts.map(v=>v[2])),BASES), name:w.name, publicName:w.public_name, draftName:w.draft_public_name, parentName:w.parent_name, host:w.parent, area:faceArea(w.verts), kind:'window', dup:false};
     mesh.modelMaterial=m;
     winMeshes.push(mesh); root.add(mesh);
     // Comparison contours use the exact source geometry, without the picking offset.
@@ -525,7 +520,7 @@ _APP_JS = r"""
     const mesh=new THREE.Mesh(ringGeom(o.verts),m);
     mesh.userData={zone,floor:zoneFloor[zone]||0,name:o.name,
       occludedBy:dup ? [o.other_space_id] : [],
-      kind:'opening',dup,baseColor:color,publicName:o.public_name,
+      kind:'opening',dup,baseColor:color,publicName:o.public_name,draftName:o.draft_public_name,
       parentName:o.parent_name,host:o.parent,sourceId:o.source_opening_id,area:faceArea(o.verts)};
     mesh.modelOpacity=m.opacity;
     openingMeshes.push(mesh);root.add(mesh);
@@ -1598,7 +1593,7 @@ def _ring_edges(rings):
     return [(v, ring[(i + 1) % len(ring)]) for ring in rings for i, v in enumerate(ring)]
 
 
-def _selection_names(data: dict, geo: dict) -> None:
+def _selection_names(data: dict, geo: dict, has_source_digest: bool) -> None:
     """Public room, face and side-specific opening names, plus selectable segment ranks."""
     from src.agent.geometry.source_naming import viewer_names
 
@@ -1611,31 +1606,39 @@ def _selection_names(data: dict, geo: dict) -> None:
                 and all(o.get("id") in source["opening_hosts"] for o in source["openings"]))
     if complete:
         names = viewer_names(data, parts)
+        draft_names = names if has_source_digest else viewer_names(data, parts, draft_anchors=True)
     else:
         from scripts.tool_scripts.bim_viewer_legacy_names import legacy_viewer_names
         names = legacy_viewer_names(data, parts, geo["roles"])
-        geo["public_names"]["floors"] = names["floors"]
+        draft_names = legacy_viewer_names(data, parts, geo["roles"], draft_anchors=True)
         geo["primary_floors"] = names["primary_floors"]
-    geo["public_names"]["spaces"] = project_storey_names(names["spaces"], geo["public_names"]["floors"])
-    objects = names["objects"]
+    geo["public_names"] = {"floors": names["floors"], "spaces": names["spaces"]}
+    objects, draft_objects = names["objects"], draft_names["objects"]
+
+    def assign(row, field, current, old):
+        row[field] = current
+        if old != current:
+            row["draft_" + field] = old
+
     for surface in geo["surfaces"]:
         name = surface["name"]
-        surface["public_name"] = objects.get(name, name)
+        assign(surface, "public_name", objects[name], draft_objects[name])
         if name not in parts:
             surface["edge_ranks"] = _edge_ranks(_ring_edges([surface["verts"], *surface.get("holes", [])]))
         for i, part in enumerate(parts.get(name, [])):
-            part["public_name"] = names["parts"][name][i]
+            assign(part, "public_name", names["parts"][name][i], draft_names["parts"][name][i])
             segments = part.get("edge_segments")
             if segments is None:
                 segments = _ring_edges([part["verts"], *part.get("holes", [])])
             part["edge_ranks"] = _edge_ranks(segments)
     for obj in [*geo["windows"], *geo["openings"]]:
-        obj["public_name"] = objects.get(obj["name"], obj["name"])
-        obj["parent_name"] = objects.get(obj["parent"], obj["parent"])
+        assign(obj, "public_name", objects[obj["name"]], draft_objects[obj["name"]])
+        assign(obj, "parent_name", objects.get(obj["parent"]), draft_objects.get(obj["parent"], obj["parent"]))
         obj["edge_ranks"] = _edge_ranks(_ring_edges([obj["verts"]]))
     for i, region in enumerate(geo["enclosure_regions"]):
-        region["public_name"] = names["regions"][i]
-        region["parent_name"] = region["public_name"].rsplit("_", 1)[0]
+        name, old = names["regions"][i], draft_names["regions"][i]
+        assign(region, "public_name", name, old)
+        assign(region, "parent_name", name.rsplit("_", 1)[0], old.rsplit("_", 1)[0])
         region["edge_ranks"] = _edge_ranks(_ring_edges([region["verts"], *region.get("holes", [])]))
 
 
@@ -1672,13 +1675,9 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     }
     from src.agent.roles import ROOM_TYPES
     geo["room_types"] = room_type_labels(ROOM_TYPES)
-    # Coincident core/elevation groups need their old, stable sort order.
-    named_floors = sorted((f for f in (geo["source_model"] or {}).get("floors", ()) if f.get("z_floor") is not None),
-                          key=lambda f: (f["z_floor"], f["id"]))
-    geo["public_names"] = {"floors": [
-        {"id": f["id"], "name": f"F{i}", "source_name": f.get("name"), "z_floor": f["z_floor"]}
-        for i, f in enumerate(named_floors, 1)]}
-    _selection_names(data, geo)
+    identity = source.get("source_model_sha256")
+    has_source_digest = isinstance(identity, str) and re.fullmatch(r"[a-f0-9]{64}", identity) is not None
+    _selection_names(data, geo, has_source_digest)
     from src.agent.geometry.viewer_metrics import viewer_metrics
     geo["metrics"] = viewer_metrics(source)
     if mesh_path is not None:
@@ -1690,32 +1689,29 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     source_floors = {row["id"]: row for row in source.get("floors", [])}
     zone_map = source.get("derived", {}).get("zones", {})
     memberships = {}
-    room_names = {}
     for zone in geo["zones"]:
         sid = zone_map.get(zone, zone)
         space = spaces.get(sid, {})
         role = geo["roles"].get(zone) or space.get("role")
         if role:
             geo["roles"][zone] = room_role(role)
-        authored = space.get("display_name") or space.get("name") or space.get("label")
-        if not authored and not space and re.search(r"[\s\u3400-\u9fff]", zone):
-            authored = zone
-        if authored and not re.search(r"(?:^[ZS]\d+(?:$|[_:/.-])|[_:]|/(?:wall|roof|floor|boundary)/)", str(authored), re.I):
-            room_names[zone] = {"name": authored, "role": room_role(authored)}
         if not space:
             continue
-        indices = [i for i, floor in enumerate(named_floors)
+        indices = [i for i, floor in enumerate(geo["public_names"]["floors"])
                    if space.get("floor_id") == floor["id"]
                    or sid in source_floors.get(floor["id"], {}).get("spanning_space_ids", [])]
         if indices:
             memberships[zone] = indices
-    geo["room_names"] = room_names
     geo["floor_memberships"] = memberships
     # Older display-only models lack a canonical source digest. Derive an identity
     # from their selectable geometry so replacing a file cannot bind stale notes.
-    identity = source.get("source_model_sha256")
-    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
-        geometry = {k: geo[k] for k in ("zones", "surfaces", "windows", "openings", "enclosure_regions", "roles", "source_model")}
+    if not has_source_digest:
+        geometry = {k: geo[k] for k in ("zones", "roles", "source_model")}
+        # Older viewers included their public face labels in this storage key.
+        # Keep their exact serialized shape and values across display-name updates.
+        for group in ("surfaces", "windows", "openings", "enclosure_regions"):
+            geometry[group] = [{k: row.get("draft_" + k, v) for k, v in row.items() if not k.startswith("draft_")}
+                               for row in geo[group]]
         identity = hashlib.sha256(json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     geo["draft_model_id"] = identity
     # Replace placeholders in the trusted template once, so an input name or

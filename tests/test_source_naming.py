@@ -9,6 +9,7 @@ from src.agent.geometry_model.schema import GeometryInput
 from src.agent.execution.source_proposal import export_source_proposal
 from src.agent.geometry.source_bim import build_source_bim, source_view_geometry
 from src.agent.geometry.source_naming import build_public_names, viewer_names
+from src.agent.geometry.storey_codes import public_storey_codes
 from src.agent.roles import CATALOG, CATALOG_PATH, ROOM_TYPES, require_role
 
 
@@ -175,9 +176,9 @@ def test_reversed_floors_use_global_bbox_and_floor_identity():
     s["spaces"].append({**s["spaces"][0], "id": "upper-room", "floor_id": "upper",
                         "polygon": upper["footprint"], "z_floor": 3})
     n = build_public_names(s)
-    assert n["floors"]["upper"] == "F2"
+    assert n["floors"]["upper"] == "U"
     assert n["spaces"]["upper-room"].endswith("_W")  # whole building, not its own center
-    assert "_F2_" in n["spaces"]["upper-room"]
+    assert "_U_" in n["spaces"]["upper-room"]
 
 
 def test_floor_ordinals_preserve_declared_groups_separately_at_shared_heights():
@@ -196,9 +197,40 @@ def test_floor_ordinals_preserve_declared_groups_separately_at_shared_heights():
     s["openings"] = []
     s["opening_hosts"] = {}
     names = build_public_names(s)
-    assert names["floors"] == {"ANNEX": "F1", "CORE": "F2", "F1": "F3",
-                               "F2": "F4", "F3": "F5", "EMPTY": "F6"}
+    assert names["floors"] == {"ANNEX": "F4", "CORE": "F5", "F1": "F1",
+                               "F2": "F2", "F3": "F3", "EMPTY": "F6"}
     assert names["source_floor_names"] == {f["id"]: f.get("name") or f["id"] for f in s["floors"]}
+
+
+def test_coded_storeys_reserve_source_codes_before_aliases_and_fallbacks():
+    rows = [{"id": name, "z_floor": z} for z, name in enumerate((
+        "地下2层", "首层", "商业上层", "办公01", "Office Level 2", "23/F", "屋頂",
+        "上机房", "左机组甲", "贯通西梯", "unclassified annex", "GF", "U", "F11"))]
+    codes = public_storey_codes(rows)
+    assert codes == public_storey_codes(reversed(rows))
+    assert {name: codes[name] for name in ("地下2层", "首层", "办公01", "Office Level 2", "23/F", "屋頂")} == {
+        "地下2层": "B2", "首层": "G", "办公01": "O01", "Office Level 2": "O02", "23/F": "23F", "屋頂": "R"}
+    assert codes["U"] == "U" and codes["商业上层"] != "U"
+    assert codes["F11"] == "F11" and codes["unclassified annex"] != "F11"
+    assert (codes["上机房"], codes["左机组甲"], codes["贯通西梯"]) == ("RP01", "RP02", "S01")
+    assert len(set(codes.values())) == len(rows)
+    assert all(v.isascii() and v.isalnum() for v in codes.values())
+
+
+def test_zone_names_and_unmapped_display_fragments_never_expose_localized_ids():
+    s = source()
+    s["floors"][0]["name"] = "商业上层"
+    names = build_public_names(s)
+    assert names["floors"] == {"ground-original": "U"}
+    assert all(name.split("_")[1] == "U" for name in names["spaces"].values())
+    verts = [[0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]]
+    data = {"source_model": s, "surfaces": [{"name": "孤立墙", "verts": verts}],
+            "windows": [{"name": "旧窗", "parent": "旧父面", "verts": verts}],
+            "enclosure_regions": [{"boundary_id": "孤立墙", "condition": "unknown", "verts": verts}]}
+    mapped = viewer_names(data, {"孤立墙": [{"verts": verts}]}, names=names)
+    assert set(mapped["objects"]) == {"孤立墙", "旧窗", "旧父面"}
+    assert all(s.isascii() for values in (mapped["objects"].values(), mapped["regions"],
+                                          mapped["parts"]["孤立墙"], *mapped["edges"].values()) for s in values)
 
 
 def test_export_rejects_invented_roles_preserves_input_and_uses_unknown(tmp_path):
@@ -250,7 +282,7 @@ def test_repeated_directions_follow_existing_order_per_floor_and_use():
     s = build_source_bim(GeometryInput.model_validate(geometry), capability_profile="orthogonal_polygon")
     before = copy.deepcopy(s)
     names = s["public_names"]
-    assert names["scheme_version"] == "bim_names_v3"
+    assert names["scheme_version"] == "bim_names_v4"
     for fi in (1, 2):
         assert [names["spaces"][f"{fi}-south-{i}"].split("_")[2:] for i in range(4)] == [
             ["Office-Enclosed", direction] for direction in ("SW1", "SW2", "SE1", "SE2")]
