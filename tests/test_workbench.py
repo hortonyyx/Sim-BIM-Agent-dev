@@ -207,9 +207,21 @@ def test_text_only_block_and_output_resolution(workbench):
         assert client.get(base + private).status_code == 404
     opened = client.get(base + "Sim-BIM.html")
     assert opened.content == model and "content-disposition" not in opened.headers
+    assert opened.headers["cache-control"] == "no-store"
     download = client.get(base + "Sim-BIM.html?download=1")
     assert download.content == model
     assert download.headers["content-disposition"] == 'attachment; filename="Sim-BIM.html"'
+    for path in ("/static/viewer.html", "/static/viewer-draft.js"):
+        assert client.get(path).headers["cache-control"] == "no-store"
+
+    head = client.head(base + "Sim-BIM.html")
+    assert head.content == b"" and head.headers["etag"] == opened.headers["etag"]
+    revised = model + b"<p>O14</p>"
+    (directory / "Sim-BIM.html").write_bytes(revised)
+    changed = client.head(base + "Sim-BIM.html")
+    assert changed.headers["etag"] != head.headers["etag"]
+    for query in ({"rev": head.headers["etag"]}, {"download": "1"}):
+        assert client.get(base + "Sim-BIM.html", params=query).content == revised
 
 
 def test_recover_unreadable_workspace_and_reject_stale_language(workbench):

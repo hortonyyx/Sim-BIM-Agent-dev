@@ -211,6 +211,7 @@ def create_app(workbench=None, *, warm=True):
             if not file.is_file():
                 raise InputError("未找到结果。", "Result not found.", 404)
             download = request.query_params.get("download") == "1"
+            headers["Cache-Control"] = "no-store"
             return FileResponse(file, media_type="text/html", headers=headers,
                                 filename=VIEWER_FILENAME if download else None)
         # Previously issued reports have relative links into their original run.
@@ -259,7 +260,7 @@ def create_app(workbench=None, *, warm=True):
                 request.url.path != "/api/blocks" and not request.headers.get("content-type", "").startswith("application/json")):
             return JSONResponse({"error": "Invalid request type."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/") or request.url.path in {"/static/viewer.html", "/static/viewer-draft.js"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 

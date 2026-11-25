@@ -130,7 +130,7 @@ const SimBimViewerDraft = (() => {
     };
   }
 
-  function host(frame, path) {
+  function host(frame, path, openViewer) {
     if (!resultPath.test(path)) return false;
     let disconnect;
     window.addEventListener('message', event => {
@@ -151,7 +151,8 @@ const SimBimViewerDraft = (() => {
     });
     const viewerUrl = new URL(path, location.href);
     if (new URLSearchParams(location.search).get('lang') === 'zh-CN') viewerUrl.searchParams.set('lang', 'zh-CN');
-    frame.src = viewerUrl.href;
+    if (typeof openViewer === 'function') openViewer(viewerUrl);
+    else frame.src = viewerUrl.href;
     return true;
   }
   return {create, host};
