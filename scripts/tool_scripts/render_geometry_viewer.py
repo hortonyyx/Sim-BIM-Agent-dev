@@ -881,16 +881,19 @@ _APP_JS = r"""
     const [group,id]=surfaceBinding(u), attrs=GEO.inspection.properties[group]?.[id];
     const virtual=u.kind==='enclosure-region' || (u.kind==='opening' && component(u)==='Passage') ||
       SOURCE_BOUNDARIES[id]?.kind==='virtual' || attrs?.applicable===false;
-    const fallback=esc(msg(virtual ? 'Not applicable' : 'Not recorded'));
-    const tag=source=>source ? '<small class="source-tag">'+esc(source)+'</small>' : '';
+    const fallback=msg(virtual ? 'Not applicable' : 'Not recorded');
+    function field(label,value,source){
+      const tag=source ? '<small class="source-tag">'+esc(source)+'</small>' : '';
+      return '<div class="surface-attribute"><dt><span>'+esc(msg(label))+'</span>'+tag+'</dt><dd>'+
+        esc(value)+'</dd></div>';
+    }
     const material=!virtual && attrs?.material;
-    const thicknesses=regionalThicknesses(attrs,point);
-    const thickness=thicknesses.map(t=>'<span class="attr-value">'+esc(t.value_mm.toLocaleString(locale,{maximumFractionDigits:6}))+
-      ' mm'+tag(t.source)+'</span>').join('');
-    const observation=material ? esc(material[locale==='en'?'en':'zh']) : fallback;
-    return '<div class="surface-attributes"><div class="material-observation"><span>'+esc(msg('Material'))+'</span>'+
-      tag(material?.source)+'<p>'+observation+'</p></div><div class="surface-attribute"><span>'+esc(msg('Thickness'))+
-      '</span><div>'+(!virtual && thickness || fallback)+'</div></div></div>';
+    const thicknesses=virtual ? [] : regionalThicknesses(attrs,point);
+    const thickness=thicknesses.map(t=>field('Thickness',
+      t.value_mm.toLocaleString(locale,{maximumFractionDigits:6})+' mm',t.source)).join('');
+    return '<dl class="surface-attributes">'+
+      field('Material',material ? material[locale==='en'?'en':'zh'] : fallback,material?.source)+
+      (thickness || field('Thickness',fallback))+'</dl>';
   }
   function component(u){
     const key=u.name;
@@ -1436,15 +1439,11 @@ _STYLE = r"""
   .pick-metric b {font-size:19px;line-height:1.2;font-weight:630;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .pick-metric small {font-size:12px;font-weight:500;color:var(--muted);}
   .pick-fields:empty,.pick-metrics:empty {display:none;}
-  .surface-attributes {display:grid;gap:9px;padding:11px var(--card-inset) 12px;border-top:1px solid var(--line);}
-  .material-observation {display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:baseline;}
-  .material-observation>span {color:var(--muted);font-size:12px;}
-  .material-observation p {grid-column:1/-1;margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere;}
-  .surface-attribute {display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:12px;align-items:baseline;font-size:12px;}
-  .surface-attribute>span {color:var(--muted);}
-  .surface-attribute>div {text-align:right;overflow-wrap:anywhere;font-size:13px;font-weight:580;}
-  .attr-value {display:block;}
-  .source-tag {display:table;margin:2px 0 0 auto;padding:0 5px;color:#48576b;background:#eef1f5;border-radius:3px;font-size:11px;line-height:1.45;font-weight:500;}
+  .surface-attributes {display:grid;gap:10px;margin:0;padding:11px var(--card-inset) 12px;border-top:1px solid var(--line);}
+  .surface-attribute {display:grid;gap:3px;min-width:0;}
+  .surface-attribute dt {display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;}
+  .surface-attribute dd {margin:0;font-size:13px;line-height:1.45;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
+  .source-tag {flex:none;padding:0 5px;color:#48576b;background:#eef1f5;border-radius:3px;font-size:11px;line-height:1.45;font-weight:500;}
   .confidence-row {display:flex;gap:8px;align-items:baseline;justify-content:space-between;padding:10px var(--card-inset);border-top:1px solid var(--line);font-size:12px;}
   .confidence-row>span {color:var(--muted);}
   .confidence-row b {display:inline-flex;gap:5px;align-items:center;font-size:12px;text-align:right;}

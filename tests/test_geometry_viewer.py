@@ -446,10 +446,12 @@ console.log(JSON.stringify(result));
         assert ('Unassessed' if lang == 'en' else '未评估') in surface
         assert ('Not recorded' if lang == 'en' else '未记录') in surface
         assert ('Sill inferred' if lang == 'en' else '窗台推断') in window and '2 · ' in window
-        assert ('Glass' if lang == 'en' else '玻璃') in window and '24 mm' in window
-        for label in (("Material", "Thickness") if lang == "en" else ("材料", "厚度")):
-            assert f">{label}<" in window and f">{label}<" in surface
-        assert '>from material<' in window and '>from user<' in window
+        labels = ("Material", "Thickness") if lang == "en" else ("材料", "厚度")
+        values = ("Glass" if lang == "en" else "玻璃", "24 mm")
+        for label, value, source in zip(labels, values, ("from material", "from user")):
+            assert (f'<dt><span>{label}</span><small class="source-tag">{source}</small></dt>'
+                    f'<dd>{value}</dd>') in window
+            assert f'<dt><span>{label}</span></dt><dd>' in surface
         assert 'confidence-row' not in floor and 'confidence-row' not in edge
         assert 'class="pick-name">Z01_W1_Part2_Edge2<' in edge and 'class="kv"' not in edge
         assert length in edge and "4.00 <small>m<" in edge and edge.count('class="pick-metric"') == 1
