@@ -4,11 +4,15 @@
 
 ## 当前任务
 
-2026-11-27，桌面独立安装已更新到 `e0f9cc77`（开发版 domain-v203 / runtime-v72）。桌面「Sim-BIM 工作台」快捷方式指向安装目录的 `Start.cmd`。双击后用浏览器选择工作区、上传资料、设置模型、运行并查看结果。编辑页支持本地批注与北向草稿。根据批注重新建模仍待实现，桌面界面已移除原演示按钮。[前端设计与利苑记录](reports/2026-11-25_frontend_handoff.md)
+2026-11-27，桌面独立安装已更新到 `8ec028e9`（开发版 domain-v207 / runtime-v74）。双击桌面的「Sim-BIM 工作台」即可选择工作区、上传资料、设置模型、运行和查看结果。从历史成品进入 Edit，点选构件或填写整体说明，确认后生成独立子版本。工作台显示修订来源，可从子版本继续修改。下载的 HTML 支持离线查看和本地批注。[使用说明](../product/README.md) · [当前桌面安装核验](D:/Sim-BIM-Agent/cache/product-publish/verification/d0b6450384d041a99ef87c78ada45cc2/report.json)
 
 幸福中心在[桌面独立工作区](<C:/Users/Horton/Desktop/幸福中心工作区>)用原始 GLB、5–12 楼平面和建筑声明完成一次真实前端提交。主控与一名协作模型均为 GPT-6.1-Sol。期间自动恢复一次上游过载，63 分 08 秒后完成整栋交付并自动打开模型。从工作台下载的 HTML 与最终候选逐字节一致，断网打开、模型切换与运行历史已验证。建筑几何尚待人工评阅。[浏览器核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/browser-verified.json) · [交付核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/verified-delivery.json)
 
-旧安装的 Python 带有 Windows 低完整性标记，已完整保存在 `%LOCALAPPDATA%/Sim-BIM-Agent/desktop-migration-20261127/previous-installation`。新版在原桌面路径按发行锁重新建立专用环境，已通过[安装验收](D:/Sim-BIM-Agent/cache/product-publish/verification/dc90bb25fd934a2a81a07175aaf303ca/report.json)。本轮更新范围为本机桌面，公开发行继续使用原版本。
+本轮 Edit 从上述幸福中心成品派生。11 层单窗的窗台抬高 0.20 m，确认到交付 2 分 59 秒。将 118 扇外窗的窗顶统一降低 0.10 m 时，新版直接选出需要复核的 117 面宿主墙，同一成品和指令的耗时从 9 分 50 秒降为 4 分 07 秒。窗台、窗宽及前一版的 32 mm 玻璃均已逐项对照。整栋首建的耗时仍为单独的 P0。[运行、计时和几何差分](D:/Sim-BIM-Agent/cache/desktop-edit-20261127/acceptance.md)
+
+12 层两间走廊的共墙向南平移 0.10 m，6 分 54 秒交付。两间面积分别由 9.05 变为 8.66 m²、由 16.38 变为 16.77 m²。全部开口与连接保留，屋顶围护声明与原稿一致。从共墙新版继续设置北向 35°，31 秒交付，模型调用为零。安装核验覆盖 280 个发行文件，27 个相关测试模块合计 458 项通过。[共墙几何核验](D:/Sim-BIM-Agent/cache/desktop-edit-20261127/verification-run-20261127-175034-96b99b73.json) · [连续修订核验](D:/Sim-BIM-Agent/cache/desktop-edit-20261127/verification-run-20261127-175739-3e0f7fb2.json)
+
+旧安装的 Python 带有 Windows 低完整性标记，已完整保存在 `%LOCALAPPDATA%/Sim-BIM-Agent/desktop-migration-20261127/previous-installation`。独立运行环境沿用本机桌面安装专用的发行锁。[首次安装验收](D:/Sim-BIM-Agent/cache/product-publish/verification/dc90bb25fd934a2a81a07175aaf303ca/report.json)
 
 ## 后端迭代记录
 
