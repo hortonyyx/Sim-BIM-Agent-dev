@@ -4,7 +4,11 @@
 
 ## 当前任务
 
-2026-11-25 前端与交互轮已收工。开发版已从素材录入、Run、DeepSeek Harness 运行轨迹走到单文件 Sim-BIM 交付；Edit 批注和指北针可保存本地草稿，Rebuild 的后端仍待接入。接手从[前端交接](reports/2026-11-25_frontend_handoff.md)进入，内有利苑成品、启动方式、验收边界和下一步。日常开发仍可由会话直接调用管线，桌面独立产品按成熟版本另行发布。
+2026-11-27，桌面独立安装已更新到 `e0f9cc77`（开发版 domain-v203 / runtime-v72）。桌面「Sim-BIM 工作台」快捷方式指向安装目录的 `Start.cmd`。双击后用浏览器选择工作区、上传资料、设置模型、运行并查看结果。编辑页支持本地批注与北向草稿。根据批注重新建模仍待实现，桌面界面已移除原演示按钮。[前端设计与利苑记录](reports/2026-11-25_frontend_handoff.md)
+
+幸福中心在[桌面独立工作区](<C:/Users/Horton/Desktop/幸福中心工作区>)用原始 GLB、5–12 楼平面和建筑声明完成一次真实前端提交。主控与一名协作模型均为 GPT-6.1-Sol。期间自动恢复一次上游过载，63 分 08 秒后完成整栋交付并自动打开模型。从工作台下载的 HTML 与最终候选逐字节一致，断网打开、模型切换与运行历史已验证。建筑几何尚待人工评阅。[浏览器核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/browser-verified.json) · [交付核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/verified-delivery.json)
+
+旧安装的 Python 带有 Windows 低完整性标记，已完整保存在 `%LOCALAPPDATA%/Sim-BIM-Agent/desktop-migration-20261127/previous-installation`。新版在原桌面路径按发行锁重新建立专用环境，已通过[安装验收](D:/Sim-BIM-Agent/cache/product-publish/verification/dc90bb25fd934a2a81a07175aaf303ca/report.json)。本轮更新范围为本机桌面，公开发行继续使用原版本。
 
 ## 后端迭代记录
 

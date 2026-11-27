@@ -42,7 +42,7 @@ python scripts/release/desktop_release.py publish --tag "<release-id>" --notes-f
 
 成品由当前入口、真实工具和必要资源的运行闭包生成。旧 GT/独立评测、历史编排、RAG、EnergyPlus 服务/转换/运行以及 IDD/天气数据不进入包；退出的代码和版本通过 Git 历史追溯。案例、答案、实验记录、开发报告、tests、凭据和用户运行产物也不进入成品。
 
-构建从固定 Git 提交读取文件；普通源码保持提交字节，Windows `.cmd`、`.bat`、`.ps1` 显式输出 CRLF。产品依赖文件和当前版本登记由同一提交中的声明规则生成，manifest 的 `projection.file_origins` 记录每个文件的来源和转换。成品 `.gitattributes` 使用 `* -text` 保留已验收字节；Git 完整跟踪集合必须等于 manifest 文件集合加 `release-manifest.json`。发布用户说明来源于 `product/README.md`，无需在成品目录手工维护副本。
+构建从固定 Git 提交读取文件。普通源码保持提交字节，Windows `.cmd`、`.bat`、`.ps1` 显式输出 CRLF。产品依赖文件和当前版本登记由同一提交中的声明规则生成，manifest 的 `projection.file_origins` 记录每个文件的来源和转换。桌面受管文件与发行 ZIP 均为 manifest 中列出的文件加 `release-manifest.json`。成品 Git 另跟踪 `.gitattributes` 和 `.gitignore`，以 `* -text` 保留已验收字节，并用 `export-ignore` 将这两项排除于发行 ZIP。历史版本按各自的清单核验。发布用户说明来源于 `product/README.md`。
 
 `scripts/release/product_profile.json` 定义入口、动态资源、禁入子系统及依赖映射；`product_projection.py` 计算运行闭包，未声明的动态导入或禁入子系统会阻止构建。依赖范围变化时先运行 `python scripts/release/prepare_product_dependencies.py D:/Sim-BIM-Agent/cache/<new-dependency-stage>`，审阅生成的锁与元数据再提交。生成器复用开发锁版本，不能静默升级共同包。
 
