@@ -4,6 +4,10 @@
 
 ## 当前任务
 
+桌面成品已发布到 CRIBE-Lab/Sim-BIM-Agent 的 `main`，提交 `41d46d37`。发布核验已确认云端与桌面安装的 280 个发行文件一致，Release ZIP 的大小和 SHA-256 均通过校验。[桌面发行版 release-2026-11-27.1](https://github.com/CRIBE-Lab/Sim-BIM-Agent/releases/tag/release-2026-11-27.1)
+
+下一轮性能优化保留两个验收口径。对已有成品做数值类几何微调，例如抬高单窗窗台或统一降低一批外窗的窗顶，从用户确认到可打开修订结果的目标是 1 分钟以内。整栋首建耗时继续按 P0 单独跟踪，两者后续一起讨论优化方案。
+
 2026-11-27，桌面独立安装已更新到 `8ec028e9`（开发版 domain-v207 / runtime-v74）。双击桌面的「Sim-BIM 工作台」即可选择工作区、上传资料、设置模型、运行和查看结果。从历史成品进入 Edit，点选构件或填写整体说明，确认后生成独立子版本。工作台显示修订来源，可从子版本继续修改。下载的 HTML 支持离线查看和本地批注。[使用说明](../product/README.md) · [当前桌面安装核验](D:/Sim-BIM-Agent/cache/product-publish/verification/d0b6450384d041a99ef87c78ada45cc2/report.json)
 
 幸福中心在[桌面独立工作区](<C:/Users/Horton/Desktop/幸福中心工作区>)用原始 GLB、5–12 楼平面和建筑声明完成一次真实前端提交。主控与一名协作模型均为 GPT-6.1-Sol。期间自动恢复一次上游过载，63 分 08 秒后完成整栋交付并自动打开模型。从工作台下载的 HTML 与最终候选逐字节一致，断网打开、模型切换与运行历史已验证。建筑几何尚待人工评阅。[浏览器核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/browser-verified.json) · [交付核验](D:/Sim-BIM-Agent/cache/desktop-workbench-20261127/verified-delivery.json)
