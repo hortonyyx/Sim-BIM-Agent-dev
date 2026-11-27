@@ -15,6 +15,7 @@ from scripts.tool_scripts.bim_agent_inputs import read_building_input
 from src.agent.bim_inputs import validate_png
 from src.agent.geometry.thickness_options import normalize_candidates
 from src.agent_runtime.providers import is_custom_provider
+from src.agent_runtime.run_paths import inside_git_checkout
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCALES = ("zh-CN", "en")
@@ -76,6 +77,8 @@ def workspace_path(value):
     root = Path(value).resolve()
     if root == Path(root.anchor) or root.is_relative_to(ROOT) or (root.exists() and not root.is_dir()):
         raise InputError("请选择程序目录之外的独立文件夹。", "Choose a dedicated folder outside the application.")
+    if inside_git_checkout(root):
+        raise InputError("请选择 Git 仓库之外的工作区文件夹。", "Choose a workspace folder outside Git repositories.")
     return root
 
 

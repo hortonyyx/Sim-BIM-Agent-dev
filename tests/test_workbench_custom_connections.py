@@ -218,6 +218,7 @@ def test_run_rejects_connection_changed_in_another_tab(catalog, tmp_path, monkey
             assert client.post("/api/runs", json={**run, "connectionRevisions": revisions}).status_code == 409
         assert not (root / "runs").exists()
         monkeypatch.setattr(runs.subprocess, "Popen", lambda *args, **kwargs: None)
+        monkeypatch.setattr("src.dsh_runtime.product.installed_executable", lambda _: tmp_path / "DeepSeek Harness.exe")
         response = client.post("/api/runs", json={**run, "connectionRevisions": {provider: current["revision"]}})
         response.raise_for_status()
         config = json.loads((root / "runs" / response.json()["run"]["id"] / "case.json").read_bytes())

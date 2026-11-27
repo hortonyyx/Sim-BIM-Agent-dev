@@ -5,8 +5,23 @@ from PIL import Image
 import pytest
 
 from src.agent.runtime_configuration import argv_for, load_configuration
-from src.dsh_runtime.product import host_config, matches_frozen_scope, verify_resume_inputs
+from src.dsh_runtime.product import host_config, installed_executable, matches_frozen_scope, verify_resume_inputs
 from src.dsh_runtime.relay import native_name
+
+
+def test_harness_cli_can_be_at_a_different_depth(tmp_path, monkeypatch):
+    installation = tmp_path / "DeepSeek Harness"
+    cli = installation / "bin/dsh.cmd"
+    cli.parent.mkdir(parents=True)
+    cli.touch()
+    executable = installation / "DeepSeek Harness.exe"
+    executable.touch()
+    (installation / "resources").mkdir()
+    (installation / "resources/app.asar").touch()
+    monkeypatch.delenv("SIM_BIM_DSH_EXECUTABLE", raising=False)
+    monkeypatch.setattr("src.dsh_runtime.product.shutil.which", lambda name: str(cli))
+    monkeypatch.setattr("src.dsh_runtime.product._windows_installation", lambda: None)
+    assert installed_executable(None) == executable
 
 
 def project(tmp_path, **extra):

@@ -88,7 +88,7 @@ def freeze(root, target, draft):
     return materials, blocks
 
 
-def configuration(directory, draft, materials, blocks, *, connections=None):
+def configuration(directory, draft, materials, blocks, *, executable, connections=None):
     route = draft["coordinator"]
     revisions = {}
     custom = {}
@@ -101,6 +101,7 @@ def configuration(directory, draft, materials, blocks, *, connections=None):
             revisions[provider] = freeze_custom_connection(provider, expected_revision=entry["revision"])
             custom[provider] = entry
     case = {"case_id": directory.name, "mode": "orchestrator", "runtime": "dsh", "output": "production",
+            "dsh_executable": str(executable),
             "materials": materials, "blocks": blocks, "locale": draft["locale"],
             "thickness_candidates_mm": draft.get("thicknessCandidatesMm", {}),
             "scope": draft["taskBrief"].strip(),
@@ -139,6 +140,13 @@ def begin(root, revision, catalog, connection_revisions):
         previous = latest(root)
         if previous and previous["status"] == "running" and previous.get("revision") == revision:
             return previous
+        from src.dsh_runtime.product import installed_executable
+        try:
+            executable = installed_executable(None)
+        except (ValueError, OSError) as exc:
+            raise InputError("找不到建模所需的 DeepSeek Harness。请安装或修复其 Windows 桌面版，再次点击运行。",
+                             "DeepSeek Harness could not be found. Install or repair its Windows desktop app, then run again.",
+                             503) from exc
         identity = time.strftime("run-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
         directory = run_dir(root, identity)
         directory.parent.mkdir(exist_ok=True)
@@ -147,7 +155,7 @@ def begin(root, revision, catalog, connection_revisions):
             prepared.mkdir()
             materials, blocks = freeze(root, prepared, draft)
             save_json(prepared / "case.json", configuration(directory, draft, materials, blocks,
-                      connections=indexed))
+                      executable=executable, connections=indexed))
             started = {"id": identity, "status": "running", "revision": revision, "message": ""}
             save_json(prepared / "status.json", started)
             prepared.rename(directory)

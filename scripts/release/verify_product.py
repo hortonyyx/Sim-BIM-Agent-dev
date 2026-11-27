@@ -242,6 +242,31 @@ def _check_demo(product, output, demo):
             "browser_rendering": "not_exercised", "drawing_fidelity": "not_evaluated"}
 
 
+async def _workbench_probe(output):
+    """Submit source material through the installed app's actual form parser."""
+    import httpx
+    from src.workbench.server import create_app
+
+    origin = "http://127.0.0.1"
+    workspace = str(output / "workbench-project")
+    png = (output / "input-routes/inputs/my-building/plan.png").read_bytes()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(warm=False)),
+                                 base_url=origin, headers={"Origin": origin}) as client:
+        for path in ("/", "/static/app.js", "/static/run.html", "/static/run.js",
+                     "/static/viewer.html", "/static/viewer-draft.js"):
+            (await client.get(path)).raise_for_status()
+        selected = await client.post("/api/workspace", json={"path": workspace})
+        selected.raise_for_status()
+        revision = selected.json()["project"]["revision"]
+        uploaded = await client.post("/api/blocks", data={"workspace": workspace, "revision": str(revision)},
+                                     files={"files": ("plan.png", png, "image/png")})
+        uploaded.raise_for_status()
+        asset = uploaded.json()["project"]["blocks"][0]["assets"][0]
+        _require((await client.get(asset["url"])).content == png, "Workbench material did not round-trip")
+        _require((await client.get("/api/runs")).json()["runs"] == [], "Offline workspace has unexpected runs")
+    return {"passed": True, "workspace": workspace, "uploaded": asset["name"], "live_model_requests": 0}
+
+
 def _response(tool=False):
     message = {"role": "assistant", "content": None if tool else "Offline MCP inputs received."}
     if tool:
@@ -423,6 +448,8 @@ def _worker(args):
         report["module_specs"] = _all_module_specs(product)
         report["demo"] = _check_demo(product, output, _cli(product, ["demo", "--output", str(output / "demo")]))
         report["input_routes"] = asyncio.run(_input_routes_probe(product, output))
+        if (product / "src/workbench/server.py").is_file():
+            report["workbench"] = asyncio.run(_workbench_probe(output))
         report["runtime"] = asyncio.run(_runtime_probe(product, output))
         report["loaded_project_modules"] = _loaded_origins(product)
         _require(not (output / "blocked-network.jsonl").exists(), "A network attempt was blocked; inspect evidence")

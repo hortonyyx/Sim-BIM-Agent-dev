@@ -133,6 +133,7 @@ ANNOTATION_JS = r"""
       }
       confirm.disabled=!input.value.trim();remove.hidden=!editingId;
       form.hidden=!editView || !targets.length;
+      $('editHint').hidden=!pending();
       fitText();
     }
     function pickTarget(hit,kind,extend){
@@ -176,7 +177,7 @@ ANNOTATION_JS = r"""
     input.oninput=()=>{
       fitText();
       confirm.disabled=!input.value.trim();
-      if(!pending()) $('editHint').hidden=true;
+      $('editHint').hidden=!pending();
     };
     window.addEventListener('keydown',event=>{
       if(!editView || !targets.length || event.isComposing) return;
@@ -283,6 +284,6 @@ ANNOTATION_JS = r"""
         });
       });
     }
-    return {highlighted,pickTarget,cancel,pending,sync,frame};
+    return {highlighted,pickTarget,cancel,sync,frame};
   })();
 """

@@ -219,7 +219,7 @@ function newDialog(type,title) {
   $('dialog-title').textContent=title;
   $('dialog-body').replaceChildren(); dialog.showModal(); return $('dialog-body');
 }
-function workspaceDialog() {
+function workspaceDialog(onSelected) {
   const root=newDialog('workspace',t('workspace'));
   const field=el('label','dialog-field',t('path')), input=el('input');
   input.type='text';input.placeholder=t('pathHint'); input.value=state.workspace ?? '';field.append(input);
@@ -230,7 +230,7 @@ function workspaceDialog() {
     const oldWorkspace=state.workspace, oldFields={...fields};
     actions.querySelectorAll('button').forEach(b=>b.disabled=true); note.textContent=t('statusPending');
     try {
-      await enqueue(async()=>{
+      const selected=await enqueue(async()=>{
         await saveProject(); const next=await request('workspace',args);
         if (!next.workspace || next.workspace===oldWorkspace) {note.textContent='';return;}
         if (oldWorkspace) resetDraft();
@@ -243,8 +243,9 @@ function workspaceDialog() {
           fields.taskBrief=oldFields.taskBrief;
           $('task-brief').value=fields.taskBrief; await saveProject();
         }
-        $('dialog').close();notice('');render();
+        $('dialog').close();notice('');render();return true;
       });
+      if (selected && onSelected) onSelected();
       if (args.path && state.workspace===oldWorkspace && args.path===oldWorkspace) $('dialog').close();
     } catch (e) {note.textContent=mark(t('error'),e.message); note.classList.add('error');}
     finally {actions.querySelectorAll('button').forEach(b=>b.disabled=false);if (note.textContent===t('statusPending')) note.textContent='';}
@@ -460,7 +461,7 @@ function renderBlocks() {
 }
 function submitBlock() {
   if (!draft.length && !$('caption').value.trim()) {notice(t('emptyBlock'),true);return;}
-  if (!state.workspace) {workspaceDialog();return;}
+  if (!state.workspace) {workspaceDialog(submitBlock);return;}
   const caption=$('caption').value, entries=[...draft], blockId=editing;
   act(async()=>{
     await saveProject();
@@ -491,7 +492,7 @@ async function setLanguage(locale) {
 function initialize() {
   document.querySelectorAll('i[data-icon]').forEach(node=>node.replaceWith(icon(node.dataset.icon)));
   render();
-  $('settings').onclick=settingsDialog; $('workspace').onclick=workspaceDialog; $('workers').onclick=workerDialog;
+  $('settings').onclick=settingsDialog; $('workspace').onclick=()=>workspaceDialog(); $('workers').onclick=workerDialog;
   $('coordinator').onchange=e=>{
     if (e.target.value==='settings') {renderModels();settingsDialog();return;}
     fields.coordinator=e.target.value ? parseModel(e.target.value) : null;saveModelSelection();
@@ -515,6 +516,7 @@ function initialize() {
   $('task-brief').oninput=e=>{fields.taskBrief=e.target.value;queueSave();renderRun();};
   $('task-brief').onblur=()=>{if (dirtyFields()) enqueue(()=>saveProject()).catch(()=>{});};
   $('add').onclick=submitBlock;
+  window.addEventListener('pageshow',event=>{if (event.persisted) watchRun();});
   $('run').onclick=()=>{
     thickness.finishInput();
     // Capture the catalog shown at click time, before any queued save or background refresh.

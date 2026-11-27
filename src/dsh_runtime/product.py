@@ -48,8 +48,14 @@ def installed_executable(configured: str | None) -> Path:
         executable = Path(explicit).expanduser().resolve()
     else:
         cli = shutil.which("dsh.cmd")
-        executable = (Path(cli).resolve().parents[4] / "DeepSeek Harness.exe" if cli else None)
-        if os.name == "nt" and (executable is None or not executable.is_file()):
+        executable = None
+        if cli:
+            for parent in Path(cli).resolve().parents:
+                candidate = parent / "DeepSeek Harness.exe"
+                if candidate.is_file() and (parent / "resources/app.asar").is_file():
+                    executable = candidate
+                    break
+        if os.name == "nt" and executable is None:
             executable = _windows_installation()
         if executable is None:
             raise ValueError("set dsh_executable to the installed DeepSeek Harness.exe or add dsh.cmd to PATH")

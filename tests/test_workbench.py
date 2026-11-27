@@ -10,7 +10,7 @@ from src.agent.runtime_configuration import load_configuration
 from src.agent.runtime_entry import prepare_inputs
 from src.workbench import runs
 from src.workbench.server import Workbench, create_app
-from src.workbench.storage import read_json
+from src.workbench.storage import read_json, save_json
 
 
 ORIGIN = "http://127.0.0.1"
@@ -21,6 +21,11 @@ WORKER = {"provider": "deepseek", "model": "deepseek-flash"}
 @pytest.fixture
 def workbench(tmp_path, monkeypatch):
     monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(tmp_path / "settings"))
+    executable = tmp_path / "DeepSeek Harness.exe"
+    executable.touch()
+    (tmp_path / "resources").mkdir()
+    (tmp_path / "resources/app.asar").touch()
+    monkeypatch.setenv("SIM_BIM_DSH_EXECUTABLE", str(executable))
     backend = Workbench()
     monkeypatch.setattr(backend.connections, "view", lambda _: [
         {"provider": s["provider"], "connected": True, "models": [{"id": s["model"], "name": s["model"]}]}
@@ -31,10 +36,61 @@ def workbench(tmp_path, monkeypatch):
     return client, root
 
 
+def test_installed_workbench_remembers_its_own_workspace(tmp_path, monkeypatch):
+    from src.workbench import server
+    program = tmp_path / "product"
+    program.mkdir()
+    settings = tmp_path / "settings"
+    monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(settings))
+    monkeypatch.setattr(server, "ROOT", program)
+    monkeypatch.setattr(server.Connections, "view", lambda self, locale: [])
+    developer = {"locale": "en", "workspace": str(tmp_path / "dev-workspace")}
+    save_json(settings / "preferences.json", developer)
+    (program / "release-manifest.json").touch()
+    app = Workbench()
+    assert app.prefs == {"locale": "zh-CN", "workspace": None}
+    app.select({"path": str(tmp_path / "first-project")})
+    assert Workbench().prefs == {"locale": "zh-CN", "workspace": str(tmp_path / "first-project")}
+    assert read_json(settings / "preferences.json") == developer
+
+
 def png(color):
     out = io.BytesIO()
     Image.new("RGB", (10, 12), color).save(out, format="PNG")
     return out.getvalue()
+
+
+def test_second_launch_reopens_only_the_same_installation(tmp_path, monkeypatch):
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+    from src.workbench import server
+
+    monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(tmp_path))
+    identity = server.installation_id()
+    opened = []
+    monkeypatch.setattr(server.webbrowser, "open", opened.append)
+
+    class Instance(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.path == "/api/instance"
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"product": "Sim-BIM Agent", "installation": identity}).encode())
+
+    with HTTPServer(("127.0.0.1", 0), Instance) as peer:
+        port = peer.server_port
+        thread = threading.Thread(target=peer.serve_forever, daemon=True)
+        thread.start()
+        try:
+            assert server.serve(port) == 0
+            assert opened == [f"http://127.0.0.1:{port}/"]
+            monkeypatch.setenv("SIM_BIM_WORKBENCH_HOME", str(tmp_path / "other"))
+            with pytest.raises(ValueError, match="Cannot open local port"):
+                server.serve(port)
+            assert len(opened) == 1
+        finally:
+            peer.shutdown()
+            thread.join()
 
 
 def test_chinese_run_keeps_english_object_identifiers_and_original_filenames(tmp_path):
@@ -73,7 +129,7 @@ def test_kickoff_migrates_only_unchanged_legacy_text_and_freezes_empty(workbench
     work = tmp_path / "run"
     project = read_project(root)
     materials, blocks = runs.freeze(root, work, project)
-    config = runs.configuration(work, project, materials, blocks)
+    config = runs.configuration(work, project, materials, blocks, executable=tmp_path / "DeepSeek Harness.exe")
     config_path = work / "case.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
     assert load_configuration(config_path)["cases"][0]["scope"] == read_json(work / "input.json")["taskBrief"] == ""
@@ -97,6 +153,11 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
     state = client.post("/api/preferences", json={"locale": "en", "workspace": str(root), "revision": 2}).json()
     assert state["project"]["taskBrief"] == payload["taskBrief"]
     revision = state["project"]["revision"]
+    with monkeypatch.context() as missing:
+        missing.setenv("SIM_BIM_DSH_EXECUTABLE", str(tmp_path / "missing.exe"))
+        denied = client.post("/api/runs", json={"workspace": str(root), "revision": revision})
+        assert denied.status_code == 503 and "DeepSeek Harness" in denied.json()["error"]
+        assert not (root / "runs").exists()
     called = []
     monkeypatch.setattr(runs.subprocess, "Popen", lambda *args, **kwargs: called.append(args))
     result = client.post("/api/runs", json={"workspace": str(root), "revision": revision}).json()["run"]
@@ -107,6 +168,7 @@ def test_order_caption_copy_and_production_config(workbench, monkeypatch, tmp_pa
     assert len(called) == 1
     monkeypatch.undo()  # restore subprocess before validating the actual CLI case
     case = load_configuration(directory / "case.json")["cases"][0]
+    assert case["dsh_executable"] == str(tmp_path / "DeepSeek Harness.exe")
     assert case["provider"] == COORD["provider"] and case["workers"] == [WORKER]
     frozen = read_json(directory / "input.json")
     expected = {"glazing": [16.8, 24], "horizontal": [160.5, 200]}
@@ -174,6 +236,23 @@ def test_atomic_import_block_edit_and_workspace_guards(workbench):
     assert client.post("/api/workspace", json={"path": str(other)}).status_code == 400
     assert read_json(other / "project.json") == {"foreign": True}
     assert client.get("/api/state").json()["workspace"] == str(root)
+
+
+@pytest.mark.parametrize("linked", [False, True], ids=["repository", "linked-worktree"])
+def test_workspace_rejects_git_checkout_before_writing(workbench, tmp_path, linked):
+    client, current = workbench
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    marker = checkout / ".git"
+    if linked:
+        marker.write_text("gitdir: ../parent/.git/worktrees/checkout", encoding="utf-8")
+    else:
+        marker.mkdir()
+    for target in (checkout, checkout / "new-project"):
+        response = client.post("/api/workspace", json={"path": str(target)})
+        assert response.status_code == 400 and "Git" in response.json()["error"]
+        assert list(checkout.iterdir()) == [marker]
+    assert client.get("/api/state").json()["workspace"] == str(current)
 
 
 def test_text_only_block_and_output_resolution(workbench):

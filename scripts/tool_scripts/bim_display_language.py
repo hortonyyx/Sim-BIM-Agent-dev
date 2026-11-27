@@ -396,14 +396,12 @@ def localize_template(template: str, locale: str, *, javascript: bool = False) -
 
 _VIEWER_LABELS = {
     "Model": "模型", "Confidence": "置信度", "Viewer mode": "查看模式", "Spatial confidence": "空间置信度",
-    "Edit": "编辑", "Overall changes": "整体调整", "Rebuild": "重新构建",
+    "Edit": "编辑", "Overall changes": "整体调整",
     "Describe changes to the model…": "填写整体调整说明…",
     "Confirm the object note or click empty space to discard it.": "请先点勾确认当前批注，或点空白处取消。",
     "Changes are available in this tab only.": "修改仅保留在当前页面。",
-    "Preview rebuild?": "预览重建流程？",
-    "Return to Model with the current geometry. Your notes stay in Edit for the next round.": "确认后将返回当前模型，几何保持原样。可以回到编辑页继续修改批注。",
-    "Cancel": "取消", "Confirm preview": "确认预览",
-    "Preview complete. Your notes are in Edit.": "预览完成，批注已保留在编辑页。",
+    "Notes are saved in this browser for this model.": "整体说明和已确认的批注保存在当前浏览器中，可再次打开此模型查看。",
+    "Cancel": "取消",
     "Unassessed": "未评估", "Assumed": "假设建模", "Indirect support": "间接佐证", "Partial support": "部分佐证",
     "Strong support": "充分佐证", "Direct evidence": "直接证据", "Evidence and reasoning": "查看依据",
     "Material": "材料", "Thickness": "厚度", "Not applicable": "不适用", "Not recorded": "未记录",

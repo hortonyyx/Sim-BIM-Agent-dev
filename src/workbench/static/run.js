@@ -53,6 +53,8 @@ function renderHeader() {
   $('run-meta').replaceChildren(fragment);
   const target=deliveryUrl(), link=$('delivery-link');
   link.hidden=!target;if (target) link.href=target.href;
+  const download=$('download-link');download.hidden=!target;
+  if (target) download.href=target.hash.slice(1)+'?download=1';
   const warning=error ? t(error) : (run?.status==='failed'?run.message:'');
   $('run-error').textContent=warning || '';$('run-error').hidden=!warning;
   $('events-placeholder').hidden=!!events.size;

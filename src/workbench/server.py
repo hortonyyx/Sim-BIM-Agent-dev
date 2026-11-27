@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hashlib
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
@@ -26,10 +28,16 @@ from src.agent.geometry.thickness_options import PRESETS_MM
 from .connections import Connections
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
 from .trace import run_history, trace_page
-from .storage import (LOCALES, InputError, add_block, app_data, client_project, inside, locked, new_project,
+from .storage import (LOCALES, ROOT, InputError, add_block, app_data, client_project, inside, locked, new_project,
                       open_project, persist, read_json, read_project, revision_check, save_json, update_project, workspace_path)
 
 STATIC = Path(__file__).with_name("static")
+
+
+def installation_id():
+    # Browser annotations belong to this origin across restarts and updates.
+    roots = (ROOT, app_data().resolve())
+    return hashlib.sha256(b"\0".join(os.fsencode(os.path.normcase(path)) for path in roots)).hexdigest()
 
 
 def native_folder(initial):
@@ -60,7 +68,9 @@ finally { $dialog.Dispose(); $window.Dispose() }
 
 class Workbench:
     def __init__(self):
-        self.preferences = app_data() / "preferences.json"
+        # Keep the installed app's last workspace separate from a development checkout.
+        name = "desktop-preferences.json" if (ROOT / "release-manifest.json").is_file() else "preferences.json"
+        self.preferences = app_data() / name
         try:
             saved = read_json(self.preferences)
         except (ValueError, OSError):
@@ -141,6 +151,9 @@ def create_app(workbench=None, *, warm=True):
 
     async def home(_):
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+    async def instance(_):
+        return JSONResponse({"product": "Sim-BIM Agent", "installation": installation_id()})
 
     async def state(_):
         return JSONResponse(await run_in_threadpool(service.snapshot))
@@ -242,7 +255,7 @@ def create_app(workbench=None, *, warm=True):
         return JSONResponse({"error": "请求格式无效。" if service.prefs["locale"] == "zh-CN" else "Invalid request."}, status_code=400)
 
     app = Starlette(lifespan=lifespan, exception_handlers={InputError: input_error, ValueError: malformed, KeyError: malformed},
-        routes=[Route("/", home), Route("/api/state", state), Route("/api/run", run_status),
+        routes=[Route("/", home), Route("/api/instance", instance), Route("/api/state", state), Route("/api/run", run_status),
                 Route("/api/run/trace", run_trace), Route("/api/runs", history),
                 Route("/api/assets/{asset_id}", asset), Route("/api/{action}", api, methods=["POST"]),
                 Route("/results/{tag}/{run_id}/{file:path}", output),
@@ -268,15 +281,43 @@ def create_app(workbench=None, *, warm=True):
     return app
 
 
-def serve(port=0, open_browser=True):
-    app = create_app()
+def _running_installation(port, identity):
+    connection = HTTPConnection("127.0.0.1", port, timeout=4)
+    try:
+        connection.request("GET", "/api/instance")
+        response = connection.getresponse()
+        return (response.status == 200 and
+                json.loads(response.read(512)) == {"product": "Sim-BIM Agent", "installation": identity})
+    except (OSError, HTTPException, ValueError):
+        return False
+    finally:
+        connection.close()
+
+
+def serve(port=None, open_browser=True):
+    identity = installation_id()
+    if port is None:
+        port = 20000 + int(identity[:8], 16) % 20000
+    if not 0 <= port <= 65535:
+        raise ValueError("Choose a local port between 0 and 65535.")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", port))
+        if os.name != "nt":
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError as exc:
+            if not port or not _running_installation(port, identity):
+                raise ValueError(f"Cannot open local port {port}. Close the application using it and reopen Sim-BIM Agent.") from exc
+            url = f"http://127.0.0.1:{port}/"
+            print(url, flush=True)
+            if open_browser:
+                webbrowser.open(url)
+            return 0
         listener.listen()
         url = f"http://127.0.0.1:{listener.getsockname()[1]}/"
         print(url, flush=True)
         if open_browser:
             threading.Timer(0.45, webbrowser.open, args=[url]).start()
-        server = uvicorn.Server(uvicorn.Config(app, access_log=False, log_level="warning"))
+        server = uvicorn.Server(uvicorn.Config(create_app(), access_log=False, log_level="warning"))
         server.run(sockets=[listener])
     return 0

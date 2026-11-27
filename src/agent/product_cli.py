@@ -78,7 +78,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="Sim-BIM Agent", description="Generate and inspect lightweight BIM.")
     commands = parser.add_subparsers(dest="action")
     desk = commands.add_parser("workbench", help="open the local modelling workspace in your browser")
-    desk.add_argument("--port", type=int, default=0)
+    desk.add_argument("--port", type=int, help="override the installation's local port (0 chooses any free port)")
     desk.add_argument("--no-browser", action="store_true")
     commands.add_parser("doctor", help="verify installed files and dependencies without contacting a model")
     sample = commands.add_parser("demo", help="build a small synthetic BIM locally, without a model")

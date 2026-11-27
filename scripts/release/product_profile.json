@@ -47,8 +47,6 @@
     "README.md",
     "Start.cmd",
     "setup.ps1",
-    ".gitignore",
-    ".gitattributes",
     "config.example.json",
     "config.mesh.example.json",
     "config.orchestrator.example.json",

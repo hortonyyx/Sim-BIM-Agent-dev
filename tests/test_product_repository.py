@@ -52,6 +52,33 @@ def publish(root, repository, report):
     commit(repository)
 
 
+def test_git_rules_stay_in_publication_checkout_and_out_of_new_zip(tmp_path):
+    import io
+    import zipfile
+
+    repo = tmp_path / "product"
+    initialize(repo)
+    old, new = tmp_path / "old", tmp_path / "new"
+    publish(old, repo, release(old, "a"))
+    report = release(new, "b")
+    manifest = json.loads((new / publisher.MANIFEST).read_bytes())
+    for name in publisher.GIT_FILES:
+        (new / name).unlink()
+        del manifest["files"][name]
+    (new / publisher.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    evidence = json.loads(report.read_bytes())
+    evidence["release_manifest_sha256"] = publisher.digest(new / publisher.MANIFEST)
+    report.write_text(json.dumps(evidence), encoding="utf-8")
+    publish(new, repo, report)
+    assert publisher.repository_state(repo) == manifest
+    with zipfile.ZipFile(io.BytesIO(command(repo, "archive", "--format=zip", "HEAD"))) as archive:
+        assert set(archive.namelist()) - {n for n in archive.namelist() if n.endswith("/")} == set(manifest["files"]) | {publisher.MANIFEST}
+        assert all(hashlib.sha256(archive.read(name)).hexdigest() == digest for name, digest in manifest["files"].items())
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "-c", "core.autocrlf=true", "clone", "--local", str(repo), str(clone)], check=True)
+    assert publisher.repository_state(clone) == manifest
+
+
 def test_roundtrip_removes_retired_files_preserves_local_environment_and_clone_bytes(tmp_path):
     repo = tmp_path / "product"
     initialize(repo)

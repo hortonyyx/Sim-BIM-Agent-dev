@@ -1,208 +1,48 @@
 # Sim-BIM Agent
 
-将建筑图纸和带贴图的三维网格转换为轻量建筑信息模型。
+Sim-BIM Agent 将平面图、立面图和带贴图的三维网格转换为可交互的建筑模型。模型包含楼层、空间、边界、门窗及连接关系，可以保存为一个可离线打开的 HTML 文件。
 
-Sim-BIM Agent 结合模型的视觉理解与建筑建模工具，生成包含楼层、空间、边界、门窗和连接关系的 **Sim-BIM**，并提供可在浏览器中打开的三维查看器。
+## 从工作台开始
 
-**当前版本：Windows · PNG 图纸 / GLB 网格 · 独立 HTML 模型**
+1. 在 Windows 中双击 `Start.cmd`。工作台会在默认浏览器中打开。已经启动时，再次双击可重新打开同一个工作台。
+2. 点击「工作区」，为这栋建筑选择一个独立的文件夹。素材、草稿和历次结果都保存在这里。首次使用可以选择空文件夹。
+3. 在「模型设置」中登录 ChatGPT，或连接 DeepSeek 官方 API 或自定义模型服务。获取模型列表后，在任务配置中选择主控模型。协作模型可留空。
+4. 拖入 PNG 图纸、GLB 网格或建筑说明 JSON，并点击「添加素材组」。每次任务至少需要一张 PNG 或一个 GLB，最多使用一个 GLB。可以分组描述资料的楼层、朝向和已知尺寸，再在「建筑概况」中填写整栋建筑的情况。
+5. 点击「运行」。在「运行记录」中查看建模进度与步骤，完成后打开 Sim-BIM。可切换楼层、检查空间和构件，并在查看器中记录批注。
+6. 点击「下载 HTML」保存模型文件，或在工作区的 `runs/<运行编号>/Sim-BIM.html` 找到它。复制这一个文件即可在其他电脑上查看模型。
 
-[下载最新版本](https://github.com/CRIBE-Lab/Sim-BIM-Agent/releases/latest) · [版本记录](https://github.com/CRIBE-Lab/Sim-BIM-Agent/releases) · [反馈问题](https://github.com/CRIBE-Lab/Sim-BIM-Agent/issues)
+生成结果中的尺寸、空间划分、开口与连接关系需要结合原始资料核对。模型批注保存在当前浏览器中，请使用同一浏览器从工作台重新打开对应模型。
 
-## 可以做什么
+关闭浏览器后，已提交的任务继续在本机运行。保持电脑开机并连通模型服务。再次打开工作台并选择同一工作区，即可查看运行历史。需要退出工作台服务时，从任务栏还原名为「Sim-BIM Agent」的窗口并关闭它。
 
-- **从图纸建模**：结合平面图与立面图，组织建筑空间、边界、门窗及连接关系。
-- **从三维网格重建**：读取带贴图的建筑 GLB，结合辅助图纸和文字说明，还原外形、楼层关系和外窗，并补充内部空间。
-- **查看与保留结果**　在浏览器中打开 Sim-BIM 模型。下载一份 HTML 就能离线查看或分享。
-- **记录建模依据**：结果保留假设、冲突和未解决事项，便于检查模型对资料的理解。
+## 安装与模型连接
 
-## 安装与快速体验
+已安装的桌面版可直接双击启动。首次从发行包安装时，把 ZIP 解压到独立目录，准备 Windows、uv 和 Python 3.12，在该目录的 PowerShell 执行 `./setup.ps1`。安装器按锁定版本下载依赖并检查环境。工作台执行建模任务还需要在本机安装 DeepSeek Harness；安装后工作台会自动查找它。
 
-准备 Windows、Python 3.12 和 uv，并确保终端可以运行 `uv`。
+- **ChatGPT**　点击「登录 ChatGPT」，在打开的网页完成授权，然后获取模型列表。可用型号以账号返回为准。
+- **DeepSeek**　在「模型设置」中填写官方 API Key 并保存。服务商按账户用量计费。
+- **自定义服务**　点击「添加模型 API」，填写名称、服务的 Base URL 及所需密钥。工作台支持 OpenAI 兼容的 Chat Completions 接口，可自动获取模型列表，也可手填模型 ID。主控模型需要支持工具调用，读图的模型还需要支持图像输入。
 
-1. 在 [最新版本](https://github.com/CRIBE-Lab/Sim-BIM-Agent/releases/latest) 的附件中下载 `Sim-BIM-Agent-*.zip`。
-2. 解压到一个独立目录，在该目录打开 PowerShell。
-3. 安装并检查环境：
+建模时，任务所需的资料会发送到所选模型服务。模型连接与凭据保存在本机用户目录。工作区的 `materials/` 保存素材副本，`project.json` 保存已添加的素材组和任务配置，`runs/` 保存每次任务的输入快照、运行记录和交付文件。
+
+## 命令行
+
+也可以用命令行进行本机检查或重复执行已经配置好的任务。以下命令从程序目录的 PowerShell 执行。
 
 ```powershell
-./setup.ps1
 ./Start.cmd doctor
-```
-
-首次安装需要联网下载依赖。看到 `"status": "ready"` 后即可继续。
-
-双击 `Start.cmd` 在默认浏览器中打开本地工作台。选择工作区后，可以把 PNG、GLB 或建筑说明 JSON 拖入，填写组说明并加入素材栏。点开始建模前可修改总说明、主控模型和可选 worker。界面、建模说明及新生成的 HTML 支持中文和英文。
-
-模型设置预置了 ChatGPT 订阅和 DeepSeek 官方 API，DeepSeek 使用自己的 Key 按用量计费。要接入其他服务，在设置中添加连接，填写名称、服务的 API Base URL（例如 `https://example.com/v1`）及所需密钥，获取模型列表或手填模型 ID。自定义连接使用 OpenAI 兼容的 Chat Completions 接口。建模主控需要工具调用能力，承担读图任务的模型还需要支持图像输入。保存后即可在主控和 worker 列表中选择。
-
-点开始建模后，任务由本机后台进程执行。可以关闭浏览器和 Codex 会话，保持电脑开机并可访问模型服务。再次启动工作台、打开同一工作区即可查看最近一次运行的状态和结果。
-
-工作台把原始素材复制到工作区的 `materials/`，草稿保存在 `project.json`，每次运行的输入快照、日志和交付结果在 `runs/`。配置与凭据保存在本机用户目录。
-
-可以先运行一个不需要模型账号的本地示例：
-
-```powershell
 ./Start.cmd demo --output D:/Sim-BIM-Data/demo-001
 ```
 
-示例会生成一个两房间模型。用浏览器打开返回的 `viewer` 路径，即输出目录中的 `Sim-BIM.html`。再次体验时换一个新的输出目录，例如 `demo-002`。
+`doctor` 检查本机安装。`demo` 使用内置的两房间合成平面生成示例 HTML，可在没有模型账号时使用。输出目录需要是一个新目录。
 
-## 准备建筑资料
-
-本开发版本的新任务从[统一调度器](#统一调度器开发构建)开始。把同一栋建筑的资料放进一份材料清单，主控会结合各来源决定空间划分、建模细度、委派和复核。下表中的旧模板仍可用于运行原有任务。
-
-| 输入 | 支持内容 | 使用模板 |
-|---|---|---|
-| 建筑图纸 | 同一建筑的平面、立面 PNG 图片 | [config.example.json](config.example.json) |
-| 三维网格 | 几何与贴图包含在文件内的 GLB；可附辅助 PNG 和建筑说明 | [config.mesh.example.json](config.mesh.example.json) |
-
-建议把资料、配置和结果放在独立的数据目录，便于更换程序版本：
-
-```text
-D:/Sim-BIM-Data/
-├─ inputs/
-│  └─ building-a/
-│     ├─ drawings/        平面、立面 PNG
-│     ├─ building.glb     三维网格
-│     ├─ auxiliary/       可选的辅助 PNG
-│     └─ building.json    可选的建筑说明
-├─ config/
-│  ├─ drawings.json
-│  ├─ mesh.json
-│  └─ deepseek.env
-└─ runs/
-```
-
-根据输入复制一份模板到 `config` 目录，分别命名为 `drawings.json` 或 `mesh.json`，并修改以下字段：
-
-| 字段 | 填写方式 |
-|---|---|
-| `input_root` | 输入根目录，例如 `D:/Sim-BIM-Data/inputs` |
-| `run_root` | 结果目录，例如 `D:/Sim-BIM-Data/runs` |
-| `cases` 中的 `input` | 相对输入根目录的路径：图纸为 `building-a/drawings`，网格为 `building-a/building.glb` |
-| `cases` 中的 `output` | 本次任务的结果目录名；每次新建任务使用新名字 |
-| `cases` 中的 `scope` | 在任务说明中补充建筑用途、已知尺寸、材料含义和建模要求 |
-
-图纸模式读取指定目录直接包含的 PNG，文件名应便于辨认楼层或立面方向。当前图纸入口不读取 PDF、JPEG 或子目录中的图片。
-
-网格模式中，`auxiliary_images` 和 `building_input` 分别填写辅助图片目录与建筑说明文件的相对路径。**只有 GLB 时，删除这两个可选字段即可。** 有辅助材料时，按上面的目录示例分别填写 `building-a/auxiliary` 和 `building-a/building.json`。
-
-建筑说明使用 UTF-8 JSON，例如：
-
-```json
-{
-  "task_brief": "重建办公楼，优先保留外形、楼层关系和外窗。",
-  "confirmed_facts": ["所附平面图对应第五层"],
-  "user_conjectures": [],
-  "unknowns": ["其余楼层的内部布局未知"]
-}
-```
-
-## 配置模型
-
-### 统一调度器（开发构建）
-
-含统一调度器的构建附有 [建模任务模板](config.orchestrator.example.json)。将它复制为 `D:/Sim-BIM-Data/config/building-a.json`，在 `materials.images` 填写本次使用的 PNG 目录。有带贴图的 GLB 时，可填写 `materials.mesh`；建筑说明放在 `materials.building_input`。这三个路径均相对于 `input_root`。可在 `materials.image_notes` 中以实际 PNG 文件名为键，记录楼层、立面方向或资料适用范围。
-
-模板选择 `runtime: "dsh"`，需要在 Windows 上安装 DeepSeek Harness。工作台支持 ChatGPT 订阅和 DeepSeek 官方 API。启动时会从 PATH 或 Windows 安装信息查找宿主，也可在对应 case 的 `dsh_executable` 中填写实际 `DeepSeek Harness.exe` 绝对路径。使用随产品附带的自研运行时可选 `runtime: "native"`，此时删除 `dsh_executable`。
-
-运行 `./Start.cmd auth models` 核对订阅账号可用型号。模板由 GPT-6.2 Sol 主控，需要时可委派 GPT-6.1 Terra 执行只读观察，最多两项并发，主控负责写入最终 BIM。移除 `worker` 可关闭委派。两种宿主都接受这份材料清单和任务说明。
+[综合建模模板](config.orchestrator.example.json) 支持将图纸、网格和建筑说明组合为一个任务。将模板复制为自己的配置 JSON，在 `input_root` 和 `run_root` 中填写本机输入、结果目录的绝对路径。资料路径相对于 `input_root`。在 `materials.images` 中填写 PNG 目录，`materials.mesh` 可填写 GLB 文件，`materials.building_input` 可填写建筑说明 JSON。
 
 ```powershell
 ./Start.cmd check D:/Sim-BIM-Data/config/building-a.json
 ./Start.cmd run D:/Sim-BIM-Data/config/building-a.json --case building-a
 ```
 
-如要在 DSH 试用后台观察，可在本案的 `worker` 内加 `"background": true`。默认派工仍等待整批。主控选择 `delegate_workers(wait=false)` 后能继续处理独立材料，需要观察结论时再用 `read_worker(wait=true)` 等待，或用 `worker_state` 查看状态。正常交付会等候仍在执行的观察任务，受原有墙钟与预算限制。意外中断的任务可用原任务 ID 和相同参数重新委派，由既有日志核对能否安全恢复。
+其他配置示例包括[图纸](config.example.json)、[三维网格](config.mesh.example.json)和 [OpenCode Go 图纸](config.opencode-go.example.json)。请根据自己的实际输入、可用模型和凭据位置调整模板。使用 `./Start.cmd --help` 查看命令。
 
-真实建模需要联网，并使用你自己的模型账号或 API 凭据。任务所需的图片和资料会发送到所选模型服务，API 用量由服务商按你的账户计费。
-
-### DeepSeek Flash
-
-以下以 `mesh.json` 为例。在自己的 `D:/Sim-BIM-Data/config/deepseek.env` 中填写：
-
-```dotenv
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_API_KEY=YOUR_DEEPSEEK_API_KEY
-```
-
-在 `mesh.json` 的 `cases` 对应任务中替换或补充这些字段，其余参数先保留模板默认值：
-
-```json
-{
-  "provider": "deepseek",
-  "model": "deepseek-flash",
-  "credentials_file": "D:/Sim-BIM-Data/config/deepseek.env",
-  "reasoning_effort": "high"
-}
-```
-
-将 `YOUR_DEEPSEEK_API_KEY` 换成自己的密钥。凭据文件保存在自己的数据目录，不要上传到仓库或附在问题反馈中。
-
-### 使用默认模型配置
-
-图纸和网格模板默认使用 ChatGPT 账号授权。在程序目录执行：
-
-```powershell
-./Start.cmd auth login
-./Start.cmd auth status
-./Start.cmd auth models
-```
-
-可用模型以账号返回的列表为准。图纸模板为多个角色分别配置模型；调整型号时，需要同时修改顶层模型字段和 `roles` 中的相应设置。
-
-使用 OpenCode Go 的用户可直接复制 [DeepSeek Flash 图纸配置](config.opencode-go.example.json)。此线路的型号为 `deepseek-v4.1-flash`。在 `D:/Sim-BIM-Data/config/opencode-go.env` 写入下面两行，并将配置中的 `credentials_file` 改为你实际保存的位置：
-
-```dotenv
-OPENCODE_GO_BASE_URL=https://opencode.ai/inference/go/v1
-OPENCODE_GO_API_KEY=替换为你的密钥
-```
-
-用于 mesh 时，在 mesh 模板中填写相同的 provider、model、credentials_file 和 reasoning_effort；保留 `reasoning_history: "all"`。
-
-## 开始建模
-
-在程序目录先检查配置，再启动任务。以下任务名沿用模板默认的 `case_id`；如已修改，请同步替换命令中的名称。
-
-**图纸任务：**
-
-```powershell
-./Start.cmd check D:/Sim-BIM-Data/config/drawings.json
-./Start.cmd run D:/Sim-BIM-Data/config/drawings.json --case my-building
-```
-
-**网格任务：**
-
-```powershell
-./Start.cmd check D:/Sim-BIM-Data/config/mesh.json
-./Start.cmd run D:/Sim-BIM-Data/config/mesh.json --case my-textured-building
-```
-
-`check` 检查配置与输入文件，不发起模型请求。`run` 开始实际建模；请求次数、工具次数和时间上限可在配置的 `limits` 中设置。
-
-同一版本内中断后，可以保留原配置和输入，追加 `--resume` 继续：
-
-```powershell
-./Start.cmd run D:/Sim-BIM-Data/config/mesh.json --case my-textured-building --resume
-```
-
-## 查看结果
-
-从工作台发起建模后，完成时会在当前标签页打开模型。浏览器后退可返回草稿。如果正在编辑其他内容，工作台会保留编辑状态，可以点击「打开 Sim-BIM」查看结果。
-
-点击「下载 HTML」保存 `Sim-BIM.html`。这个文件包含模型、显示所需的代码和已采纳的网格贴图，移动到其他文件夹或设备后仍可用浏览器离线打开。工作区中也会保留一份，路径为 `runs/<本次运行编号>/Sim-BIM.html`。
-
-使用命令行时，程序返回的 `viewer` 是本次任务 `run_root/output/Sim-BIM.html` 的完整路径。结构化源模型、建模过程和检查记录保存在运行目录中，可供后续处理。
-
-## 当前范围
-
-Sim-BIM Agent 仍在迭代中，当前通过命令与配置文件使用，支持 PNG 图纸和 GLB 网格输入，交付范围为 Sim-BIM 与 HTML 查看器。CAD、实景照片、其他模型格式及图形化编辑尚未开放。
-
-生成质量受资料完整度和所选模型影响。使用结果前，请结合原始资料检查尺寸、空间划分、门窗位置和连接关系，尤其留意输入无法确定的内部布局。
-
-## 更新与反馈
-
-更新时下载新版 ZIP，解压到新目录并运行 `setup.ps1`，继续使用自己的输入、配置和结果目录。进行中的任务请在原版本中完成或恢复。
-
-遇到问题可在 [Issues](https://github.com/CRIBE-Lab/Sim-BIM-Agent/issues) 中提供版本号、输入类型、所用模型、复现步骤和错误信息；分享资料前请移除密钥及不便公开的内容。
-
-查看器使用 Three.js 与 OrbitControls，许可信息见 [第三方说明](scripts/tool_scripts/vendor/README.md)。
+查看器使用 Three.js 与 OrbitControls。[第三方许可说明](scripts/tool_scripts/vendor/README.md)

@@ -1106,14 +1106,14 @@ _APP_JS = r"""
     if(!SURF.some(s=>onFloor({zone:s.zone,floor:zoneFloor[s.zone]},i))) return;
     const o=document.createElement('option'); o.value=i; o.textContent=floorLabel(i); fs.appendChild(o);});
   const viewTabs=[$('modelTab'),$('confidenceTab'),$('editTab')];
-  let restoreEdge=false, modelComparisonMode, previewNoticeTimer;
+  let restoreEdge=false, modelComparisonMode;
   function syncEditPanel(){
     const draft=viewerDraft.state, input=$('editInstructions');
     if(input.value!==draft.instructions) input.value=draft.instructions;
     const count=draft.notes.length;
     $('noteCount').textContent=locale==='en' ? count+(count===1?' note':' notes') : count+' 条批注';
-    $('rebuild').disabled=!count && !draft.instructions.trim();
-    $('draftStorageStatus').hidden=viewerDraft.persistent;
+    $('draftStorageStatus').textContent=msg(viewerDraft.persistent
+      ? 'Notes are saved in this browser for this model.' : 'Changes are available in this tab only.');
   }
   function setViewMode(active){
     if(active.getAttribute('aria-selected')==='true') return;
@@ -1145,7 +1145,6 @@ _APP_JS = r"""
     $('editPanel').hidden=!edit;
     $('measure').hidden=edit;
     $('editHint').hidden=true;
-    $('viewerNotice').hidden=true;
     $('meshControls').hidden=confidence || !reference;
     $('layerControls').hidden=confidence;
     $('sectionControls').hidden=confidence;
@@ -1171,19 +1170,6 @@ _APP_JS = r"""
     syncEditPanel();
     if(editView && event.detail?.notesChanged!==false) editMarkers.sync();
   });
-  $('rebuild').onclick=()=>{
-    if(editMarkers.pending()){$('editHint').hidden=false;return;}
-    $('editHint').hidden=true;
-    $('revisionPreview').showModal();
-  };
-  $('cancelRebuild').onclick=()=>$('revisionPreview').close();
-  $('confirmRebuild').onclick=()=>{
-    $('revisionPreview').close();
-    setViewMode($('modelTab'));$('modelTab').focus();
-    const notice=$('viewerNotice');notice.hidden=false;
-    clearTimeout(previewNoticeTimer);
-    previewNoticeTimer=setTimeout(()=>{notice.hidden=true;},5000);
-  };
   $('showWalls').onchange=applyFilter; $('showWin').onchange=applyFilter; $('showEdges').onchange=applyFilter;
   $('showOpen').onchange=applyFilter; $('showLogical').onchange=applyFilter; $('showEnclosure').onchange=applyFilter;
   $('showMesh').onchange=applyFilter; $('meshMode').onchange=applyFilter; $('meshOpacity').oninput=applyFilter;
@@ -1280,16 +1266,8 @@ _PANEL_HTML = r"""
       <div class="edit-heading"><h2 id="editHeading"><label for="editInstructions">[[msg:Overall changes]]</label></h2><span id="noteCount"></span></div>
       <textarea id="editInstructions" rows="4" placeholder="[[msg:Describe changes to the model…]]"></textarea>
       <p id="editHint" role="status" hidden>[[msg:Confirm the object note or click empty space to discard it.]]</p>
-      <p id="draftStorageStatus" role="status" hidden>[[msg:Changes are available in this tab only.]]</p>
-      <div class="card-actions"><button type="button" id="rebuild">[[msg:Rebuild]]</button></div>
+      <p id="draftStorageStatus" role="status"></p>
     </section>
-    <dialog id="revisionPreview" class="viewer-card" aria-labelledby="previewTitle" aria-describedby="previewSummary">
-      <h2 id="previewTitle">[[msg:Preview rebuild?]]</h2>
-      <p id="previewSummary">[[msg:Return to Model with the current geometry. Your notes stay in Edit for the next round.]]</p>
-      <div class="card-actions"><button type="button" id="cancelRebuild" autofocus>[[msg:Cancel]]</button>
-        <button type="button" id="confirmRebuild">[[msg:Confirm preview]]</button></div>
-    </dialog>
-    <div id="viewerNotice" role="status" hidden>[[msg:Preview complete. Your notes are in Edit.]]</div>
   </section>
   <aside id="panel">
     <div class="panel-scroll">
@@ -1421,15 +1399,6 @@ _STYLE = r"""
   #editInstructions::placeholder {color:var(--muted);}
   #editInstructions:focus-visible {outline:2px solid #a3b6ef;outline-offset:3px;border-radius:3px;}
   #editPanel p {font-size:13px;color:var(--muted);margin:0 var(--card-inset) 12px;}
-  #rebuild,#confirmRebuild {background:var(--blue);border-color:var(--blue);color:white;padding:8px 16px;}
-  #rebuild:disabled {background:#e8ecf2;border-color:#e8ecf2;color:#606c7d;cursor:default;}
-  #revisionPreview {width:min(480px,calc(100vw - 48px));padding:0;overflow:hidden;}
-  #revisionPreview::backdrop {background:#17233550;}
-  #revisionPreview h2 {font-size:20px;line-height:1.35;font-weight:650;margin:22px 22px 8px;}
-  #previewSummary {font-size:15px;color:var(--muted);margin:0 22px 22px;line-height:1.6;}
-  #revisionPreview .card-actions {padding:12px 22px;}
-  #viewerNotice {position:absolute;bottom:24px;left:50%;transform:translateX(-50%);border-radius:6px;
-    background:#243047;color:white;font-size:13px;padding:8px 13px;pointer-events:none;}
   .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
   .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
   .pick-fields {padding:0 var(--card-inset) 8px;}

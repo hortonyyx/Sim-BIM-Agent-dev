@@ -9,11 +9,12 @@
   <style>
     html,body{height:100%;margin:0}body{display:flex;flex-direction:column}
     iframe{flex:1;min-height:0;width:100%;border:0;display:block}
-    #update-preview{margin-left:auto;background:transparent;color:var(--accent);border:0;padding:4px 0;font-weight:600}
+    #download-model{margin-left:auto}
+    #update-preview{background:transparent;color:var(--accent);border:0;padding:4px 0;font-weight:600}
   </style>
 </head>
 <body>
-  <nav class="model-return" aria-label="Workspace"><a id="inputs-link" href="/">Inputs</a><span aria-hidden="true">/</span><a id="activity-link">Run activity</a><button type="button" id="update-preview" hidden>Open updated model</button></nav>
+  <nav class="model-return" aria-label="Workspace"><a id="inputs-link" href="/">Inputs</a><span aria-hidden="true">/</span><a id="activity-link">Run activity</a><a id="download-model" download="Sim-BIM.html" hidden>Download HTML</a><button type="button" id="update-preview" hidden>Open updated model</button></nav>
   <iframe title="Sim-BIM" sandbox="allow-scripts allow-downloads"></iframe>
   <script src="/static/viewer-draft.js?v=2"></script>
   <script>
@@ -22,6 +23,10 @@
     update.textContent=lang==='en'?'Open updated model':'打开更新后的模型';
     update.onclick=()=>location.reload();
     function watchDelivery(viewerUrl) {
+      const download=document.querySelector('#download-model');
+      download.href=viewerUrl.pathname+'?download=1';
+      download.textContent=lang==='en'?'Download HTML':'下载 HTML';
+      download.hidden=false;
       let loadedVersion, checking=false;
       async function checkVersion() {
         if (checking) return;

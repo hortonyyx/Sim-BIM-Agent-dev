@@ -18,8 +18,9 @@ import tempfile
 
 MANIFEST = "release-manifest.json"
 REQUIRED = {"sim_bim.py", "Start.cmd", "setup.ps1", "README.md", "uv.lock",
-            "pyproject.toml", ".python-version", ".gitignore", ".gitattributes",
+            "pyproject.toml", ".python-version",
             "src/agent_runtime/agent_versions.json"}
+GIT_FILES = {".gitignore", ".gitattributes"}
 
 
 def digest(path):
@@ -91,7 +92,7 @@ def repository_state(root):
         raise ValueError("Product repository has local changes; commit or inspect them first")
     tracked = set(filter(None, git(root, "ls-files", "-z").split("\0")))
     before = read_release(root) if (root / MANIFEST).exists() else None
-    expected = set(before["files"]) | {MANIFEST} if before else set()
+    expected = set(before["files"]) | {MANIFEST} | GIT_FILES if before else set()
     if tracked != expected:
         raise ValueError("Tracked product files must exactly equal the current release manifest")
     return before
@@ -165,8 +166,8 @@ def synchronize(release, repository, *, report=None, apply=False):
     with publish_lock(repository):
         # Recheck after acquiring our maintenance lock. Do not overwrite local edits.
         before = repository_state(repository)
-        old = before["files"] if before else {}
-        names = set(old) | set(after["files"]) | {MANIFEST}
+        old = set(before["files"]) | GIT_FILES if before else set()
+        names = old | set(after["files"]) | {MANIFEST} | GIT_FILES
         for name in names:
             path = member(repository, name)
             if path.exists() and not path.is_file():
@@ -181,6 +182,10 @@ def synchronize(release, repository, *, report=None, apply=False):
         saved = {name: member(repository, name).read_bytes() if member(repository, name).is_file() else None
                  for name in names}
         incoming = {name: member(release, name).read_bytes() for name in set(after["files"]) | {MANIFEST}}
+        # Older releases owned these files as payload. New installations omit
+        # them; the publishing checkout keeps its byte and export rules.
+        for name in GIT_FILES - incoming.keys():
+            incoming[name] = (Path(__file__).resolve().parents[2] / "product" / name).read_bytes()
         # Capture verified bytes before mutation; source changes cannot slip through a later copy.
         if any(hashlib.sha256(incoming[n]).hexdigest() != h for n, h in after["files"].items()):
             raise ValueError("Release changed while preparing publication")
@@ -190,7 +195,7 @@ def synchronize(release, repository, *, report=None, apply=False):
             for name in sorted(incoming):
                 if saved[name] != incoming[name]:
                     atomic_write(member(repository, name), incoming[name])
-            for name in sorted(old.keys() - after["files"].keys()):
+            for name in sorted(old - incoming.keys()):
                 path = member(repository, name)
                 path.unlink()
                 remove_empty_parents(path, repository)
