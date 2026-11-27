@@ -142,6 +142,43 @@ def test_evidence_and_selectors_reject_wrong_origin_unknown_ids_and_missing_refs
         assert rows == _empty()
 
 
+def test_construction_filters_preserve_spatial_coverage_and_reject_null(tmp_path):
+    from tests.test_sim_components import _source, _horizontal_pair, _declaration, _row, apply_source_enclosure
+
+    run, _, _ = _run(tmp_path)
+    toolkit = Toolkit(run)
+    source = _source()
+    lower, upper = _horizontal_pair(source)
+    source = apply_source_enclosure(source, _declaration(source, [_row(lower["id"]), _row(upper["id"])]))
+    full = {"kind": "boundary", "all": True, "spatial": _grade(1, "Assumed.", "推断。")}
+    solid = {"kind": "boundary", "physical_only": True, "thickness": {"value_mm": 180, "source": "inference"}}
+    original = _empty()
+    for invalid, match in (({**solid, "all": True}, "Remove 'all'"),
+                           ({**solid, "material": None}, "material must be an object"),
+                           ({**solid, "thickness": None}, "thickness must be an object"),
+                           ({"kind": "boundary", "ids": [upper["id"]], "thickness": solid["thickness"]},
+                            "no physical area")):
+        with pytest.raises(ValueError, match=match):
+            apply_rules(toolkit, source, original, {"rules": [full, invalid]})
+        assert original == _empty()
+    records = apply_rules(toolkit, source, original, {"rules": [full, solid]})
+    assert set(records["boundaries"]) == {row["id"] for row in source["boundaries"]}
+    assert records["boundaries"][lower["id"]].keys() == {"spatial"}
+    assert records["boundaries"][upper["id"]].keys() == {"spatial"}
+    assert any("thickness" in fields for fields in records["boundaries"].values())
+
+
+def test_only_frozen_revision_keys_can_support_user_evidence(tmp_path):
+    from scripts.tool_scripts.bim_agent_inspection import _evidence_resolver
+    run, _, _ = _run(tmp_path)
+    toolkit = Toolkit(run)
+    toolkit.manifest["revisionEvidence"] = {"note1": "The owner confirmed the wall material"}
+    resolve = _evidence_resolver(toolkit)
+    assert resolve("revision:note1") == "user"
+    with pytest.raises(ValueError, match="Unresolved evidence"):
+        resolve("revision:other")
+
+
 @pytest.mark.parametrize("filename", ["sim_inspection.json", "sim_inspection_draft.json"])
 def test_legacy_side_materials_remain_auditable_across_revisions_without_becoming_primary(tmp_path, filename):
     from scripts.tool_scripts.bim_agent_inspection import snapshot

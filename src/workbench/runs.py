@@ -122,54 +122,72 @@ def configuration(directory, draft, materials, blocks, *, executable, connection
             "run_root": str(directory), "cases": [case]}
 
 
+def model_connections(draft, catalog, connection_revisions):
+    allowed = {(c["provider"], m["id"]) for c in catalog if c["connected"] for m in c["models"]}
+    routes = [r for r in [draft["coordinator"], *draft["workers"]] if r]
+    selected_custom = {r["provider"] for r in routes if is_custom_provider(r["provider"])}
+    indexed = {entry["provider"]: entry for entry in catalog}
+    if (not isinstance(connection_revisions, dict) or set(connection_revisions) != selected_custom
+            or any(p not in indexed or indexed[p]["revision"] != connection_revisions[p] for p in selected_custom)):
+        raise InputError("所选模型连接已更改，请刷新并确认后重试。",
+                         "A selected model connection changed. Refresh and review it before running.", 409)
+    for route in routes:
+        if (route["provider"], route["model"]) not in allowed:
+            raise InputError("该模型当前不可用，请刷新连接。", "This model is unavailable. Refresh the connection.")
+    return indexed
+
+
+def workbench_executable():
+    from src.dsh_runtime.product import installed_executable
+    try:
+        return installed_executable(None)
+    except (ValueError, OSError) as exc:
+        raise InputError("找不到建模所需的 DeepSeek Harness。请安装或修复其 Windows 桌面版，再次点击运行。",
+                         "DeepSeek Harness could not be found. Install or repair its Windows desktop app, then run again.",
+                         503) from exc
+
+
+def new_run_directory(root):
+    identity = time.strftime("run-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
+    directory = run_dir(root, identity)
+    directory.parent.mkdir(exist_ok=True)
+    return directory
+
+
+def launch_prepared(directory, locale, started):
+    try:
+        with (directory / "run.log").open("ab") as log:
+            subprocess.Popen([sys.executable, "-B", "-m", "src.workbench.runs", str(directory)],
+                cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)},
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError:
+        status = {**started, "status": "failed", "message": "启动失败。" if locale == "zh-CN" else "Could not start the run."}
+        save_json(directory / "status.json", status)
+        return status
+    return started
+
+
 def begin(root, revision, catalog, connection_revisions):
     with locked(root):
         draft = read_project(root)
         revision_check(draft, revision)
-        allowed = {(c["provider"], m["id"]) for c in catalog if c["connected"] for m in c["models"]}
-        routes = [r for r in [draft["coordinator"], *draft["workers"]] if r]
-        selected_custom = {r["provider"] for r in routes if is_custom_provider(r["provider"])}
-        indexed = {entry["provider"]: entry for entry in catalog}
-        if (not isinstance(connection_revisions, dict) or set(connection_revisions) != selected_custom
-                or any(p not in indexed or indexed[p]["revision"] != connection_revisions[p] for p in selected_custom)):
-            raise InputError("所选模型连接已更改，请刷新并确认后重试。",
-                             "A selected model connection changed. Refresh and review it before running.", 409)
-        for route in routes:
-            if (route["provider"], route["model"]) not in allowed:
-                raise InputError("该模型当前不可用，请刷新连接。", "This model is unavailable. Refresh the connection.")
-        previous = latest(root)
+        indexed = model_connections(draft, catalog, connection_revisions)
+        previous = latest(root, builds_only=True)
         if previous and previous["status"] == "running" and previous.get("revision") == revision:
             return previous
-        from src.dsh_runtime.product import installed_executable
-        try:
-            executable = installed_executable(None)
-        except (ValueError, OSError) as exc:
-            raise InputError("找不到建模所需的 DeepSeek Harness。请安装或修复其 Windows 桌面版，再次点击运行。",
-                             "DeepSeek Harness could not be found. Install or repair its Windows desktop app, then run again.",
-                             503) from exc
-        identity = time.strftime("run-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
-        directory = run_dir(root, identity)
-        directory.parent.mkdir(exist_ok=True)
+        executable = workbench_executable()
+        directory = new_run_directory(root)
         with tempfile.TemporaryDirectory(dir=directory.parent, prefix=".preparing-") as staging:
             prepared = Path(staging) / "run"
             prepared.mkdir()
             materials, blocks = freeze(root, prepared, draft)
             save_json(prepared / "case.json", configuration(directory, draft, materials, blocks,
                       executable=executable, connections=indexed))
-            started = {"id": identity, "status": "running", "revision": revision, "message": ""}
+            started = {"id": directory.name, "status": "running", "revision": revision, "message": ""}
             save_json(prepared / "status.json", started)
             prepared.rename(directory)
-        try:
-            with (directory / "run.log").open("ab") as log:
-                subprocess.Popen([sys.executable, "-B", "-m", "src.workbench.runs", str(directory)],
-                    cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                    env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(ROOT)},
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except OSError:
-            status = {"id": identity, "status": "failed", "message": "启动失败。" if draft["locale"] == "zh-CN" else "Could not start the run."}
-            save_json(directory / "status.json", status)
-            return status
-        return started
+        return launch_prepared(directory, draft["locale"], started)
 
 
 def status_at(directory):
@@ -181,7 +199,7 @@ def status_at(directory):
                 data = read_json(directory / "status.json")
                 if data["status"] != "running":
                     return data
-                data = {"id": data["id"], "status": "failed",
+                data = {**data, "status": "failed",
                         "message": "运行已中断。" if read_json(directory / "input.json")["locale"] == "zh-CN" else "The run was interrupted."}
                 save_json(directory / "status.json", data)
         except portalocker.exceptions.LockException:
@@ -189,19 +207,23 @@ def status_at(directory):
     return data
 
 
-def latest(root):
+def latest(root, *, builds_only=False):
     runs = inside(root, "runs")
     if not runs.is_dir():
         return None
     paths = [d for d in runs.iterdir() if RUN_ID.fullmatch(d.name) and (d / "status.json").is_file()]
-    return status_at(max(paths, key=lambda d: (d / "input.json").stat().st_mtime_ns)) if paths else None
+    for path in sorted(paths, key=lambda d: (d / "input.json").stat().st_mtime_ns, reverse=True):
+        if not builds_only or not read_json(path / "input.json").get("parentRunId"):
+            return status_at(path)
+    return None
 
 
 def execute(directory):
     from src.agent.runtime_configuration import load_configuration, selected_case
     from src.dsh_runtime.product import launch
     identity = directory.name
-    locale = read_json(directory / "input.json")["locale"]
+    inputs = read_json(directory / "input.json")
+    locale = inputs["locale"]
     with portalocker.Lock(directory / ".running", timeout=0):
         try:
             case = selected_case(load_configuration(directory / "case.json"), identity)
@@ -217,6 +239,8 @@ def execute(directory):
             if locale == "en" and isinstance(exc, ValueError):
                 message = f"{exc} See run.log for details."
             result = {"id": identity, "status": "failed", "message": message}
+        if "parentRunId" in inputs:
+            result["parentRunId"] = inputs["parentRunId"]
         save_json(directory / "status.json", result)
     return int(result["status"] != "completed")
 

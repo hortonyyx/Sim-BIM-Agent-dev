@@ -312,6 +312,7 @@ class Toolkit:
         if type(limit) is not int or limit <= 0:
             raise ValueError("max_candidates must be a positive integer")
         used = len(list(self.run.glob("candidate_*")))
+        used -= len(self.manifest.get("model_revision", {}).get("inheritedCandidates", []))
         return {"limit": limit, "used": used, "remaining": max(0, limit - used)}
 
     def claims(self):
@@ -368,6 +369,13 @@ class Toolkit:
             raise ValueError("only the coordinator may revise BIM")
         store = self.claims()
         submitted = json.loads(operations_json)
+        if submitted == [] and self.manifest.get("model_revision"):
+            # A materials/inspection or north-only edit needs a new candidate with exactly
+            # the previous geometry, including the previously accepted architectural adoption.
+            parent, source = store.candidate(candidate)
+            adopted = source["generation"]["provenance"].get("architectural_regularization")
+            return self.build(parent, action="revise_bim", parent=candidate, operations=[],
+                              architectural_regularization=adopted)
         def references(value):
             if isinstance(value, dict):
                 found = {value["claim"]} if isinstance(value.get("claim"), str) else set()
@@ -423,10 +431,13 @@ class Toolkit:
                     expected.update(("space", identity) for identity in operation["space_ids"])
                 elif name == "reshape_spaces":
                     expected.update(("space", row["id"]) for row in operation["spaces"])
-                elif name not in {"set_component_thickness", "replace_note", "set_notes", "resolve_unbuilt_observation"}:
+                elif name not in {"set_component_thickness", "replace_note", "set_notes", "resolve_unbuilt_observation",
+                                  "shift_window_heights"}:
                     supported = False
             for audit in updated["geometry"].get("corrections", [])[len(parent["geometry"].get("corrections", [])):]:
                 expected.update(("opening", row["id"]) for row in audit.get("moved_openings", []))
+                if audit.get("operation") == "shift_window_heights":
+                    expected.update((row["target"], row["id"]) for row in audit["changes"])
             application.update(geometry_before_sha256=sha(geometry_state(parent)),
                 geometry_after_sha256=sha(geometry_state(updated)), changes=changes,
                 scope_check="checked" if supported else "not_supported_for_all_operations",
@@ -1070,6 +1081,8 @@ class Toolkit:
                 raise ValueError('candidate mesh_frame must refer to the admitted original mesh')
         budget = self.candidate_budget()
         index = budget["used"] + 1
+        if self.manifest.get("model_revision"):
+            index = max((int(path.name.split("_")[1]) for path in self.run.glob("candidate_[0-9]*")), default=0) + 1
         if budget["remaining"] == 0:
             return saved_result({"error": "candidate budget exhausted; report saved partial results",
                     "candidate_budget": budget, "remaining_seconds": self.remaining_seconds()})
@@ -1080,6 +1093,11 @@ class Toolkit:
         if parent is not None:
             provenance.update(parent_candidate=parent,
                               parent_proposal_sha256=digest(self.candidate_path(parent)/"proposal.json"))
+        if self.manifest.get("model_revision"):
+            from src.agent.model_revision import child_north_axis
+            axis = child_north_axis(self)
+            if axis is not None:
+                provenance["north_axis"] = axis
         if plan_input is not None:
             provenance["plan_input"] = plan_input
         if claim_application is not None:
@@ -2319,27 +2337,31 @@ def build_tool_server(run: Path, readonly=False):
         collection=report reads a returned details_file via report_file, with
         candidate="" and offset/limit in characters (limit up to 12000).
         Optional json_pointer browses that exact report as bounded JSON; offset
-        then counts container children or text characters. Follow returned next.
+        then counts container children (up to 8) or text characters (up to 600).
+        limit can request a smaller page. Follow the returned next arguments.
         collection=boundaries reads actual saved source boundary IDs, vertices,
         adjacency and opening_ids, with source file/model hashes. Wall IDs can
         scope overlay_mesh_candidate. floor_id includes spanning spaces. Large
         boundary records expose a bounded view and immutable details_file.
-        Each cell includes floor_id. Read next_offset for more; page_is_partial
+        For candidate collections offset counts rows and limit is 1..50. Each cell
+        includes floor_id. Read next_offset for more; page_is_partial
         means this is not a complete build_bim input. Prefer revise_bim to keep
         unexamined objects. Other collections read the proposal. These are saved
         model records, not original mesh/GT observations.
         """
-        if limit is None:
-            limit = 8000 if collection == 'report' else 20
         if collection == 'report':
             from scripts.tool_scripts.bim_agent_replies import read_report
             return read_report(toolkit.run, report_file, offset, limit, json_pointer=json_pointer)
+        if limit is None:
+            limit = 20
         if json_pointer is not None:
             raise ValueError('json_pointer requires collection=report and its saved report_file')
         if collection not in {'cells','windows','openings','unsupported','boundaries'}:
             raise ValueError('collection must be cells, windows, openings, unsupported or boundaries')
         if not 1 <= limit <= 50 or offset < 0:
-            raise ValueError('requires offset >= 0 and limit 1..50')
+            raise ValueError(f'{collection} pages require offset >= 0 and limit 1..50 rows. '
+                             'Keep the candidate, collection and floor filters; retry with '
+                             f'offset={max(0, offset)}, limit={max(1, min(limit, 50))}, then follow next_offset.')
         path = toolkit.candidate_path(candidate)
         if collection == 'boundaries':
             from src.agent.geometry.source_model import _digest
@@ -2708,6 +2730,7 @@ def build_tool_server(run: Path, readonly=False):
         def check_openings(candidate: str, review_json: str = "", heights_only: bool = False) -> dict:
             """List actual openings, or check original-image marks against them.
             Use heights_only=true for actual z and current height-observation coverage.
+            review_json.kind is door, window or passage (source kind=open). Coverage is complete or partial.
             See get_bim_reference("opening_review") for review_json. Saves a source-hash-bound
             review independently; never modifies the BIM or certifies image truth.
             """
@@ -2769,6 +2792,8 @@ def build_tool_server(run: Path, readonly=False):
             Current production runs require spatial assessments for all zones and surfaces.
             """
             from src.agent.execution.handoff_transaction import finish_transaction
+            from src.agent.model_revision import require_revision_descendant
+            require_revision_descendant(toolkit, candidate)
             with finish_transaction(run, candidate):
                 return _finish_bim(candidate, reviews_json, inferences_json, inspection_json)
 
@@ -2862,6 +2887,8 @@ def build_tool_server(run: Path, readonly=False):
             See get_bim_reference("edits") for operations whose format the system prompt
             does not give. Prior candidates stay unchanged.
             Opening changes/removals and shared-wall moves require a reason and source_refs.
+            shift_window_heights applies sill_delta_m and/or head_delta_m to exterior
+            windows selected by all:true, floor_ids or ids, across both proposal representations.
             set_space_role assigns catalog use and its evidence, preserving geometry.
             Optional reviews_json describes already inspected views of candidate,
             not this action's new result. See drawing_process.

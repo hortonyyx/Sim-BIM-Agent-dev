@@ -125,7 +125,7 @@ function runReason() {
 }
 function renderRun() {
   const run=state.run, reason=runReason(), active=run?.status==='running';
-  const alreadyRunning=active && (run.revision==null || (run.revision===state.project.revision && !dirtyFields()));
+  const alreadyRunning=active && !run.parentRunId && (run.revision==null || (run.revision===state.project.revision && !dirtyFields()));
   $('run').disabled=busy || alreadyRunning || Boolean(reason);
   $('run-hint').textContent=reason;
   const panel=$('run-status'); panel.hidden=!run; panel.replaceChildren();

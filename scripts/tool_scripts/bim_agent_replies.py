@@ -374,14 +374,14 @@ def report_reference(report_file: str, sha256: str, pointer: str, value) -> dict
     return result
 
 
-def read_report(run: Path, report_file: str, offset: int, limit: int, *, json_pointer: str | None = None) -> dict:
+def read_report(run: Path, report_file: str, offset: int, limit: int | None, *, json_pointer: str | None = None) -> dict:
     """Read only an immutable tool reply; cannot reach arbitrary run/private files."""
     path = (run / report_file).resolve()
     folder = (run / 'tool_reports').resolve()
     if path.parent != folder or path.suffix != '.json' or not path.is_file():
         raise ValueError('report_file must be a saved tool_reports/*.json path from a tool reply')
-    if offset < 0 or not 1 <= limit <= 12000:
-        raise ValueError('report requires offset >= 0 and limit 1..12000 characters')
+    if offset < 0 or limit is not None and not 1 <= limit <= 12000:
+        raise ValueError('report requires offset >= 0 and limit 1..12000; omit limit to use its default')
     raw = path.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
     if not path.stem.endswith('_' + sha):
@@ -389,12 +389,16 @@ def read_report(run: Path, report_file: str, offset: int, limit: int, *, json_po
     if json_pointer is not None:
         from src.agent.runtime_roles.trial_feedback import bounded_json_view
         result = {'report_file': report_file, 'sha256': sha,
-                  **bounded_json_view(json.loads(raw), pointer=json_pointer, offset=offset,
+                  **bounded_json_view(json.loads(raw), pointer=json_pointer, offset=offset, limit=limit,
                       reference_for=lambda at, item: report_reference(report_file, sha, at, item))}
         if 'next_offset' in result:
             result['next'] = {'candidate': '', 'collection': 'report', 'report_file': report_file,
                               'json_pointer': json_pointer, 'offset': result['next_offset']}
+            if limit is not None:
+                result['next']['limit'] = limit
         return result
+    if limit is None:
+        limit = 8000
     text = raw.decode()
     page = text[offset:offset + limit]
     return dict(report_file=report_file, sha256=sha, text=page, offset=offset,

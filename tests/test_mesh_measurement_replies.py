@@ -34,7 +34,8 @@ def _projection(wrapper, raw):
     if wrapper == 'plain':
         return frozen.project_tool_result('measure_mesh_pixels', raw)
     if wrapper == 'parent':
-        return MeshWorkerTools.project_tool_result(SimpleNamespace(frozen=frozen), 'measure_mesh_pixels', raw)
+        parent = SimpleNamespace(frozen=frozen, delegate_name="delegate_workers", read_name="read_worker")
+        return MeshWorkerTools.project_tool_result(parent, 'measure_mesh_pixels', raw)
     return _EvidenceTools.project_tool_result(SimpleNamespace(frozen=frozen), 'measure_mesh_pixels', raw)
 
 

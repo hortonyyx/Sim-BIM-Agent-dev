@@ -72,6 +72,16 @@ def normalize_images(toolkit, tool, arguments):
 
 def repair_hint(toolkit, tool, arguments, message):
     """Explain the rejected operation without guessing geometry or evidence."""
+    if tool == "record_sim_inspection" or (tool == "finish_bim" and
+            ("inspection" in message.lower() or "Spatial coverage" in message)):
+        return ('Next: correct the rejected inspection packet and resubmit it; a failed packet saves no rules. '
+                'See get_bim_reference(topic="sim_inspection").')
+    if tool == "read_candidate_items":
+        if arguments.get("collection") == "report":
+            return ('Use the returned details_file as report_file with candidate="" and collection="report". '
+                    'Omit json_pointer to read character pages (limit 1..12000), or follow the structured page\'s next arguments.')
+        return ("Read candidate rows with offset >= 0 and limit 1..50; keep the same collection and candidate "
+                "and continue at the returned next_offset.")
     if "reviews_json:" in message or "drawing_process:" in message:
         return 'Next: read get_bim_reference(topic="drawing_process") for the review and delivery format.'
     if "Run deadline reached" in message:

@@ -158,6 +158,8 @@ def compile_source_proposal(proposal: dict, *, provenance: dict | None = None,
             wall_readings=proposal.get('wall_readings'),
         )
         _require_vertical_continuity(source, vertical_continuity_policy)
+        if provenance and provenance.get("north_axis") is not None:
+            source["coordinate_system"]["north_axis"] = provenance["north_axis"]
         stage("source_kernel_seconds")
         if "wall_readings" in proposal:
             from src.agent.geometry.reader_wall_metadata import bind_wall_readings

@@ -13,6 +13,7 @@ import tempfile
 from scripts.tool_scripts.bim_agent_inference import _source
 from src.agent.execution.handoff_transaction import handoff_writer
 from src.agent.geometry.sim_components import MATERIAL_SCOPE
+from src.agent.geometry.sim_component_topology import physical_families
 
 
 POLICY = "object_evidence_v1"
@@ -83,6 +84,11 @@ def _evidence_resolver(toolkit):
             if any(block.get("id") == key and str(block.get("caption", "")).strip()
                    for block in manifest.get("blocks", [])):
                 return "user"
+        elif prefix == "revision":
+            evidence = manifest.get("revisionEvidence", {})
+            note = evidence.get(key) if isinstance(evidence, dict) else None
+            if isinstance(note, str) and note.strip():
+                return "user"
         elif prefix == "input":
             if key.startswith("/") and isinstance(manifest.get("building_input"), dict):
                 value = manifest["building_input"].get("declaration")
@@ -132,13 +138,21 @@ def _refs(row, resolve, required=False):
     return {resolve(ref) for ref in refs}
 
 
-def _check_attribute_evidence(attribute, resolve):
+def _check_attribute_evidence(name, attribute, resolve):
+    keys = {"en", "zh", "source"} if name == "material" else {"value_mm", "source"}
+    shape = ", ".join(sorted(keys))
     if not isinstance(attribute, dict):
-        raise ValueError("Each material or thickness entry must be an object")
+        raise ValueError(f"{name} must be an object with {shape} and optional source_refs. "
+                         "Remove this field if it does not apply. Use physical_only:true on the "
+                         "construction rule instead of trying to cancel it with null.")
+    missing, unknown = keys - attribute.keys(), attribute.keys() - (keys | {"source_refs"})
+    if missing or unknown:
+        raise ValueError(f"{name} expects {shape} and optional source_refs; "
+                         f"missing {sorted(missing)}, unexpected {sorted(unknown)}")
     origin = attribute.get("source")
     kinds = _refs(attribute, resolve, required=origin in {"from user", "from material"})
     if origin == "from user" and "user" not in kinds:
-        raise ValueError("from user requires an explicit brief, block caption or building declaration reference")
+        raise ValueError("from user requires a brief, block caption, building declaration or confirmed revision reference")
     if origin == "from material" and "material" not in kinds:
         raise ValueError("from material requires an admitted drawing, mesh or material view")
 
@@ -160,19 +174,24 @@ def _spatial(value, resolve):
 def _attribute_sources(fields, resolve):
     for key in ("material", "thickness"):
         if key in fields:
-            _check_attribute_evidence(fields[key], resolve)
+            _check_attribute_evidence(key, fields[key], resolve)
     for region in fields.get("thickness_regions", ()):
-        _check_attribute_evidence(region["thickness"], resolve)
+        _check_attribute_evidence("thickness", region["thickness"], resolve)
 
 
-def _selected(rule, group, inventory, source):
-    selectors = {k for k in ("ids", "space_ids", "floor_ids", "type") if k in rule}
+def _selected(rule, group, inventory, source, physical_ids):
+    selectors = {k for k in ("ids", "space_ids", "floor_ids", "type", "physical_only") if k in rule}
     if "all" in rule:
-        if rule["all"] is not True or selectors:
-            raise ValueError("Use all:true alone, or specify ids, space_ids, floor_ids or type")
+        if selectors:
+            raise ValueError(f"Remove 'all' to keep the filters {sorted(selectors)}. "
+                             "Use all:true alone only when the rule applies to every object of its kind.")
+        if rule["all"] is not True:
+            raise ValueError("The unfiltered selector must be all:true.")
         return list(inventory[group])
     if not selectors:
         raise ValueError("Every rule needs an explicit object selector")
+    if "physical_only" in selectors and (rule["physical_only"] is not True or group == "spaces"):
+        raise ValueError("physical_only:true selects boundaries with solid area or filled openings")
     filters = {}
     for field, valid in (("ids", inventory[group]), ("space_ids", inventory["spaces"]),
                          ("floor_ids", {f["id"] for f in source["floors"]})):
@@ -184,6 +203,8 @@ def _selected(rule, group, inventory, source):
             filters[field] = set(values)
     selected = []
     for identity, row in inventory[group].items():
+        if "physical_only" in selectors and identity not in physical_ids(group):
+            continue
         if "ids" in filters and identity not in filters["ids"]:
             continue
         owners = ({identity} if group == "spaces" else {row["space_id"]} if group == "boundaries"
@@ -207,13 +228,19 @@ def apply_rules(toolkit, source, records, packet):
     if not isinstance(packet, dict) or set(packet) != {"rules"} or not isinstance(packet["rules"], list):
         raise ValueError("inspection_json must be an object with a rules list; read get_bim_reference('sim_inspection')")
     inventory, resolve = _inventory(source), _evidence_resolver(toolkit)
+    @lru_cache(maxsize=2)
+    def physical_ids(group):
+        if group == "openings":
+            return {key for key, row in inventory[group].items() if row["kind"] != "open"}
+        return {bid for family, _, _, _ in physical_families(source, inventory["boundaries"]) for bid in family}
+
     values = {group: {i: dict(fields) for i, fields in rows.items()} for group, rows in records.items()}
     for index, rule in enumerate(packet["rules"]):
         try:
             if not isinstance(rule, dict) or rule.get("kind") not in KINDS:
                 raise ValueError("kind must be space, boundary or opening")
             group = KINDS[rule["kind"]]
-            attrs = set(rule) - {"kind", "all", "ids", "space_ids", "floor_ids", "type"}
+            attrs = set(rule) - {"kind", "all", "ids", "space_ids", "floor_ids", "type", "physical_only"}
             allowed = {"spatial"} if group == "spaces" else {"spatial", "material", "thickness"}
             if group == "boundaries":
                 allowed.add("thickness_regions")
@@ -223,7 +250,16 @@ def apply_rules(toolkit, source, records, packet):
             if "spatial" in fields:
                 fields["spatial"] = _spatial(fields["spatial"], resolve)
             _attribute_sources(fields, resolve)
-            for identity in _selected(rule, group, inventory, source):
+            selected = _selected(rule, group, inventory, source, physical_ids)
+            if attrs - {"spatial"}:
+                excluded = [key for key in selected if key not in physical_ids(group)]
+                if excluded:
+                    why = "boundaries with no physical area" if group == "boundaries" else "unfilled openings"
+                    raise ValueError(f"Construction fields include {len(excluded)} {why}: {', '.join(excluded[:8])}. "
+                                     "Assess their spatial evidence separately. For material/thickness on the "
+                                     "remaining targets, remove 'all' and add physical_only:true to the same filters. "
+                                     "Omit any null material/thickness overrides.")
+            for identity in selected:
                 values[group].setdefault(identity, {}).update(fields)
         except (ValueError, TypeError, AttributeError, KeyError) as exc:
             raise ValueError(f"inspection rule[{index}]: {exc}") from exc

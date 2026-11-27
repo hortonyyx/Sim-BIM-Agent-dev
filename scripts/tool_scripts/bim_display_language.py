@@ -397,6 +397,7 @@ def localize_template(template: str, locale: str, *, javascript: bool = False) -
 _VIEWER_LABELS = {
     "Model": "模型", "Confidence": "置信度", "Viewer mode": "查看模式", "Spatial confidence": "空间置信度",
     "Edit": "编辑", "Overall changes": "整体调整",
+    "Submit edits…": "提交修改…",
     "Describe changes to the model…": "填写整体调整说明…",
     "Confirm the object note or click empty space to discard it.": "请先点勾确认当前批注，或点空白处取消。",
     "Changes are available in this tab only.": "修改仅保留在当前页面。",

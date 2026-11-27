@@ -26,6 +26,7 @@ from src.agent.viewer_publication import VIEWER_FILENAME
 from src.agent.geometry.thickness_options import PRESETS_MM
 
 from .connections import Connections
+from .revisions import begin_revision
 from .runs import OUTPUT_FILE, begin, latest, run_dir, status_at, workspace_tag
 from .trace import run_history, trace_page
 from .storage import (LOCALES, ROOT, InputError, add_block, app_data, client_project, inside, locked, new_project,
@@ -181,6 +182,9 @@ def create_app(workbench=None, *, warm=True):
         elif action == "connections":
             await run_in_threadpool(service.connections.manage, body)
             response = {"connections": service.connections.view(service.prefs["locale"])}
+        elif action == "revisions":
+            result = await run_in_threadpool(begin_revision, service.root(), body, service.connections.view(service.prefs["locale"]))
+            response = {"run": result}
         elif action == "runs":
             result = await run_in_threadpool(begin, service.root(body["workspace"]), body.get("revision"),
                                             service.connections.view(service.prefs["locale"]),
@@ -218,7 +222,7 @@ def create_app(workbench=None, *, warm=True):
         if p["tag"] != workspace_tag(root):
             raise InputError("未找到结果。", "Result not found.", 404)
         directory = run_dir(root, p["run_id"])
-        headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox allow-scripts allow-downloads"}
+        headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox allow-scripts allow-downloads allow-forms; form-action 'none'"}
         if p["file"] == VIEWER_FILENAME:
             file = inside(directory, VIEWER_FILENAME)
             if not file.is_file():
@@ -273,7 +277,8 @@ def create_app(workbench=None, *, warm=True):
                 request.url.path != "/api/blocks" and not request.headers.get("content-type", "").startswith("application/json")):
             return JSONResponse({"error": "Invalid request type."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith("/api/") or request.url.path in {"/static/viewer.html", "/static/viewer-draft.js"}:
+        if request.url.path.startswith("/api/") or request.url.path in {
+                "/static/viewer.html", "/static/viewer-draft.js", "/static/viewer-host.js"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 

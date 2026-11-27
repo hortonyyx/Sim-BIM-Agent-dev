@@ -97,6 +97,14 @@ def test_inventory_exposes_actual_openings_by_floor_and_space_without_mutating_s
     assert source == before
 
 
+def test_unfilled_opening_error_identifies_valid_review_kind():
+    source = _source()
+    with pytest.raises(ValueError, match='review_json.kind=.*kind="passage"'):
+        review_openings(source, _review(kind="open", marks=[]), _images())
+    report = review_openings(source, _review(kind="passage", marks=[]), _images())
+    assert report["review_scope"]["kind"] == "passage"
+
+
 def test_complete_review_flags_extra_model_door_and_reports_per_room_missing_ids():
     report = review_openings(_source(), _review(marks=[_review()["marks"][0]]), _images())
     assert {row["code"] for row in report["findings"]} == {"unaccounted_model_opening"}

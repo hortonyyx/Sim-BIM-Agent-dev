@@ -102,11 +102,12 @@ const SimBimViewerDraft = (() => {
     }
     direct.dispose();
     const state = empty(), channel = new MessageChannel();
-    let persistent = false, connected = false, next = 0;
+    let persistent = false, connected = false, canRevise = false, next = 0;
     const pending = new Map();
     channel.port1.onmessage = ({data}) => {
       if (!data || data.kind !== 'state') return;
       persistent = data.persistent === true;
+      canRevise = data.canRevise === true;
       for (const id of pending.keys()) if (id <= data.ack) pending.delete(id);
       const nextState = Object.assign(empty(), fields(data.value));
       for (const patch of pending.values()) Object.assign(nextState, patch);
@@ -117,9 +118,11 @@ const SimBimViewerDraft = (() => {
       }
       notify(notesChanged);
     };
-    window.parent.postMessage({type:channelName, model}, new URL(location.href).origin, [channel.port2]);
+    window.parent.postMessage({type:channelName, model, revisionControl:true}, new URL(location.href).origin, [channel.port2]);
     return {
       state, get persistent() { return persistent; },
+      get canRevise() { return canRevise; },
+      reviewRevision() { if (canRevise) channel.port1.postMessage({kind:'reviewRevision'}); },
       update(changes) {
         const patch = fields(changes), id = ++next;
         const notesChanged = applyState(state, patch);
@@ -130,7 +133,7 @@ const SimBimViewerDraft = (() => {
     };
   }
 
-  function host(frame, path, openViewer) {
+  function host(frame, path, openViewer, revision) {
     if (!resultPath.test(path)) return false;
     let disconnect;
     window.addEventListener('message', event => {
@@ -139,10 +142,14 @@ const SimBimViewerDraft = (() => {
           !data || data.type !== channelName || typeof data.model !== 'string' || !modelId.test(data.model)) return;
       if (disconnect) disconnect();
       let ack = 0;
-      const notify = () => port.postMessage({kind:'state', ack, value:store.state, persistent:store.persistent});
+      const notify = () => {
+        revision?.changed(data.model, store.state, data.revisionControl === true);
+        port.postMessage({kind:'state', ack, value:store.state, persistent:store.persistent, canRevise:!!revision});
+      };
       const store = localDraft(path, data.model, notify);
       disconnect = () => { store.dispose(); port.close(); };
       port.onmessage = ({data:message}) => {
+        if (message?.kind === 'reviewRevision') {revision?.review();return;}
         if (!message || !Number.isSafeInteger(message.id) || message.id <= ack) return;
         ack = message.id;
         store.update(message.patch);

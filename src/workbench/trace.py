@@ -224,7 +224,7 @@ def trace_page(directory, cursor=None):
         raise InputError("未找到运行。", "Run not found.", 404)
     status = status_at(directory)
     inputs = read_json(input_path)
-    meta = _compact(workspace_name=directory.parent.parent.name, locale=inputs.get("locale"),
+    meta = _compact(parentRunId=inputs.get("parentRunId"), workspace_name=directory.parent.parent.name, locale=inputs.get("locale"),
                     started_at=input_path.stat().st_mtime, model=(inputs.get("coordinator") or {}).get("model"),
                     ended_at=status_path.stat().st_mtime if status["status"] != "running" else None)
     events, cursor, more = _page(directory, cursor)
@@ -240,5 +240,6 @@ def run_history(root):
         input_path = inside(directory, "input.json")
         if inside(directory, "status.json").is_file() and input_path.is_file():
             result = status_at(directory)
-            items.append(dict(id=directory.name, status=result["status"], started_at=input_path.stat().st_mtime))
+            items.append(_compact(id=directory.name, status=result["status"], started_at=input_path.stat().st_mtime,
+                                  parentRunId=read_json(input_path).get("parentRunId")))
     return sorted(items, key=lambda r: r["started_at"], reverse=True)

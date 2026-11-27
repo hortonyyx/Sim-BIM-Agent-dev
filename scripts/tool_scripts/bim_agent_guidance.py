@@ -632,9 +632,10 @@ REFERENCES = {
 On production runs with spatial_assessment_policy=object_evidence_v1, assess EVERY space, boundary
 and opening. Stage partial batches with record_sim_inspection(candidate,inspection_json), or include the
 same packet in finish_bim. Unchanged objects retain their declarations on a source revision.
-Use {"rules":[...]} with ordered rules. kind is space, boundary or opening. Use all:true for a judgment
-applicable to the entire kind, or intersect ids, space_ids, floor_ids (lists of saved IDs) and type
-(boundary: wall/floor/ceiling; opening: window/door/...; space: room-use code). Later rules replace
+Use {"rules":[...]} with ordered rules. kind is space, boundary or opening. all:true is the sole selector
+for a judgment applicable to an entire kind. Omit all when using any filter: ids, space_ids, floor_ids
+(lists of saved IDs), type (boundary: wall/floor/ceiling; opening: window/door/open; space: room-use code)
+or physical_only:true. Filters intersect. Later rules replace
 only the supplied attributes. Group genuinely equivalent evidence, then specify exceptions. Read
 inspect_candidate/read_candidate_items for actual source IDs. An example fragment for a floor:
 {"kind":"space","floor_ids":["F1"],"spatial":{"grade":4,
@@ -650,11 +651,17 @@ principal uncertainty. Assign each grade on evidence, without targeting a distri
 For a grade above 1 cite at least one admitted source. Grade 1 may cite an empty list when inputs give
 no spatial clues. Never grade geometry from room use, material, thickness or number of references.
 Each source_refs entry is one of image:<exact admitted filename>, view:view_NNNN, mesh:original,
-mesh:mesh_NNN, section:section_NNN, brief, block:<admitted block ID with caption>, or input:/json/pointer
+mesh:mesh_NNN, section:section_NNN, brief, block:<admitted block ID with caption>,
+revision:<confirmed revisionEvidence key>, or input:/json/pointer
 into inputs().building_input.declaration. Append #<locator> for the specific region or statement.
 Private refs stay in the workspace. Keep paths and internal IDs out of the public bilingual reason.
-On boundaries and openings set material:{en,zh,source,source_refs} and thickness:{value_mm,source,source_refs}
-independently. Material describes the component's principal construction in a short, free-text observation in
+Keep spatial assessments on all boundaries and openings, including open interfaces. In a separate construction
+rule use physical_only:true to select boundary patches with positive solid area or filled openings. An entire wall
+can be consumed by an aperture. For example, {"kind":"boundary","type":"wall","physical_only":true,
+"thickness":{"value_mm":150,"source":"inference","source_refs":[]}} is a construction rule. Select a value
+appropriate to the inputs. For an unfilled passage keep only spatial attributes; null is not an override.
+Set material:{en,zh,source,source_refs} and thickness:{value_mm,source,source_refs} independently.
+Omit an unspecified field. Material describes the component's principal construction in a short, free-text observation in
 both languages. A single door leaf has one material description. An observation can say "The leaf appears
 metallic. Its core is unknown." Where only paint, tile, surface colour or wood grain is visible, qualify
 any inference about the underlying construction. Leave finish layers, precise assemblies and simulation libraries
@@ -972,6 +979,8 @@ The example numbers/counts are unrelated to the supplied building.
  "reason":"explain","source_refs":["image: observation or explicit assumption"]};
 {"op":"update_opening","id":"D1","changes":{"p1":[3,1],"p2":[3,2]},
  "reason":"explain","source_refs":["image: observation or explicit assumption"]};
+{"op":"shift_window_heights","floor_ids":["F1","F2"],"sill_delta_m":0.15,"head_delta_m":0.15,
+ "reason":"raise the selected exterior windows","source_refs":["revision:confirmed-note-key"]};
 {"op":"move_shared_wall","space_ids":["F1_left","F1_right"],"coordinate_m":3.5,
  "reason":"explain observed partition displacement","source_refs":["plan: observed wall"]};
 {"op":"reshape_spaces","spaces":[{"id":"room-A","polygon":[[0,0],[3,0],[3,2],[0,2]]}],
@@ -983,7 +992,12 @@ The example numbers/counts are unrelated to the supplied building.
  "z":[0,2.1],"state":"unknown","assumptions":["height assumed"]},
  "reason":"new door observed","source_refs":["plan: door and both hosts"]};
 {"op":"set_notes","assumptions":["updated assumptions"],"unresolved":[]}.
-set_space_role only changes the selected room's catalog role and role_evidence;
+  shift_window_heights shifts the sill and/or head in metres (positive up, negative down) across both window
+  representations. The omitted endpoint keeps its height. Select all:true alone, exact floor_ids, exact proposal
+  window ids, or both filter lists. Floor selection includes windows on a spanning space where the original
+  aperture overlaps that storey. Every requested ID must belong to the selected exterior windows. Doors and
+  unfilled passages are excluded. Replace the example source reference with the actual instruction or evidence.
+  set_space_role only changes the selected room's catalog role and role_evidence;
 it preserves all geometry, IDs, openings, connections and geometry source notes.
 Read room_types first. basis is observed for explicit input labels/declarations,
 inferred for a plausible interpretation, including a broad use from building context
@@ -1133,6 +1147,7 @@ that boundary requires explicit rebinding rather than silently reusing thickness
 """,
     'opening_review': """For a whole-floor plan review (without facade), use complete only after
 inspecting ALL openings of that kind on that floor; use partial for a local check.
+review_json.kind is door, window or passage. A source opening with kind=open is reviewed as kind=passage.
 One mark represents one aperture/connection, not a crop with several doors.
 Door swings, dimension ticks and window marks are different evidence. A note
 saying one door does not remove a second modeled door. A review binds the reviewed

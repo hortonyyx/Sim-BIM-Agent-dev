@@ -1,10 +1,12 @@
 import io
+import hashlib
 import json
 from pathlib import Path
 
 from PIL import Image
 from starlette.testclient import TestClient
 import pytest
+import uuid
 
 from src.agent.runtime_configuration import load_configuration
 from src.agent.runtime_entry import prepare_inputs
@@ -290,7 +292,9 @@ def test_text_only_block_and_output_resolution(workbench):
     download = client.get(base + "Sim-BIM.html?download=1")
     assert download.content == model
     assert download.headers["content-disposition"] == 'attachment; filename="Sim-BIM.html"'
-    for path in ("/static/viewer.html", "/static/viewer-draft.js"):
+    assert "allow-forms" in opened.headers["content-security-policy"]
+    assert "form-action 'none'" in opened.headers["content-security-policy"]
+    for path in ("/static/viewer.html", "/static/viewer-draft.js", "/static/viewer-host.js"):
         assert client.get(path).headers["cache-control"] == "no-store"
 
     head = client.head(base + "Sim-BIM.html")
@@ -301,6 +305,61 @@ def test_text_only_block_and_output_resolution(workbench):
     assert changed.headers["etag"] != head.headers["etag"]
     for query in ({"rev": head.headers["etag"]}, {"download": "1"}):
         assert client.get(base + "Sim-BIM.html", params=query).content == revised
+
+
+def test_revision_admission_reuses_frozen_parent_and_is_idempotent(workbench, monkeypatch):
+    from src.agent import model_revision
+
+    client, root = workbench
+    launched = []
+    monkeypatch.setattr(runs.subprocess, "Popen", lambda args, **kwargs: launched.append(args))
+    uploaded = client.post("/api/blocks", data={"workspace": str(root), "revision": 0, "caption": "floor"},
+                           files=[("files", ("plan.png", png("white"), "image/png"))]).json()["project"]
+    block = uploaded["blocks"][0]
+    client.post("/api/project", json={"workspace": str(root), "revision": 1, "taskBrief": "Keep the floor.",
+        "coordinator": COORD, "workers": [], "blocks": [{"id": block["id"], "assetIds": [block["assets"][0]["id"]]}]}).raise_for_status()
+    first = client.post("/api/runs", json={"workspace": str(root), "revision": 2}).json()["run"]
+    parent = runs.run_dir(root, first["id"])
+    candidate = parent / "production/private/dsh/work/bim/candidate_03"
+    model_id = "a" * 64
+    save_json(candidate / "source_model.json", {"source_model_sha256": model_id, "spaces": [], "boundaries": [],
+        "floors": [{"id": "F1"}], "openings": [{"id": "W1"}]})
+    save_json(candidate / "sim_inspection.json", {})
+    viewer = parent / "Sim-BIM.html"
+    viewer.write_bytes(b"<html>parent</html>")
+    hashes = {"candidate_03/" + name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
+              (("viewer.html", viewer), ("source_model.json", candidate / "source_model.json"),
+               ("sim_inspection.json", candidate / "sim_inspection.json"))}
+    save_json(parent / "production/control/terminal.json", {"delivered": True, "proof": {"origin": "domain_tool",
+              "tool_name": "finish_bim", "candidate": "candidate_03", "artifact_sha256": hashes}})
+    save_json(parent / "status.json", {**first, "status": "completed"})
+    monkeypatch.setattr(model_revision, "freeze_revision_parent", lambda *args, **kwargs: "e" * 64)
+    target = {"kind": "surface", "id": "W1", "label": "W1", "zone": "", "surface": "W1", "point": [1, 2, 3]}
+    note = {"id": "one", "text": "Raise the sill of this window.", "targets": [target]}
+    draft = {"notes": [note], "instructions": "", "northAngle": None}
+    body = {"workspaceTag": runs.workspace_tag(root), "parentRunId": parent.name, "parentModelId": model_id,
+            "draft": draft, "requestId": str(uuid.uuid4())}
+    def submit(**changes):
+        return client.post("/api/revisions", json={**body, **changes})
+    assert submit(workspaceTag="other").status_code == 409
+    assert submit(parentModelId="0" * 64).status_code == 409
+    assert submit(draft={**draft, "notes": [{**note, "targets": [{**target, "id": "stale"}]}]}).status_code == 409
+    # Edits use the original material even if it changed in the working project's material folder.
+    next((root / "materials").rglob("plan.png")).write_bytes(png("blue"))
+    child = submit().json()["run"]
+    assert child["parentRunId"] == parent.name and len(launched) == 2
+    assert submit().json()["run"] == child and len(launched) == 2
+    assert submit(draft={**draft, "northAngle": 0}).status_code == 409
+    directory = runs.run_dir(root, child["id"])
+    case = read_json(directory / "case.json")["cases"][0]
+    assert case["revision"]["draft"] == draft and case["revision"]["parentCandidate"] == "candidate_03"
+    assert (directory / "inputs/images/plan.png").read_bytes() == png("white")
+    assert viewer.read_bytes() == b"<html>parent</html>"
+    assert runs.latest(root, builds_only=True)["id"] == parent.name
+    assert client.get("/api/runs").json()["runs"][0]["parentRunId"] == parent.name
+    viewer.write_bytes(b"changed")
+    assert submit(requestId=str(uuid.uuid4())).status_code == 409
+    assert len(launched) == 2
 
 
 def test_recover_unreadable_workspace_and_reject_stale_language(workbench):

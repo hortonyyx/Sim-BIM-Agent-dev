@@ -284,6 +284,6 @@ ANNOTATION_JS = r"""
         });
       });
     }
-    return {highlighted,pickTarget,cancel,sync,frame};
+    return {highlighted,pickTarget,cancel,pending,sync,frame};
   })();
 """

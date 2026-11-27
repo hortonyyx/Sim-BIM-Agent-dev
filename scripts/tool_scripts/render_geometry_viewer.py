@@ -1114,6 +1114,8 @@ _APP_JS = r"""
     $('noteCount').textContent=locale==='en' ? count+(count===1?' note':' notes') : count+' 条批注';
     $('draftStorageStatus').textContent=msg(viewerDraft.persistent
       ? 'Notes are saved in this browser for this model.' : 'Changes are available in this tab only.');
+    $('revisionActions').hidden=!viewerDraft.canRevise;
+    $('reviewRevision').disabled=!count && !draft.instructions.trim() && draft.northAngle===null;
   }
   function setViewMode(active){
     if(active.getAttribute('aria-selected')==='true') return;
@@ -1166,6 +1168,10 @@ _APP_JS = r"""
   };
   fs.onchange=()=>{if(editView) editMarkers.cancel();clearSelection();clearMeasure();applyFilter();if(editView) editMarkers.sync();};
   $('editInstructions').oninput=e=>viewerDraft.update({instructions:e.target.value});
+  $('reviewRevision').onclick=()=>{
+    if(editMarkers.pending()){$('editHint').hidden=false;return;}
+    viewerDraft.reviewRevision();
+  };
   window.addEventListener('viewer-draft-change',event=>{
     syncEditPanel();
     if(editView && event.detail?.notesChanged!==false) editMarkers.sync();
@@ -1267,6 +1273,7 @@ _PANEL_HTML = r"""
       <textarea id="editInstructions" rows="4" placeholder="[[msg:Describe changes to the model…]]"></textarea>
       <p id="editHint" role="status" hidden>[[msg:Confirm the object note or click empty space to discard it.]]</p>
       <p id="draftStorageStatus" role="status"></p>
+      <div id="revisionActions" class="card-actions" hidden><button type="button" id="reviewRevision">[[msg:Submit edits…]]</button></div>
     </section>
   </section>
   <aside id="panel">
@@ -1399,6 +1406,8 @@ _STYLE = r"""
   #editInstructions::placeholder {color:var(--muted);}
   #editInstructions:focus-visible {outline:2px solid #a3b6ef;outline-offset:3px;border-radius:3px;}
   #editPanel p {font-size:13px;color:var(--muted);margin:0 var(--card-inset) 12px;}
+  #reviewRevision {padding:6px 14px;background:var(--blue);border:1px solid var(--blue);color:white;}
+  #reviewRevision:disabled {background:#e8ecf2;color:#606c7d;border-color:#e8ecf2;cursor:default;}
   .pick-kind {font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;color:var(--blue);}
   .pick-name {font:600 15px/1.36 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere;}
   .pick-fields {padding:0 var(--card-inset) 8px;}

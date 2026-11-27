@@ -6,60 +6,30 @@
   <title>Sim-BIM</title>
   <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
-  <style>
-    html,body{height:100%;margin:0}body{display:flex;flex-direction:column}
-    iframe{flex:1;min-height:0;width:100%;border:0;display:block}
-    #download-model{margin-left:auto}
-    #update-preview{background:transparent;color:var(--accent);border:0;padding:4px 0;font-weight:600}
-  </style>
+  <script src="/static/viewer-draft.js?v=3" defer></script>
+  <script type="module" src="/static/viewer-host.js"></script>
 </head>
-<body>
-  <nav class="model-return" aria-label="Workspace"><a id="inputs-link" href="/">Inputs</a><span aria-hidden="true">/</span><a id="activity-link">Run activity</a><a id="download-model" download="Sim-BIM.html" hidden>Download HTML</a><button type="button" id="update-preview" hidden>Open updated model</button></nav>
-  <iframe title="Sim-BIM" sandbox="allow-scripts allow-downloads"></iframe>
-  <script src="/static/viewer-draft.js?v=2"></script>
-  <script>
-    const path=location.hash.slice(1), lang=new URLSearchParams(location.search).get('lang')==='zh-CN'?'zh-CN':'en';
-    const frame=document.querySelector('iframe'), update=document.querySelector('#update-preview');
-    update.textContent=lang==='en'?'Open updated model':'打开更新后的模型';
-    update.onclick=()=>location.reload();
-    function watchDelivery(viewerUrl) {
-      const download=document.querySelector('#download-model');
-      download.href=viewerUrl.pathname+'?download=1';
-      download.textContent=lang==='en'?'Download HTML':'下载 HTML';
-      download.hidden=false;
-      let loadedVersion, checking=false;
-      async function checkVersion() {
-        if (checking) return;
-        checking=true;
-        let version;
-        try {
-          const response=await fetch(viewerUrl,{method:'HEAD',cache:'no-store'});
-          if (response.ok) version=response.headers.get('etag');
-        } catch { /* Open the model directly if a version cannot be read. */ }
-        finally { checking=false; }
-        if (!frame.hasAttribute('src')) {
-          loadedVersion=version;
-          const target=new URL(viewerUrl);
-          target.searchParams.set('rev',version || String(Date.now()));
-          frame.src=target.href;
-        } else if (version) {
-          // A tab may hold an unconfirmed annotation. Let the user choose when to replace it.
-          update.hidden=version===loadedVersion;
-        }
-      }
-      checkVersion();
-      document.addEventListener('visibilitychange',()=>{if (!document.hidden) checkVersion();});
-      window.addEventListener('pageshow',event=>{if (event.persisted) checkVersion();});
-    }
-    if (!SimBimViewerDraft.host(frame,path,watchDelivery)) location.replace('/');
-    const activity=new URL('/static/run.html',location.origin);
-    activity.searchParams.set('id',path.split('/')[3]);activity.searchParams.set('lang',lang);
-    document.documentElement.lang=lang;
-    document.querySelector('nav').setAttribute('aria-label',lang==='en'?'Workspace':'工作区');
-    document.querySelector('#inputs-link').textContent=lang==='en'?'Inputs':'输入';
-    const link=document.querySelector('#activity-link');
-    link.textContent=lang==='en'?'Run activity':'运行记录';link.href=activity.href;
-    window.addEventListener('hashchange', () => location.reload());
-  </script>
+<body class="model-page">
+  <nav class="model-return" aria-label="Workspace">
+    <a href="/" data-t="inputs">Inputs</a><span aria-hidden="true">/</span>
+    <a id="activity-link" data-t="activity">Run activity</a>
+    <a id="download-model" download="Sim-BIM.html" data-t="download" hidden>Download HTML</a>
+    <button type="button" id="update-preview" class="text-button" data-t="updatedModel" hidden>Open updated model</button>
+    <button type="button" id="submit-edits" class="button primary" data-t="submitEdits" hidden>Submit edits…</button>
+  </nav>
+  <iframe title="Sim-BIM" sandbox="allow-scripts allow-downloads allow-forms"></iframe>
+  <dialog id="revision-dialog" aria-labelledby="revision-title">
+    <div class="dialog-head"><h2 id="revision-title" data-t="confirmRevision">Review edits</h2></div>
+    <div class="revision-body">
+      <p data-t="revisionExplanation">The model will use these edits and the original materials to create a new version.</p>
+      <div id="revision-summary"></div>
+      <p id="revision-error" class="dialog-note error" role="alert" hidden></p>
+      <a id="failed-revision" data-t="viewFailedRevision" hidden>View failed run</a>
+      <div class="dialog-actions">
+        <button type="button" id="cancel-revision" class="button" data-t="cancel" autofocus>Cancel</button>
+        <button type="button" id="confirm-revision" class="button primary" data-t="runRevision">Start revision</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

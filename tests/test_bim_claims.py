@@ -111,6 +111,24 @@ def test_aperture_removal_scope_matches_the_actual_proposal_collection(tmp_path,
     assert proposal["geometry"]["corrections"][-1]["target_collection"] == kind + "s"
 
 
+def test_batch_window_shift_keeps_a_checked_scope_and_immutable_parent(tmp_path):
+    run, toolkit = setup_run(tmp_path)
+    seed = run / "seed" / "source_model.json"
+    original = seed.read_bytes()
+    op = {"op": "shift_window_heights", "ids": ["window"], "sill_delta_m": .1,
+          "reason": "raise the sill", "source_refs": ["user instruction"]}
+    result = toolkit.revise("seed", json.dumps([op]))
+    app = result["claim_application"]
+    assert app["status"] == "applied" and app["scope_check"] == "checked"
+    assert app["outside_declared_scope"] == []
+    assert [(row["kind"], row["id"]) for row in app["changes"]] == [("window", "window")]
+    assert seed.read_bytes() == original
+    folders = set(run.glob("candidate_*"))
+    with pytest.raises(ValueError, match="not exterior windows"):
+        toolkit.revise("seed", json.dumps([{**op, "ids": ["window", "door"]}]))
+    assert set(run.glob("candidate_*")) == folders and seed.read_bytes() == original
+
+
 def test_unadopted_retracted_wrong_target_and_stale_claims_leave_failure_records(tmp_path):
     run, toolkit = setup_run(tmp_path)
     row = toolkit.record_claim(json.dumps(claim()))

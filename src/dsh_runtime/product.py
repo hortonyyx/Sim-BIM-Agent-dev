@@ -154,6 +154,24 @@ def matches_frozen_scope(case, frozen_scope):
     return case.get("_scope_was_omitted") is True and frozen_scope == legacy_default + case["scope"]
 
 
+def _local_north(output, public, case, materials):
+    from src.agent.model_revision import finish_north_revision
+    from src.agent.runtime_entry import prepare_inputs
+    from src.agent.runtime_tools import frozen_bim_client
+    if output.exists():
+        raise ValueError(f"run directory already exists: {output}")
+    run, _, _ = prepare_inputs(output / "private/dsh/work", **materials, scope=case["scope"],
+        image_kind=case["image_kind"], floor_plan_images=case.get("floor_plan_images"),
+        max_candidates=case["max_candidates"], orchestrator=True)
+    async def execute():
+        async with frozen_bim_client(run, repository_root=ROOT) as client:
+            return await finish_north_revision(run, client)
+    terminal = asyncio.run(execute())
+    launcher.relay.save(output / "control/terminal.json", terminal)
+    publish_result(output, terminal, public)
+    return 0
+
+
 def launch(case, *, resume=False, delivery_directory=None):
     if case.get("mode") != "orchestrator" or case.get("runtime") != "dsh":
         raise ValueError("select an orchestrator case using the dsh runtime")
@@ -161,14 +179,30 @@ def launch(case, *, resume=False, delivery_directory=None):
     output = resolve_run_output(Path(case["output"]) if run_root else ROOT / case["output"],
                                 repository_root=ROOT, run_root=run_root)
     public = delivery_directory or output
-    credentials = SubscriptionCredentials(Path(case["chatgpt_auth_dir"]) if case.get("chatgpt_auth_dir") else None)
-    frozen_config = launcher.read(output / "config.json") if resume else {}
-    config = host_config(case, credentials.directory, resume_revisions=frozen_config.get("connection_revisions"))
     primary = resolve_case_input(case)
     auxiliary, declaration = resolve_supplemental_inputs(case)
     mesh = primary if case["input_kind"] == "mesh" else None
     materials = {"images": auxiliary if mesh else primary, "mesh": mesh, "building_input": declaration}
     materials.update({key: case[key] for key in ("blocks", "locale", "thickness_candidates_mm") if key in case})
+    revision = case.get("revision")
+    if revision is not None:
+        inputs_root = Path(case["input_root"]).resolve()
+        directory = inputs_root / "revision-parent"
+        if directory.resolve().parent != inputs_root or directory.is_symlink() or directory.is_junction():
+            raise ValueError("Revision parent must be inside the frozen inputs")
+        materials.update(revision=revision, revision_directory=directory)
+        draft = revision["draft"]
+        if draft["northAngle"] is not None and not draft["notes"] and not draft["instructions"].strip():
+            if resume:
+                terminal = launcher.read(output / "control/terminal.json")
+                publish_result(output, terminal, public)
+                return 0
+            return _local_north(output, public, case, materials)
+    credentials = SubscriptionCredentials(Path(case["chatgpt_auth_dir"]) if case.get("chatgpt_auth_dir") else None)
+    frozen_config = launcher.read(output / "config.json") if resume else {}
+    config = host_config(case, credentials.directory, resume_revisions=frozen_config.get("connection_revisions"))
+    if revision is not None:
+        config["revision"] = revision
     if resume:
         if frozen_config != config or not matches_frozen_scope(case, (output / "shared/task.txt").read_text(encoding="utf-8")):
             raise ValueError("requested DSH configuration or task differs from the frozen run")

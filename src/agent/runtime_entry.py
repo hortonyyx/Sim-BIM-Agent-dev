@@ -54,7 +54,8 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
                    started_epoch: float | None = None,
                    seconds: float | None = None, process_reviews: bool = False,
                    orchestrator: bool = False, blocks: list[dict] | None = None,
-                   locale: str | None = None, thickness_candidates_mm: dict | None = None) -> tuple[Path, str, str]:
+                   locale: str | None = None, thickness_candidates_mm: dict | None = None,
+                   revision: dict | None = None, revision_directory: Path | None = None) -> tuple[Path, str, str]:
     """Freeze and validate original inputs through the shared admission function."""
     from src.agent.bim_inputs import prepare_bim_inputs
     from src.agent.geometry.thickness_options import normalize_candidates
@@ -108,6 +109,14 @@ def prepare_inputs(output: Path, *, images: Path | None, mesh: Path | None,
             for i, a in enumerate(b["assets"], 1)]} for n, b in enumerate(blocks, 1)]
         task_parts.append("User material blocks in submitted order:\n" + json.dumps(ordered, ensure_ascii=False))
     task_parts.append(describe_orchestrator_inputs(manifest))
+    if revision is not None:
+        from src.agent.model_revision import admit_revision
+        task_parts.append(admit_revision(run, revision, revision_directory))
+        guide += ("\nThis is an Edit of an existing delivered building. Start with its supplied candidate. "
+                  "The original materials and kickoff give context to this revision. The confirmed edit request "
+                  "defines the current task. Reuse valid parent evidence and audit the affected geometry. "
+                  "For properties only, derive a child with revise_bim and an empty operation list, "
+                  "then set user-confirmed inspection properties on that child before finish_bim.\n")
     task = "\n\n".join(task_parts)
     (output / "guide.txt").write_text(guide, encoding="utf-8")
     (output / "task.txt").write_text(task, encoding="utf-8")

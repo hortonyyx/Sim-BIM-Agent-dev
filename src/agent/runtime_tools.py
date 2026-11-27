@@ -159,6 +159,7 @@ def frozen_bim_client(
         args=args,
         cwd=root,
         run_directory=run,
+        env={"PYTHONUTF8": "1"},
     )
 
 

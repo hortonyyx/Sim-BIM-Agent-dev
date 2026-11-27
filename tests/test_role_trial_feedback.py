@@ -464,6 +464,10 @@ def test_bounded_json_browser_preserves_escaped_keys_and_long_text_pages():
     assert len(page["entries"]) == 8 and page["next_offset"] == 8
     assert len(json.dumps(page).encode()) < 12_000
     assert page["entries"][0]["value"]["full_record"]["pointer"] == "/a~1b~0c/rows/0"
+    one = bounded_json_view(document, pointer="/a~1b~0c/rows", limit=1, reference_for=ref)
+    assert one["page_unit"] == "children" and len(one["entries"]) == one["next_offset"] == 1
+    clipped = bounded_json_view(document, pointer=pointer, limit=1000, reference_for=ref)
+    assert clipped["page_unit"] == "characters" and len(clipped["text"]) == clipped["page_limit"] == 600
     for pointer in ("/a~2b", "/a~1b~0c/rows/-1", "/a~1b~0c/rows/01"):
         with pytest.raises(ValueError, match="pointer"):
             bounded_json_view(document, pointer=pointer, reference_for=ref)

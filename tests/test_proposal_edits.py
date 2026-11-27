@@ -167,6 +167,39 @@ def _replace_region(polygon, *, space_id="left", neighbor_space_id="right"):
     }
 
 
+def test_batch_shift_reuses_window_edits_and_preserves_other_geometry():
+    proposal = _proposal_with_upper_floor()
+    geometry = proposal["geometry"]
+    geometry["schema_version"] = "source_polygon_v1"
+    for floor in geometry["floors"]:
+        floor["footprint"] = {"vertices": [[0, 0], [8, 0], [8, 6], [0, 6]]}
+    geometry["openings"].append({"id": "upper_side", "kind": "window", "space_id": "upper_left",
+        "other_space_id": None, "p1": [0, 2], "p2": [0, 3], "z": [4, 5], "source_refs": ["fixture"]})
+    original = copy.deepcopy(proposal)
+    shift = {"op": "shift_window_heights", "floor_ids": ["F2"], "sill_delta_m": -0.25,
+             "head_delta_m": 0.125, "reason": "adjust upper glazing", "source_refs": ["revision:note1"]}
+    result = apply_proposal_edits(proposal, [shift])
+    equivalent = apply_proposal_edits(proposal, [
+        {"op": op, "id": identity, "changes": {"z": [3.75, 5.125]}, "reason": shift["reason"],
+         "source_refs": shift["source_refs"]} for op, identity in
+        [("update_window", "upper_north"), ("update_opening", "upper_side")]])
+    assert _without_audit(result["geometry"]) == _without_audit(equivalent["geometry"])
+    changed = result["geometry"]["corrections"][-1]["changes"]
+    assert [(r["id"], r["before_z"], r["after_z"]) for r in changed] == [
+        ("upper_north", [4, 5], [3.75, 5.125]), ("upper_side", [4, 5], [3.75, 5.125])]
+    move = {**shift, "floor_ids": ["F1", "F2"], "ids": ["north", "upper_side"], "head_delta_m": 0}
+    both = apply_proposal_edits(proposal, [move])["geometry"]["corrections"][-1]["changes"]
+    assert [r["after_z"] for r in both] == [[0.75, 2], [3.75, 5]]
+    whole = dict(shift, all=True)
+    del whole["floor_ids"]
+    assert len(apply_proposal_edits(proposal, [whole])["geometry"]["corrections"][-1]["changes"]) == 6
+    for invalid in ({"ids": ["upper_side", "door"]}, {"floor_ids": ["missing"]}, {"ids": ["west"]},
+                    {"all": True}, {"sill_delta_m": 3}, {"head_delta_m": 20}):
+        with pytest.raises(ValueError):
+            apply_proposal_edits(proposal, [{**shift, **invalid}])
+    assert proposal == original
+
+
 def test_reflection_preserves_nonrectangular_rooms_openings_and_source_buildability():
     proposal = _proposal()
     x_reflected = apply_proposal_edits(proposal, [{"op": "reflect", "axis": "x", "reason": "plan is mirrored"}])

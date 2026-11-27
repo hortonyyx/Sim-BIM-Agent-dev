@@ -92,6 +92,12 @@ def prepare(case, *, material_paths=None):
     if material_paths is not None:
         frozen_files += [run / 'inputs.json', *sorted((run / 'images').glob('*.png')),
                          *sorted((run / 'assets').rglob('*')), run / 'building_input.json']
+        if material_paths.get('revision') is not None:
+            # Freeze the original snapshot index; editable working copies are separately
+            # admitted by digest and may receive new child-side evidence during the session.
+            revision_index = material_paths['revision_directory'] / 'snapshot.json'
+            if digest(revision_index) != material_paths['revision']['snapshotSha256']:
+                raise ValueError("Revision snapshot changed during admission")
     relay.save(
         shared / 'initial-messages.json',
         [{'role': 'system', 'content': guide}, {'role': 'user', 'content': content}],

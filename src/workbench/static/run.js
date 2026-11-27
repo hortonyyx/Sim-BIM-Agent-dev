@@ -50,6 +50,11 @@ function renderHeader() {
   for (const [name,value] of items) if (value) {
     const item=el('div');item.append(el('dt','',name),el('dd',name===t('traceElapsed')?'elapsed-value':'',value));fragment.append(item);
   }
+  if (runId.test(meta.parentRunId || '')) {
+    const entry=el('div'), value=el('dd'), link=el('a','',t('openParentRun'));
+    const parentUrl=new URL(location.href);parentUrl.searchParams.set('id',meta.parentRunId);parentUrl.hash='';
+    link.href=parentUrl.href;value.append(link);entry.append(el('dt','',t('parentRun')),value);fragment.append(entry);
+  }
   $('run-meta').replaceChildren(fragment);
   const target=deliveryUrl(), link=$('delivery-link');
   link.hidden=!target;if (target) link.href=target.href;
@@ -62,7 +67,8 @@ function renderHeader() {
 }
 function renderHistory() {
   const select=$('run-history');select.parentElement.hidden=runs.length<2;
-  select.replaceChildren(...runs.map(record=>new Option((dateLabel(record.started_at) || record.id)+' · '+statusLabel(record.status),record.id)));
+  select.replaceChildren(...runs.map(record=>new Option([dateLabel(record.started_at) || record.id,
+    ...(record.parentRunId?[t('revision')]:[]),statusLabel(record.status)].join(' · '),record.id)));
   select.value=id;
 }
 function renderLanguage() {

@@ -139,6 +139,20 @@ def test_drawing_process_tool_errors_link_to_their_actual_format(tmp_path):
     asyncio.run(scenario())
 
 
+def test_invalid_candidate_page_can_retry_the_same_query(tmp_path):
+    async def scenario():
+        run = _run_with_one_image(tmp_path)
+        candidate = Toolkit(run).build(json.loads(_two_room_proposal()))["candidate"]
+        async with _server_session(run, readonly=False) as session:
+            args = {"candidate": candidate, "collection": "cells", "limit": 100}
+            failed = await session.call_tool("read_candidate_items", args)
+            assert failed.isError and "limit=50" in failed.structuredContent["error"]
+            assert "plan_partition" not in failed.structuredContent["repair_hint"]
+            ok = await session.call_tool("read_candidate_items", {**args, "limit": 50})
+            assert not ok.isError and len(_json_result(ok)["items"]) == 2
+    asyncio.run(scenario())
+
+
 def test_wall_position_failure_points_to_exact_field_and_correct_reference(tmp_path):
     async def scenario():
         run = _run_with_one_image(tmp_path)

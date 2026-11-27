@@ -23,6 +23,7 @@
     "src/workbench/static/dom.js",
     "src/workbench/static/preview.js",
     "src/workbench/static/viewer.html",
+    "src/workbench/static/viewer-host.js",
     "src/workbench/static/run.html",
     "src/workbench/static/run.js",
     "src/workbench/static/viewer-draft.js",

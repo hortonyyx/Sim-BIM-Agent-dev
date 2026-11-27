@@ -452,6 +452,8 @@ def register_inference_tools(server, toolkit):
     def record_sim_inspection(candidate: str, inspection_json: str) -> dict:
         """Stage batched zone/surface spatial assessments and simulation properties on a saved candidate.
 
+        Each rule uses all:true alone or intersects explicit filters. Use physical_only:true
+        for material/thickness rules on solid boundaries or filled openings. Omit null fields.
         Read get_bim_reference("sim_inspection") for the packet schema. Repeated calls
         update named fields only. finish_bim publishes the assessed viewer and properties.
         """
