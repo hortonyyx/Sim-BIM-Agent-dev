@@ -82,6 +82,11 @@ def repair_hint(toolkit, tool, arguments, message):
                     'Omit json_pointer to read character pages (limit 1..12000), or follow the structured page\'s next arguments.')
         return ("Read candidate rows with offset >= 0 and limit 1..50; keep the same collection and candidate "
                 "and continue at the returned next_offset.")
+    if tool == "revise_bim" and ("move_shared_wall:" in message or "reshape_spaces:" in message):
+        return ("For two adjacent polygon rooms use replace_space_region with space_id, neighbor_space_id, "
+                "the first room's complete polygon in original vertex order, reason and source_refs. "
+                "To translate the partition move its two endpoints together. The neighbor is computed from "
+                "their combined footprint. Enclosure observations and aperture bindings must remain valid.")
     if "reviews_json:" in message or "drawing_process:" in message:
         return 'Next: read get_bim_reference(topic="drawing_process") for the review and delivery format.'
     if "Run deadline reached" in message:

@@ -177,7 +177,7 @@ def source_grid_report(source, grid_step_m):
 
 
 def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None,
-                           architectural_regularization=None):
+                           architectural_regularization=None, operations=None, confirmed_offsets=None):
     """Prepare a source-only hard-rule refusal before allocating a candidate.
 
     The caller is Toolkit.build. This helper never edits a source or the input
@@ -214,6 +214,10 @@ def reject_source_proposal(toolkit, proposal, *, plan_assembly=None, parent=None
     if parent is not None:
         for regularization in candidate_reports(toolkit, parent):
             report = apply_cross_storey_skip_policy(report, regularization)
+    if confirmed_offsets is not None and toolkit.manifest.get("model_revision"):
+        from scripts.tool_scripts.bim_agent_partition_precision import apply_confirmed_offsets, bind_partition_offsets
+        confirmed_offsets.extend(bind_partition_offsets(toolkit, parent, source, operations, report))
+        report = apply_confirmed_offsets(report, confirmed_offsets)
     report = classify_source_precision(report, toolkit.manifest)
     grid = None
     if grid_step is not None and adopted_precision is None:

@@ -94,6 +94,10 @@ def building_precision(toolkit, candidate, source=None):
     )
     for regularization_report in candidate_reports(toolkit, candidate, source):
         report = apply_cross_storey_skip_policy(report, regularization_report)
+    offsets = source.get("generation", {}).get("provenance", {}).get("confirmed_partition_offsets")
+    if offsets:
+        from scripts.tool_scripts.bim_agent_partition_precision import apply_confirmed_offsets
+        report = apply_confirmed_offsets(report, offsets)
     report = classify_source_precision(report, toolkit.manifest)
     report['wall_placement'] = annotated_wall_placement(toolkit, source,
         proposal.get('wall_references', []), proposal.get('wall_dimensions', []))

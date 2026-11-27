@@ -475,6 +475,55 @@ def _set_cell_polygon(cell: dict, shape: Polygon) -> None:
     cell["y"] = [float(shape.bounds[1]), float(shape.bounds[3])]
 
 
+def _translated_partition(old_shapes, new_shapes):
+    """Recover the original two vertex orders when a complete straight common edge translates."""
+    edges = []
+    for first, second in (old_shapes, new_shapes):
+        edge = first.boundary.intersection(second.boundary)
+        if edge.geom_type != "LineString" or edge.is_empty or len(edge.coords) != 2:
+            return None
+        edges.append(sorted(edge.coords))
+    old_edge, new_edge = edges
+    shifts = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(old_edge, new_edge)]
+    if math.dist(shifts[0], shifts[1]) > _LOCAL_PARTITION_TOLERANCE_M or old_edge == new_edge:
+        return None
+    moved = dict(zip(old_edge, new_edge))
+    result = []
+    for old, expected in zip(old_shapes, new_shapes):
+        ring = list(old.exterior.coords)[:-1]
+        if not moved.keys() <= set(ring):
+            return None
+        rebuilt = Polygon([moved.get(point, point) for point in ring])
+        if not rebuilt.is_valid or not rebuilt.equals(expected):
+            return None
+        result.append(rebuilt)
+    return result
+
+
+def _partition_enclosure_state(proposal):
+    """Bind enclosure evidence and apertures through the same kernel used for final delivery."""
+    from src.agent.execution.source_proposal import compile_source_proposal
+
+    if proposal["enclosure_declaration"].get("schema_version") != "source_enclosure_intent_v1":
+        raise ValueError("replace_space_region: a source-bound or unknown enclosure_declaration requires an explicit revised proposal")
+    source, report = compile_source_proposal(proposal)
+    if not report["source_geometry_ready"]:
+        raise ValueError("replace_space_region: cannot preserve the enclosure and opening bindings: "
+                         + str(report.get("error") or report.get("source_validation", {}).get("findings", [])[:2]))
+    enclosure = source["source_enclosure"]
+    observed = {(row["target_type"], row["target_id"]) for row in enclosure["applications"]}
+    observed_faces = {identity for kind, identity in observed if kind == "boundary"}
+    return {
+        "intent_binding": enclosure["intent_binding"], "applications": enclosure["applications"],
+        "open_connections": enclosure["open_connections"],
+        "declared_spaces": [s for s in source["spaces"] if ("space", s["id"]) in observed],
+        "declared_faces": [b for b in source["boundaries"] if b["id"] in observed_faces],
+        "declared_contacts": [r for r in source["boundary_relations"] if observed_faces.intersection(r["boundary_ids"])],
+        "opening_hosts": source["opening_hosts"], "openings": source["openings"],
+        "connections": source["connections"], "unbuilt_openings": source["unbuilt_openings"],
+    }
+
+
 def _replace_space_region(proposal: dict, geometry: dict, operation: dict) -> dict:
     """Replace one source room and derive its adjacent room's exact remainder.
 
@@ -484,8 +533,6 @@ def _replace_space_region(proposal: dict, geometry: dict, operation: dict) -> di
     """
     name = "replace_space_region"
     _require_fields(operation, {"op", "space_id", "neighbor_space_id", "polygon", "reason", "source_refs"}, operation=name)
-    if proposal.get("enclosure_declaration") is not None:
-        raise ValueError("replace_space_region: explicit enclosure_declaration requires an explicit revised proposal")
     if proposal.get("wall_references") or proposal.get("wall_dimensions"):
         raise ValueError("replace_space_region: wall references/dimensions require an explicit revised proposal")
     space_id = _nonblank_string(operation.get("space_id"), field="space_id", operation=name)
@@ -526,6 +573,12 @@ def _replace_space_region(proposal: dict, geometry: dict, operation: dict) -> di
     if unary_union([new_target, new_neighbor]).symmetric_difference(old_region).area > _LOCAL_PARTITION_AREA_TOLERANCE_M2:
         raise ValueError("replace_space_region: replacement does not preserve the original two-space coverage")
 
+    translated = _translated_partition((old_target, old_neighbor), (new_target, new_neighbor))
+    if translated is not None:
+        new_target, new_neighbor = translated
+    elif proposal.get("enclosure_declaration") is not None:
+        raise ValueError("replace_space_region: with an enclosure_declaration, move one complete straight shared "
+                         "edge in parallel. Keep the other vertices at their original coordinates.")
     before_cells = {space_id: copy.deepcopy(target_cell), neighbor_id: copy.deepcopy(neighbor_cell)}
     _set_cell_polygon(target_cell, new_target)
     _set_cell_polygon(neighbor_cell, new_neighbor)
@@ -863,6 +916,7 @@ def apply_proposal_edits(proposal: dict, operations: list[dict]) -> dict:
         if not isinstance(operation, dict) or not isinstance(operation.get("op"), str):
             raise ValueError("each operation must be an object with an op")
         name = operation["op"]
+        enclosure_before = None
         if name == "reflect":
             _require_fields(operation, {"op", "axis", "reason"}, operation=name)
             if result.get("wall_references") or result.get("wall_dimensions"):
@@ -894,6 +948,8 @@ def apply_proposal_edits(proposal: dict, operations: list[dict]) -> dict:
         elif name == "reshape_spaces":
             audit = _reshape_spaces(result, geometry, operation)
         elif name == "replace_space_region":
+            if result.get("enclosure_declaration") is not None:
+                enclosure_before = _partition_enclosure_state(result)
             audit = _replace_space_region(result, geometry, operation)
         elif name == "set_notes":
             audit = _set_notes(result, operation)
@@ -918,6 +974,9 @@ def apply_proposal_edits(proposal: dict, operations: list[dict]) -> dict:
             _reflect_wall_readings(result, audit, len(corrections))
         elif name in {"move_shared_wall", "reshape_spaces", "replace_space_region"}:
             _rebind_edited_wall_readings(result, audit, len(corrections))
+        if enclosure_before is not None and _partition_enclosure_state(result) != enclosure_before:
+            raise ValueError("replace_space_region: the edit changes a declared enclosure, contact or opening binding. "
+                             "Supply an explicit revised proposal for the affected enclosure or aperture.")
         corrections.append(audit)
         _unique_ids(geometry)
     parse_geometry(geometry)

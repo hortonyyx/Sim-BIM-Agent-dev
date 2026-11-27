@@ -131,6 +131,18 @@ def validate_build_regularization(toolkit, proposal, reference):
                 or not _same_parent_structure(original, proposal)):
             raise ValueError("architectural retained parent geometry binding changed")
         _verify_retained_declaration(toolkit, inherited['candidate'], parent)
+    partition = audit.get('retained_partition_apertures')
+    if partition:
+        parent = _parent_adoption(toolkit, partition['candidate'])
+        source, previous, parent_ref, _, _ = parent
+        submitted = _read(toolkit, reference['original'])
+        if (not parent_ref or partition['source_model_sha256'] != source['source_model_sha256']
+                or partition['proposal_sha256'] != parent_ref['proposal_sha256']
+                or not _only_translated_partition(previous, submitted)
+                or any(proposal['geometry'].get(k) != submitted['geometry'].get(k)
+                       for k in ('floors', 'openings', 'windows'))):
+            raise ValueError("architectural retained partition aperture binding changed")
+        _verify_retained_declaration(toolkit, partition['candidate'], parent)
     return adopted, audit
 
 
@@ -183,6 +195,43 @@ def _same_parent_structure(original, proposal):
         from src.agent.geometry.source_curves import expand_source_polygon_geometry
         return _hash(structure(original, expand_source_polygon_geometry(before))) == submitted
     return False
+
+
+def _only_translated_partition(original, proposal):
+    """Prove a single translated common edge, independent of the caller's edit log."""
+    from src.agent.geometry.proposal_edits import _cell_shape, _translated_partition
+
+    def excluding(row, keys):
+        return {key: value for key, value in row.items() if key not in keys}
+
+    before, after = original['geometry'], proposal['geometry']
+    if (before.get('boundary_curves') or excluding(original, {'geometry'}) != excluding(proposal, {'geometry'})
+            or excluding(before, {'floors', 'corrections'}) != excluding(after, {'floors', 'corrections'})
+            or len(before['floors']) != len(after['floors'])):
+        return False
+    old_shapes = new_shapes = None
+    ring_keys = {'x', 'y', 'polygon'}
+    for old, new in zip(before['floors'], after['floors']):
+        if old == new:
+            continue
+        if (old_shapes is not None or excluding(old, {'cells'}) != excluding(new, {'cells'})
+                or len(old['cells']) != len(new['cells'])):
+            return False
+        changes = [(a, b) for a, b in zip(old['cells'], new['cells']) if a != b]
+        if len(changes) != 2 or any(a.get('boundary_path') or excluding(a, ring_keys) != excluding(b, ring_keys)
+                                    for a, b in changes):
+            return False
+        try:
+            old_shapes, new_shapes = [
+                [_cell_shape(cell, operation='partition adoption',
+                             require_orthogonal=before.get('schema_version') != 'source_polygon_v1')
+                 for cell in side] for side in zip(*changes)]
+        except ValueError:
+            return False
+    if old_shapes is None:
+        return False
+    return (old_shapes[0].union(old_shapes[1]).equals(new_shapes[0].union(new_shapes[1]))
+            and _translated_partition(old_shapes, new_shapes) is not None)
 
 
 def _verify_retained_declaration(toolkit, parent, admission):
@@ -292,14 +341,18 @@ def prepare_source_proposal(toolkit, proposal, *, parent=None, revise=False):
     if context:
         effective['modelling'] = context
     try:
-        retained = (revise and parent_ref is not None and source['validation']['status'] in {'pass', 'warning'}
-                    and _same_parent_structure(previous, proposal))
-        if retained:
+        verified = revise and parent_ref is not None and source['validation']['status'] in {'pass', 'warning'}
+        retained = verified and _same_parent_structure(previous, proposal)
+        partition = verified and not retained and _only_translated_partition(previous, proposal)
+        if retained or partition:
             _verify_retained_declaration(toolkit, parent, parent_adoption)
         adopted, audit = regularize_architectural_proposal(effective, policy=policy,
-            _parent_geometry=previous['geometry'] if retained else None)
-        if retained:
-            audit['retained_parent_rings'] = {'candidate': parent,
+            _parent_geometry=previous['geometry'] if retained else None, _partition_edit=bool(partition))
+        retention = 'retained_parent_rings' if retained else None
+        if audit.get('retained_partition_apertures'):
+            retention = 'retained_partition_apertures'
+        if retention:
+            audit[retention] = {'candidate': parent,
                 'source_model_sha256': source['source_model_sha256'], 'proposal_sha256': parent_ref['proposal_sha256']}
     except ValueError as error:
         if hasattr(error, "audit"):

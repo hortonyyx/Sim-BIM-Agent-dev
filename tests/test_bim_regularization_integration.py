@@ -486,3 +486,67 @@ def test_source_refusal_stays_primary_when_plan_and_stack_prechecks_pass(tmp_pat
         audit = json.loads((run / reference['file']).read_text(encoding='utf-8'))
         assert audit['rejections'][0]['type'] == 'source_only_violation'
     assert len(list(run.glob('candidate_*'))) == 2
+
+
+def test_only_the_requested_parent_wall_pair_can_acquire_or_inherit_an_offset(tmp_path):
+    import copy
+    from types import SimpleNamespace
+
+    from scripts.tool_scripts.bim_agent_partition_precision import _new_confirmation, apply_confirmed_offsets, bind_partition_offsets
+    from src.agent.execution.source_proposal import compile_source_proposal
+    from src.agent.geometry.building_precision import precision_report
+    from src.agent.geometry.proposal_edits import apply_proposal_edits
+    from src.agent.model_revision import current_revision_evidence
+    from tests.test_proposal_edits import _rectangular_wall_proposal, _replace_region
+
+    proposal = _rectangular_wall_proposal()
+    proposal["geometry"]["openings"].pop(0)
+    parent, report = compile_source_proposal(proposal)
+    assert report["source_geometry_ready"]
+    operation = _replace_region([[0, 0], [4.1, 0], [4.1, 4], [0, 4]])
+    child, report = compile_source_proposal(apply_proposal_edits(proposal, [operation]))
+    assert report["source_geometry_ready"]
+    raw = precision_report(child)
+    item, = [i for i in raw["items"] if i["type"] == "storey_wall_offset"]
+    def request(text):
+        revision = {"parentRun": "frozen-run", "draft": {"instructions": text, "notes": [], "northAngle": None}}
+        evidence = current_revision_evidence(revision)
+        manifest = {"model_revision": revision, "revisionEvidence": evidence}
+        operation["source_refs"] = ["revision:" + next(iter(evidence))]
+        return manifest
+    manifest = request("Move the shared wall between left and right by 0.10 m toward the east.")
+    proof = _new_confirmation(manifest, parent, child, [operation], item)
+    assert proof["floor_id"] == "F1" and proof["delta_m"] == .1
+    bad_type = {**item, "type": "near_parallel_walls"}
+    changed_span = copy.deepcopy(item)
+    changed_span["lines"][0]["span_m"] = [0, 3]
+    report = apply_confirmed_offsets({**raw, "items": [item, bad_type, changed_span]}, [proof])
+    assert report["items"] == [bad_type, changed_span]
+    assert report["skipped_items"][0]["confirmation"] == proof
+    child["generation"]["provenance"]["confirmed_partition_offsets"] = [proof]
+    (tmp_path / "source_model.json").write_text(json.dumps(child), encoding="utf-8")
+    toolkit = SimpleNamespace(manifest=manifest, candidate_path=lambda candidate: tmp_path)
+    assert bind_partition_offsets(toolkit, "child", child, [], raw) == [proof]
+    reshaped = copy.deepcopy(child)
+    wall = next(row for row in reshaped["boundaries"] if row["id"] == item["lines"][0]["boundary_ids"][0])
+    wall["vertices"][0][2] += .1
+    assert bind_partition_offsets(toolkit, "child", reshaped, [], raw) == []
+    for amendment in ("Move the wall between left and right by 0.20 m.",
+                      "Move the wall between left and right by 0.10 m toward the west.",
+                      "Move the wall between left and other by 0.10 m.",
+                      "Move the shared wall between upper_left and upper_right by 0.10 m.",
+                      "Move the window between left and right by 0.10 m.",
+                      "Do not shift the wall between left and right by 0.10 m.",
+                      "The glazing thickness between left and right is 0.10 m."):
+        assert _new_confirmation(request(amendment), parent, child, [operation], item) is None
+    rotated = copy.deepcopy(parent)
+    rotated["coordinate_system"]["north_axis"] = {"value_deg": 180, "source": "from user"}
+    assert _new_confirmation(request("把 left 与 right 之间的共墙西移 10 厘米。"), rotated, child, [operation], item)
+    assert _new_confirmation(request("把 left 与 right 之间的共墙东移 10 厘米。"), rotated, child, [operation], item) is None
+    assert _new_confirmation(request("把 left 与 right 之间的共墙东移 10 厘米。"), parent, child, [operation], item)
+    rotated["coordinate_system"]["north_axis"]["value_deg"] = 90
+    for words in ("向南挪 10 公分", "南移 10 厘米"):
+        assert _new_confirmation(request("把 left 与 right 之间的共墙" + words), rotated, child, [operation], item)
+    assert _new_confirmation(request("把 left 与 right 之间的共墙向北挪 10 公分"), rotated, child, [operation], item) is None
+    request("Move the shared wall between left and right by 0.1 m toward the east.")
+    assert _new_confirmation(manifest, parent, child, [operation], item) is None

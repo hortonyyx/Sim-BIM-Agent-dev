@@ -345,6 +345,65 @@ def test_revise_on_adopted_rings_checks_changed_apertures_and_keeps_the_parent_b
         validate_build_regularization(toolkit, new, ref)
 
 
+def test_partition_aperture_retention_requires_a_single_translated_edge():
+    from scripts.tool_scripts.bim_agent_architectural import _only_translated_partition
+
+    def cell(identity, left, right):
+        return {'id': identity, 'x': [left, right], 'y': [0, 4], 'role': 'office'}
+
+    original = {'geometry': {'schema_version': 'source_polygon_v1', 'floors': [
+        {'name': 'L1', 'cells': [cell('a', 0, 2), cell('b', 2, 4), cell('c', 4, 6)]}],
+        'openings': [{'id': 'exterior', 'space_id': 'a', 'p1': [0, 1], 'p2': [0, 2], 'z': [1, 2]}]}}
+    translated = copy.deepcopy(original)
+    left, right, _ = translated['geometry']['floors'][0]['cells']
+    left['x'][1] = right['x'][0] = 2.1
+    assert _only_translated_partition(original, translated)
+    assert not _only_translated_partition(original, original)
+    for change in ('opening', 'room_label', 'third_room', 'floor_outline', 'tilted_wall'):
+        proposed = copy.deepcopy(translated)
+        left, right, third = proposed['geometry']['floors'][0]['cells']
+        if change == 'opening':
+            proposed['geometry']['openings'][0]['p1'][1] += 1e-10
+        elif change == 'room_label':
+            left['role'] = 'storage'
+        elif change == 'third_room':
+            third['x'][1] = 6.5
+        elif change == 'floor_outline':
+            right['x'][1] = 4.1
+        else:
+            left.update(x=[0, 2.2], polygon=[[0, 0], [2.1, 0], [2.2, 4], [0, 4]])
+            right.update(x=[2.1, 4], polygon=[[2.1, 0], [4, 0], [4, 4], [2.2, 4]])
+        assert not _only_translated_partition(original, proposed), change
+
+
+def test_adopted_partition_restores_aperture_digits_only_after_normal_revalidation():
+    from src.agent.geometry.architectural_regularization import _retain_partition_apertures
+
+    submitted = {'floors': [{'name': 'L1', 'cells': [{'id': 'a', 'x': [0, 2.1]}]}],
+                 'openings': [{'id': 'oblique', 'space_id': 'a', 'p1': [1.0, 2.0], 'p2': [2.0, 3.0]}],
+                 'windows': [{'id': 'west', 'span': [1.0, 2.0], 'z': [1.0, 2.0]}]}
+    adopted = copy.deepcopy(submitted)
+    adopted['openings'][0]['p1'][0] += 2.63e-10
+    adopted['windows'][0]['span'][1] -= 1e-10
+    for change in ('moved_opening', 'host_rebinding', 'changed_ring', 'changed_height', 'missing_window'):
+        different = copy.deepcopy(adopted)
+        if change == 'moved_opening':
+            different['openings'][0]['p2'][0] += 2e-6
+        elif change == 'host_rebinding':
+            different['openings'][0]['space_id'] = 'b'
+        elif change == 'changed_ring':
+            different['floors'][0]['cells'][0]['x'][0] = 0.01
+        elif change == 'changed_height':
+            different['windows'][0]['z'][1] = 2.1
+        else:
+            different['windows'] = []
+        snapshot = copy.deepcopy(different)
+        assert not _retain_partition_apertures(submitted, different), change
+        assert different == snapshot
+    assert _retain_partition_apertures(submitted, adopted)
+    assert adopted == submitted
+
+
 @pytest.mark.parametrize('artifact', ['original', 'adopted', 'audit', 'proposal'])
 def test_toolkit_parametric_binding_rejects_tampered_declaration_or_adoption(tmp_path, monkeypatch, artifact):
     _, run, _ = _prepare(tmp_path, monkeypatch)

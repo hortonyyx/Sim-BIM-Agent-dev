@@ -511,6 +511,38 @@ def test_replace_space_region_requires_an_actual_shared_edge_without_mutating_in
     assert proposal == original
 
 
+def test_partition_translation_with_enclosure_preserves_vertex_order_and_aperture_bindings():
+    proposal = _rectangular_wall_proposal()
+    geometry = proposal["geometry"]
+    # This is an existing aperture on the shared wall. It cannot be silently rehosted.
+    door = geometry["openings"].pop(0)
+    left, right = geometry["floors"][0]["cells"]
+    left["polygon"] = [[4, 4], [0, 4], [0, 0], [4, 0]]
+    right["polygon"] = [[10, 4], [4, 4], [4, 0], [10, 0]]
+    row = {"boundary": {"boundary_id": "space/upper_left/ceiling"}, "scope": "whole",
+           "condition": "open", "evidence_kind": "inferred", "assumptions": ["Roof observation."],
+           "source_refs": ["image:roof plan"]}
+    proposal["enclosure_declaration"] = {"schema_version": "source_enclosure_intent_v1", "boundaries": [row]}
+    operation = _replace_region([[0, 0], [4.5, 0], [4.5, 4], [0, 4]])
+    saved = apply_proposal_edits(proposal, [operation])
+    updated = saved["geometry"]["floors"][0]["cells"]
+    assert updated[0]["polygon"] == [[4.5, 4], [0, 4], [0, 0], [4.5, 0]]
+    assert updated[1]["polygon"] == [[10, 4], [4.5, 4], [4.5, 0], [10, 0]]
+    assert saved["geometry"]["openings"] == geometry["openings"]
+    assert saved["enclosure_declaration"] == proposal["enclosure_declaration"]
+    changed_face = {**row, "condition": "unknown", "boundary": {"boundary_id": "space/left/wall/1"}}
+    conflict = {**proposal, "enclosure_declaration": {**proposal["enclosure_declaration"], "boundaries": [changed_face]}}
+    with pytest.raises(ValueError, match="declared enclosure"):
+        apply_proposal_edits(conflict, [operation])
+    with pytest.raises(ValueError, match="source-bound"):
+        apply_proposal_edits({**proposal, "enclosure_declaration": {"schema_version": "source_enclosure_input_v1"}},
+                             [operation])
+    geometry["openings"].append(door)
+    with pytest.raises(ValueError, match="opening bindings"):
+        apply_proposal_edits(proposal, [operation])
+    assert left["polygon"][0] == [4, 4] and right["polygon"][-2] == [4, 0]
+
+
 def test_invalid_operations_do_not_mutate_input_or_silently_ignore_unknowns():
     proposal = _proposal()
     original = copy.deepcopy(proposal)

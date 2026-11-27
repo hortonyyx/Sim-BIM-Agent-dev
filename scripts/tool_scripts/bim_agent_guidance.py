@@ -1044,6 +1044,10 @@ It replaces one complete room and computes the adjacent room as the remainder of
 their original union; both stay single hole-free spaces. It refuses third-space
 encroachment, does not move apertures, and records before/after. Use explicit
 update_opening operations in the same revision when hosts or positions change.
+For a single straight partition translation, move only its two endpoints in the first room's saved ring.
+Both rooms retain their original vertex order. With an authored enclosure intent this operation checks that
+all declared faces, spatial classifications, enclosure contacts and opening hosts still match the parent.
+If the actual enclosure or an aperture must move, submit a revised proposal with the new bindings.
 reshape_spaces replaces only the listed existing space polygons, deriving their
 x/y bounds by code. It preserves other objects and NEVER moves or resizes an
 opening. Update all affected adjoining spaces in one operation; include explicit

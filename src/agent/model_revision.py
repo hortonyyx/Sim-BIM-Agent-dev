@@ -107,6 +107,15 @@ def freeze_revision_parent(parent_bim: Path, destination: Path, *, candidate: st
     return digest(destination / "snapshot.json")
 
 
+def current_revision_evidence(revision):
+    draft = revision["draft"]
+    stamp = hashlib.sha256(json.dumps(draft, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+    prefix = f"{revision['parentRun']}/{stamp}"
+    current = {f"{prefix}/instructions": draft["instructions"]} if draft["instructions"].strip() else {}
+    current.update({f"{prefix}/notes/{i}": note["text"] for i, note in enumerate(draft["notes"], 1)})
+    return current
+
+
 def admit_revision(run, revision, directory):
     """Populate a new, independently writable BIM workspace with verified parent bytes."""
     index = directory / "snapshot.json"
@@ -128,15 +137,7 @@ def admit_revision(run, revision, directory):
             raise ValueError(f"Revision input changed: {relative}")
     draft = revision["draft"]
     refs = frozen["revisionEvidence"].copy()
-    prefix = revision["parentRun"]
-    current = {}
-    # A parent can have more than one edited descendant. Bind evidence to the actual
-    # request so repeated edit-note IDs on different branches remain distinguishable.
-    stamp = hashlib.sha256(json.dumps(draft, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-    prefix = f"{prefix}/{stamp}"
-    if draft["instructions"].strip():
-        current[f"{prefix}/instructions"] = draft["instructions"]
-    current.update({f"{prefix}/notes/{i}": note["text"] for i, note in enumerate(draft["notes"], 1)})
+    current = current_revision_evidence(revision)
     refs.update(current)
     manifest["revisionEvidence"] = refs
     manifest["model_revision"] = {**revision, "inheritedCandidates": frozen["ancestors"]}
@@ -146,8 +147,12 @@ def admit_revision(run, revision, directory):
     task = ("Revise the delivered building, starting from its exact local candidate " + base + ". "
             "The notes express the user's intent; include affected neighbors and preserve unrelated work. "
             "Use the inherited inspections, materials, mesh observations and floor/zone IDs. "
-            "For supported local edits use revise_bim directly on the parent proposal. For an exact parameter edit "
-            "use inspect_parametric_plan first. For a window sill/head offset, one revise_bim operation "
+            "Use revise_bim on the parent proposal. To translate a shared partition between polygon rooms, use "
+            "replace_space_region with space_id, neighbor_space_id, the first room's full polygon in its saved "
+            "vertex order, reason and source_refs. Shift only the two endpoints of the common edge. The neighbor "
+            "is derived from the same union and openings retain their positions. Use inspect_parametric_plan "
+            "for an edit to a saved parameter. For a window sill/head offset, "
+            "one revise_bim operation "
             "shift_window_heights takes ids, floor_ids or all:true and sill_delta_m and/or head_delta_m, "
             "with reason and source_refs pointing to the confirmed edit. "
             "A positive delta lifts an edge; omit a delta to retain that edge. "

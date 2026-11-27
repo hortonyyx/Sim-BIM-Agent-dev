@@ -433,6 +433,8 @@ class Toolkit:
                                     if (kind, operation["id"]) in old_objects)
                 elif name == "move_shared_wall":
                     expected.update(("space", identity) for identity in operation["space_ids"])
+                elif name == "replace_space_region":
+                    expected.update(("space", operation[key]) for key in ("space_id", "neighbor_space_id"))
                 elif name == "reshape_spaces":
                     expected.update(("space", row["id"]) for row in operation["spaces"])
                 elif name not in {"set_component_thickness", "replace_note", "set_notes", "resolve_unbuilt_observation",
@@ -1071,8 +1073,10 @@ class Toolkit:
                 rejection["architectural_audit"] = error.audit_reference
             self.log(action, rejection)
             return saved_result(rejection, audit_written=True)
+        confirmed_offsets = []
         rejection = reject_source_proposal(
             self, proposal, plan_assembly=plan_assembly, parent=parent,
+            operations=operations if action == "revise_bim" else None, confirmed_offsets=confirmed_offsets,
             architectural_regularization=architectural_regularization if not pixel_construction else None)
         if rejection is not None:
             saved_result(rejection, audit_written=True)
@@ -1097,6 +1101,8 @@ class Toolkit:
         if parent is not None:
             provenance.update(parent_candidate=parent,
                               parent_proposal_sha256=digest(self.candidate_path(parent)/"proposal.json"))
+        if confirmed_offsets:
+            provenance["confirmed_partition_offsets"] = confirmed_offsets
         if self.manifest.get("model_revision"):
             from src.agent.model_revision import child_north_axis
             axis = child_north_axis(self)

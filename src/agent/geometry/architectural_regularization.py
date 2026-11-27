@@ -996,7 +996,33 @@ def _protect_volume_contacts(original, adopted, audit, reject):
         excluded='curved templates; caller must validate all source geometry')
 
 
-def regularize_architectural_proposal(proposal, *, policy=None, _parent_geometry=None):
+def _retain_partition_apertures(before, after):
+    """Keep parent digits only where normal host and roof/floor checks reproduced the geometry."""
+    if before['floors'] != after['floors']:
+        return False
+    for group, coords in [('openings', {'p1', 'p2', 'z'}), ('windows', {'span', 'z'})]:
+        old_rows, new_rows = before.get(group, []), after.get(group, [])
+        if len(old_rows) != len(new_rows):
+            return False
+        for old, new in zip(old_rows, new_rows):
+            if old.keys() != new.keys():
+                return False
+            for key, value in old.items():
+                current = new[key]
+                if value == current:
+                    continue
+                if (key not in coords or not isinstance(value, list) or not isinstance(current, list)
+                        or len(value) != 2 or len(current) != 2
+                        or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in value + current)
+                        or math.dist(value, current) > EPS):
+                    return False
+    for group in ('openings', 'windows'):
+        if group in before:
+            after[group] = copy.deepcopy(before[group])
+    return True
+
+
+def regularize_architectural_proposal(proposal, *, policy=None, _parent_geometry=None, _partition_edit=False):
     """Adopt explicit generic floor/cell geometry through the same plan rules.
 
     IDs and all metadata are copied verbatim; the adapter writes back only
@@ -1227,6 +1253,8 @@ def regularize_architectural_proposal(proposal, *, policy=None, _parent_geometry
                 reject('window_direction_changed', f"windows[{row['id']}]", 'cardinal window host no longer cardinal')
             row['span'] = sorted([connection['p1'][1-axis], connection['p2'][1-axis]])
             row['z'] = copy.deepcopy(connection['z'])
+        if _partition_edit and _retain_partition_apertures(original['geometry'], result['geometry']):
+            audit['retained_partition_apertures'] = True
         if result['geometry'] != original['geometry'] and result.get('component_attributes'):
             reject('component_rebinding_required', 'component_attributes',
                    'geometry adoption requires explicit rebinding of existing component host identities; thickness metadata was not changed')
