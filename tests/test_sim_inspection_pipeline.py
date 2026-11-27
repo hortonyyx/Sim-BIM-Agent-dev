@@ -159,6 +159,49 @@ def test_evidence_and_selectors_reject_wrong_origin_unknown_ids_and_missing_refs
         assert rows == _empty()
 
 
+def test_missing_spatial_selects_only_unassessed_revision_objects_and_fields(tmp_path):
+    from scripts.tool_scripts.bim_agent_inspection import revision_spatial_feedback
+
+    run, _, _ = _run(tmp_path)
+    toolkit = Toolkit(run)
+    source = {"floors": [{"id": "L1"}, {"id": "L2"}],
+              "spaces": [{"id": "s1", "floor_id": "L1"}, {"id": "s2", "floor_id": "L2"}],
+              "boundaries": [{"id": i, "space_id": s, "geometry_type": t} for i, s, t in (
+                  ("w0", "s1", "wall"), ("w1", "s1", "wall"), ("w2", "s2", "wall"), ("f", "s1", "floor"))],
+              "openings": [{"id": "d", "kind": "door"}, {"id": "p", "kind": "open"}]}
+    old = _grade(1, "Unconfirmed.", "待核实。")
+    new = _grade(2, "Located on plan.", "平面可见。", ["image:plan.png"])
+    thickness = {"value_mm": 180, "source": "inference"}
+    rows = {**_empty(), "boundaries": {"w0": {"spatial": old}, "w1": {"thickness": thickness}}}
+    rule = {"kind": "boundary", "missing_spatial": True, "spatial": new}
+    def apply(records, *rules):
+        return apply_rules(toolkit, source, records, {"rules": list(rules)})
+
+    with pytest.raises(ValueError, match="editing a delivered model"):
+        apply(rows, rule)
+    toolkit.manifest["model_revision"] = {"parentCandidate": "candidate_01"}
+    for invalid in ({"all": True}, {"thickness": thickness}, {"material": None},
+                    {"ids": ["stale"]}, {"missing_spatial": 1}, {"missing_spatial": False}):
+        with pytest.raises(ValueError):
+            apply(rows, {**rule, **invalid})
+    floor = {**rule, "type": "wall", "floor_ids": ["L1"], "space_ids": ["s1"], "ids": ["w0", "w1", "w2"]}
+    first = apply(rows, floor, {**floor, "spatial": old})
+    assert first["boundaries"] == {"w0": {"spatial": old}, "w1": {"spatial": new, "thickness": thickness}}
+    assert apply(first, floor) == first
+    assert apply(first, {**rule, "type": "ceiling"}) == first
+    second = apply(first, rule, {**rule, "kind": "opening", "physical_only": True})
+    assert second["boundaries"] == {**first["boundaries"], "w2": {"spatial": new}, "f": {"spatial": new}}
+    assert second["openings"] == {"d": {"spatial": new}}
+    assert rows["boundaries"]["w1"] == {"thickness": thickness}
+    assessment = {"spatial": {group: {i: v["spatial"] for i, v in objects.items() if "spatial" in v}
+                              for group, objects in second.items()}}
+    feedback = revision_spatial_feedback(source, assessment)
+    assert {group: value["missing"] for group, value in feedback["coverage"].items()} == {
+        "spaces": 2, "boundaries": 0, "openings": 1}
+    assert feedback["spatial_selectors"] == [{"kind": "space", "missing_spatial": True},
+                                             {"kind": "opening", "missing_spatial": True}]
+
+
 def test_revision_keeps_construction_on_moved_partition_and_lengthened_wall():
     from scripts.tool_scripts.bim_agent_inspection import _carried_construction
 

@@ -1111,12 +1111,20 @@ class Toolkit:
         if architectural_regularization is not None:
             provenance["architectural_regularization"] = architectural_regularization
         stage("admission_seconds")
-        from scripts.tool_scripts.bim_agent_inspection import POLICY, initial_snapshot
+        from scripts.tool_scripts.bim_agent_inspection import POLICY, initial_snapshot, revision_spatial_feedback
         needs_inspection = (self.manifest.get("spatial_assessment_policy") == POLICY or
             (parent and any((self.candidate_path(parent) / name).is_file()
                             for name in ["sim_inspection.json", "sim_inspection_draft.json"])))
+        revision_inspection = {}
+
+        def build_inspection(source):
+            assessment = initial_snapshot(self, source, parent)
+            if self.manifest.get("model_revision"):
+                revision_inspection.update(revision_spatial_feedback(source, assessment))
+            return assessment
+
         report = export_source_proposal(proposal, self.run/candidate, provenance=provenance,
-            inspection_builder=(lambda source: initial_snapshot(self, source, parent)) if needs_inspection else None,
+            inspection_builder=build_inspection if needs_inspection else None,
             locale=self.manifest.get("locale", "zh-CN"),
             mesh_path=self.run/'assets'/'input.glb' if proposal.get('mesh_frame') else None,
             revision_mesh_cache=self.revision_mesh_cache,
@@ -1127,6 +1135,8 @@ class Toolkit:
         result = {"candidate": candidate, "remaining_seconds": self.remaining_seconds(), **report,
                   "candidate_budget": self.candidate_budget(),
                   "input_view_status": self.input_view_status()}
+        if revision_inspection:
+            result["revision_inspection"] = revision_inspection
         if architectural_regularization is not None:
             result["architectural_regularization"] = architectural_regularization
         if plan_assembly is not None:

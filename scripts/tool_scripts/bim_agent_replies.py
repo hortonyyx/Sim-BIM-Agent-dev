@@ -335,7 +335,7 @@ def compact_reply(run: Path, tool: str, result: dict, *, full_result: dict | Non
         # Domain diagnostics and save facts are already bounded projections. A
         # large inventory must not hide the location/host needed for a repair or
         # the scope of a just-saved change behind another report-reading call.
-        for key in ('error_details', 'edit_route', 'save_facts', 'mesh_feedback'):
+        for key in ('revision_inspection', 'error_details', 'edit_route', 'save_facts', 'mesh_feedback'):
             if key in reply and _reply_bytes({**bounded, key: reply[key]}) <= 18000:
                 bounded[key] = reply[key]
         bounded['report_view'] = bounded_json_view(document,

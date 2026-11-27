@@ -635,8 +635,10 @@ same packet in finish_bim. Unchanged objects retain their declarations on a sour
 Use {"rules":[...]} with ordered rules. kind is space, boundary or opening. all:true is the sole selector
 for a judgment applicable to an entire kind. Omit all when using any filter: ids, space_ids, floor_ids
 (lists of saved IDs), type (boundary: wall/floor/ceiling; opening: window/door/open; space: room-use code)
-or physical_only:true. Filters intersect. Later rules replace
-only the supplied attributes. Group genuinely equivalent evidence, then specify exceptions. Read
+or physical_only:true. On a delivered-model Edit, missing_spatial:true selects only objects still lacking a
+spatial assessment. It may set only spatial, including when combined with other filters. Use the revision_inspection
+coverage and selectors in the saved result. Group only objects with a common evidence basis and uncertainty.
+Filters intersect. Later rules replace only the supplied attributes. Read
 inspect_candidate/read_candidate_items for actual source IDs. An example fragment for a floor:
 {"kind":"space","floor_ids":["F1"],"spatial":{"grade":4,
 "reason":{"en":"Plan outlines the rooms; section height is approximate.","zh":"平面可见房间轮廓，层高为估算。"},

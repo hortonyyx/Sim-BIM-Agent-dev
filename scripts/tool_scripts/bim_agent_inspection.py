@@ -21,6 +21,11 @@ from src.agent.geometry.source_bim import EPS, _parts
 POLICY = "object_evidence_v1"
 SCHEMA = "sim_inspection_v1"
 KINDS = {"space": "spaces", "boundary": "boundaries", "opening": "openings"}
+_FILTERS = {"ids", "space_ids", "floor_ids", "type", "physical_only", "missing_spatial"}
+_REVISION_SPATIAL_HINT = (
+    'Add missing_spatial:true to a spatial rule in finish_bim or record_sim_inspection. '
+    'It selects only objects still without a spatial grade. Combine it with floor_ids, space_ids, ids or type '
+    'when evidence differs. Use a shared grade and reason only if the same evidence applies to every match.')
 _IDENTITIES = {
     "spaces": ("id", "floor_id", "z_floor", "height", "polygon", "holes", "vertical_sections"),
     "boundaries": ("id", "space_id", "geometry_type", "kind", "enclosure", "enclosure_regions",
@@ -181,8 +186,8 @@ def _attribute_sources(fields, resolve):
         _check_attribute_evidence("thickness", region["thickness"], resolve)
 
 
-def _selected(rule, group, inventory, source, physical_ids):
-    selectors = {k for k in ("ids", "space_ids", "floor_ids", "type", "physical_only") if k in rule}
+def _selected(rule, group, inventory, source, physical_ids, declarations):
+    selectors = _FILTERS.intersection(rule)
     if "all" in rule:
         if selectors:
             raise ValueError(f"Remove 'all' to keep the filters {sorted(selectors)}. "
@@ -205,6 +210,8 @@ def _selected(rule, group, inventory, source, physical_ids):
             filters[field] = set(values)
     selected = []
     for identity, row in inventory[group].items():
+        if "missing_spatial" in selectors and "spatial" in declarations.get(identity, {}):
+            continue
         if "physical_only" in selectors and identity not in physical_ids(group):
             continue
         if "ids" in filters and identity not in filters["ids"]:
@@ -220,7 +227,7 @@ def _selected(rule, group, inventory, source, physical_ids):
                                                       "spaces": "role", "openings": "kind"}[group]):
             continue
         selected.append(identity)
-    if not selected:
+    if not selected and "missing_spatial" not in selectors:
         raise ValueError(f"No {group} match the supplied selector")
     return selected
 
@@ -242,7 +249,12 @@ def apply_rules(toolkit, source, records, packet):
             if not isinstance(rule, dict) or rule.get("kind") not in KINDS:
                 raise ValueError("kind must be space, boundary or opening")
             group = KINDS[rule["kind"]]
-            attrs = set(rule) - {"kind", "all", "ids", "space_ids", "floor_ids", "type", "physical_only"}
+            attrs = set(rule) - {"kind", "all"} - _FILTERS
+            if "missing_spatial" in rule:
+                if not toolkit.manifest.get("model_revision") or rule["missing_spatial"] is not True:
+                    raise ValueError("missing_spatial:true is available only when editing a delivered model.")
+                if attrs != {"spatial"}:
+                    raise ValueError("A missing_spatial:true rule may set only spatial.")
             allowed = {"spatial"} if group == "spaces" else {"spatial", "material", "thickness"}
             if group == "boundaries":
                 allowed.add("thickness_regions")
@@ -252,7 +264,7 @@ def apply_rules(toolkit, source, records, packet):
             if "spatial" in fields:
                 fields["spatial"] = _spatial(fields["spatial"], resolve)
             _attribute_sources(fields, resolve)
-            selected = _selected(rule, group, inventory, source, physical_ids)
+            selected = _selected(rule, group, inventory, source, physical_ids, values[group])
             if attrs - {"spatial"}:
                 excluded = [key for key in selected if key not in physical_ids(group)]
                 if excluded:
@@ -399,6 +411,8 @@ def snapshot(toolkit, source, records, *, complete=False, check_evidence=False):
         missing = {g: [r["id"] for r in source[g] if r["id"] not in spatial[g]] for g in KINDS.values()}
         if any(missing.values()):
             scope = "; ".join(f"{k}: {len(v)} missing (e.g. {', '.join(v[:2])})" for k, v in missing.items() if v)
+            if toolkit.manifest.get("model_revision"):
+                raise ValueError(f"Spatial coverage incomplete: {scope}. {_REVISION_SPATIAL_HINT}")
             raise ValueError(f"Spatial coverage incomplete: {scope}. Submit inspection_json rules naming actual "
                              "geometry evidence or explicitly reasoned assumptions. Use kind+all:true for a "
                              "shared basis and override exceptions with floor_ids/space_ids/ids/type. "
@@ -431,6 +445,20 @@ def _summary(source, assessment):
             for k, rows in assessment["spatial"].items()}
 
 
+def revision_spatial_feedback(source, assessment):
+    coverage = _summary(source, assessment)
+    selectors = []
+    for kind, group in KINDS.items():
+        counts = coverage[group]
+        counts["missing"] = counts["total"] - counts["assessed"]
+        if counts["missing"]:
+            selectors.append({"kind": kind, "missing_spatial": True})
+    feedback = {"coverage": coverage}
+    if selectors:
+        feedback.update(spatial_selectors=selectors, spatial_rule_help=_REVISION_SPATIAL_HINT)
+    return feedback
+
+
 def record_inspection(toolkit, candidate, text):
     with handoff_writer(toolkit.run):
         source, path, _ = _source(toolkit, candidate)
@@ -439,8 +467,9 @@ def record_inspection(toolkit, candidate, text):
         _write_json(path.parent / "sim_inspection_draft.json", {
             "schema_version": SCHEMA, "material_scope": MATERIAL_SCOPE,
             "source_model_sha256": source["source_model_sha256"], "declarations": records})
-        return {"candidate": candidate, "source_model_sha256": source["source_model_sha256"],
-                "coverage": _summary(source, assessment)}
+        feedback = (revision_spatial_feedback(source, assessment) if toolkit.manifest.get("model_revision")
+                    else {"coverage": _summary(source, assessment)})
+        return {"candidate": candidate, "source_model_sha256": source["source_model_sha256"], **feedback}
 
 
 def finish_inspection(toolkit, candidate, text):

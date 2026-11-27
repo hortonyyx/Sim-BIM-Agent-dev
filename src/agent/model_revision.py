@@ -154,7 +154,10 @@ def admit_revision(run, revision, directory):
             "For attribute-only edits, revise_bim with operations_json='[]' creates "
             "an editable child retaining geometry; set properties on that child with record_sim_inspection "
             "or finish_bim inspection_json. Apply the requested attributes to the specified objects and finish "
-            "a new descendant. Reassess only affected objects. The confirmed compass bearing is applied on save.\n"
+            "a new descendant. Use the saved child's revision_inspection counts and missing_spatial:true "
+            "selectors for the remaining spatial assessments. Apply the same grade and reason only to objects "
+            "sharing the same evidence. Narrow by type, floor_ids or ids as needed. The confirmed compass "
+            "bearing is applied on save.\n"
             "Confirmed edit request: " + json.dumps(draft, ensure_ascii=False) +
             "\nCurrent user evidence references (instructions first if present, then notes in order): " +
             json.dumps(sources) + "\nSelected source objects: " + json.dumps(selected, ensure_ascii=False))
