@@ -82,6 +82,67 @@ def test_harness_cli_can_be_at_a_different_depth(tmp_path, monkeypatch):
     assert installed_executable(None) == executable
 
 
+def test_edit_finish_requires_visible_change_and_accepts_property_only_retry(tmp_path):
+    from copy import deepcopy
+    from scripts.tool_scripts.run_bim_agent import Toolkit
+    from src.agent.model_revision import UNCHANGED_REVISION, admit_revision, digest, freeze_revision_parent, require_revision_change
+    from src.agent.sdk import BimSession
+    from tests.test_drawing_source_precision import rotated_plan
+    from tests.test_sim_inspection_pipeline import _grade, _run
+
+    parent, _, _ = _run(tmp_path)
+    reviews = {"drawing_review": {"coverage": "whole_building", "summary": "Reviewed.", "unresolved": []}}
+    rules = [{"kind": kind, "all": True, "spatial": _grade(1, "Unconfirmed.", "待确认。")}
+             for kind in ("space", "boundary", "opening")]
+    with BimSession(parent) as bim:
+        original = bim.call("build_parametric_bim", plan_json=rotated_plan()).require_ok()["candidate"]
+        bim.call("finish_bim", candidate=original, reviews_json=reviews, inspection_json={"rules": rules}).require_ok()
+    folder = parent / original
+    base_hash = digest(folder / "source_model.json")
+    snapshot = tmp_path / "snapshot"
+    snapshot_hash = freeze_revision_parent(parent, snapshot, candidate=original, source_sha256=base_hash)
+    child = tmp_path / "edit"
+    child.mkdir()
+    run, _, _ = _run(child)
+    admit_revision(run, {"parentRun": "parent", "parentCandidate": original, "parentSourceSha256": base_hash,
+                         "snapshotSha256": snapshot_hash, "draft": {"northAngle": None, "notes": [],
+                         "instructions": "Record the door core material."}}, snapshot)
+    with BimSession(run) as bim:
+        created = bim.call("revise_bim", candidate=original, operations_json="[]").require_ok()["candidate"]
+        source = json.loads((run / created / "source_model.json").read_bytes())
+        inspection = json.loads((run / created / "sim_inspection.json").read_bytes())
+        changed = deepcopy(source)
+        changed["generation"]["unresolved"] = ["Different internal review"]
+        changed["openings"][0]["source_refs"] = ["Different locator"]
+        points = changed["openings"][0]["vertices"]
+        changed["openings"][0]["vertices"] = points[1:] + points[:1]
+        relinked = deepcopy(inspection)
+        next(iter(relinked["spatial"]["spaces"].values()))["source_refs"] = ["different internal locator"]
+        toolkit = Toolkit(run)
+        with pytest.raises(ValueError, match="No visible change"):
+            require_revision_change(toolkit, changed, relinked)
+        for key, value in (("role", "unknown"), ("height", source["spaces"][0]["height"] + .2)):
+            changed = deepcopy(source)
+            changed["spaces"][0][key] = value
+            require_revision_change(toolkit, changed, inspection)
+        changed = deepcopy(source)
+        changed["coordinate_system"]["north_axis"] = {"value_deg": 42}
+        require_revision_change(toolkit, changed, inspection)
+        explanation = deepcopy(inspection)
+        next(iter(explanation["spatial"]["spaces"].values()))["reason"]["en"] = "Boundary traced on plan."
+        require_revision_change(toolkit, source, explanation)
+        reviews["drawing_review"]["summary"] = "Rechecked the delivered extent."
+        rejected = bim.call("finish_bim", candidate=created, reviews_json=reviews)
+        assert rejected.is_error and "No visible change" in str(rejected)
+        assert (run / UNCHANGED_REVISION).is_file() and not (run / "delivery_selection.json").exists()
+        material = {"en": "Solid oak", "zh": "实心橡木", "source": "from user", "source_refs": ["brief"]}
+        bim.call("finish_bim", candidate=created, reviews_json=reviews, inspection_json={
+            "rules": [{"kind": "opening", "type": "door", "material": material}]}).require_ok()
+        assert "Solid oak" in (run / created / "viewer.html").read_text(encoding="utf-8")
+        assert not (run / UNCHANGED_REVISION).exists()
+    assert digest(folder / "source_model.json") == base_hash
+
+
 def project(tmp_path, **extra):
     images = tmp_path / "images"
     images.mkdir()

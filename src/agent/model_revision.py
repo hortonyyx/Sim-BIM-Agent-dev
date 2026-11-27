@@ -13,6 +13,7 @@ from src.agent.bim_inputs import dump
 
 
 CANDIDATE = re.compile(r"candidate_[0-9]+")
+UNCHANGED_REVISION = ".unchanged-revision"
 _CANDIDATE_FILES = {"source_model.json", "proposal.json", "report.json", "parametric_plan.json",
                     "parametric_state.json", "sim_inspection.json", "mesh_review.json"}
 # Only editable domain records and their supporting views cross into a new run.
@@ -196,6 +197,74 @@ def child_north_axis(toolkit):
     if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value < 360:
         raise ValueError("Invalid north bearing")
     return {"value_deg": (-value) % 360, "source": "from user"}
+
+
+def north_axis_degrees(source):
+    axis = source.get("coordinate_system", {}).get("north_axis")
+    value = axis.get("value_deg") if isinstance(axis, dict) else axis
+    return value % 360 if type(value) in (int, float) else None
+
+
+def _ring(points):
+    # The starting vertex and winding do not change a face's extent. Keep edge
+    # order so rings using the same vertices with different edges stay distinct.
+    vertices = tuple(tuple(point) for point in points)
+    if len(vertices) > 1 and vertices[0] == vertices[-1]:
+        vertices = vertices[:-1]
+    if not vertices:
+        return ()
+    first = vertices.index(min(vertices))
+    ring = vertices[first:] + vertices[:first]
+    return min(ring, ring[:1] + ring[:0:-1])
+
+
+def _face(row, outline, holes="holes"):
+    return _ring(row.get(outline, ())), sorted(_ring(hole) for hole in row.get(holes, ()))
+
+
+def _building_content(source):
+    # Compare the built objects and their public semantics, independently of
+    # candidate/geometry digests (both can include evidence and build history).
+    mesh = source.get("mesh_frame") or {}
+    return {
+        "north": north_axis_degrees(source),
+        "mesh_placement": (mesh.get("yaw_degrees"), mesh.get("translation_m")),
+        "floors": {f["id"]: (f["name"], f["z_floor"], f["height"], _face(f, "footprint", "footprint_holes"),
+                            sorted(f.get("spanning_space_ids", ()))) for f in source["floors"]},
+        "spaces": {s["id"]: (s["role"], s["floor_id"], s["z_floor"], s["height"], s.get("enclosure"),
+                            _face(s, "polygon"), [(v["z"], _face(v, "polygon")) for v in s.get("vertical_sections", ())])
+                   for s in source["spaces"]},
+        "boundaries": {b["id"]: (b["space_id"], b["geometry_type"], b["kind"], b.get("enclosure"), _face(b, "vertices"),
+                                sorted(b.get("counterpart_ids", ())), sorted(b.get("adjacent_space_ids", ())),
+                                sorted((r["condition"], _face(r, "vertices")) for r in b.get("enclosure_regions", ())))
+                       for b in source["boundaries"]},
+        "openings": {o["id"]: (o["kind"], o["connectivity"], o["exterior"], o["host_boundary_id"],
+                              sorted(o["space_ids"]), _face(o, "vertices")) for o in source["openings"]},
+        "contacts": {tuple(sorted(r["boundary_ids"])): sorted(_face(region, "vertices") for region in r["regions"])
+                     for r in source.get("boundary_relations", ())},
+    }
+
+
+def require_revision_change(toolkit, source, inspection):
+    """Reject an unchanged Edit before any new viewer or finish receipt is written."""
+    from scripts.tool_scripts.bim_viewer_inspection import public_inspection
+    directory = toolkit.candidate_path(toolkit.manifest["model_revision"]["parentCandidate"])
+    parent = _read(directory / "source_model.json")
+    changed = _building_content(parent) != _building_content(source)
+    if not changed:
+        parent_inspection = _read(directory / "sim_inspection.json")
+        changed = public_inspection(parent, parent_inspection) != public_inspection(source, inspection)
+    # Keep the outcome of the most recent comparison for the workbench if the
+    # run ultimately stops. A subsequent successful edit supersedes the marker.
+    marker = toolkit.run / UNCHANGED_REVISION
+    if changed:
+        marker.unlink(missing_ok=True)
+        return
+    marker.touch()
+    raise ValueError("No visible change from the delivered parent. Its geometry, room uses, north, "
+                     "surface properties and public confidence explanations are unchanged. "
+                     "Apply the requested edit before finishing. If the parent already meets the request, "
+                     "report that it is already satisfied without claiming a new delivery.")
 
 
 def require_revision_descendant(toolkit, candidate):

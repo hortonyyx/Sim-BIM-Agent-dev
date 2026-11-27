@@ -196,6 +196,67 @@ def test_precision_audit_preserves_admitted_mesh_and_viewer(tmp_path, monkeypatc
     assert (path/'source_model.json').read_bytes() == source_bytes
 
 
+def test_revision_export_and_finish_share_only_the_unchanged_textured_mesh(tmp_path, monkeypatch):
+    from scripts.tool_scripts.bim_agent_inspection import finish_inspection
+    from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
+    from src.agent.bim_inputs import prepare_bim_inputs
+    from src.agent.geometry.mesh_observation import MeshObservation
+    from src.agent.geometry.source_bim import source_view_geometry
+    from src.agent.model_revision import admit_revision, digest, freeze_revision_parent
+    from test_bim_agent_tools import _two_room_proposal
+
+    bakes = []
+    original = MeshObservation.viewer_payload
+    def observed(self, frame):
+        bakes.append(self.path)
+        return original(self, frame)
+    monkeypatch.setattr(MeshObservation, "viewer_payload", observed)
+    asset, run, _ = _prepare(tmp_path, monkeypatch)
+    parent = runner.Toolkit(run)
+    proposal = json.loads(_two_room_proposal())
+    frame = {"mesh_sha256": digest(asset), "yaw_degrees": 30, "translation_m": [2, 3, 0],
+             "reason": "synthetic placement", "source_refs": ["fixture"]}
+    proposal["mesh_frame"] = frame
+    candidate = parent.build(proposal)["candidate"]
+    grade = {"grade": 1, "reason": {"en": "Unconfirmed.", "zh": "待确认。"}, "source_refs": []}
+    rule = {"kind": "space", "all": True, "spatial": grade}
+    assert finish_inspection(parent, candidate, json.dumps({"rules": [rule]}))
+    assert bakes == [run / "assets/input.glb"] * 2
+
+    snapshot = tmp_path / "snapshot"
+    base_hash = digest(run / candidate / "source_model.json")
+    snapshot_hash = freeze_revision_parent(run, snapshot, candidate=candidate, source_sha256=base_hash)
+    child = tmp_path / "child"
+    prepare_bim_inputs(child, images_path=None, mesh_path=asset, building_input_path=tmp_path / "building.json",
+                       scope="Edit north", image_kind=None, max_candidates=5)
+    admit_revision(child, {"parentRun": "parent", "parentCandidate": candidate, "parentSourceSha256": base_hash,
+                           "snapshotSha256": snapshot_hash, "draft": {"northAngle": 73, "notes": [],
+                                                                     "instructions": ""}}, snapshot)
+    toolkit = runner.Toolkit(child)
+    revised = toolkit.revise(candidate, "[]")["candidate"]
+    assert finish_inspection(toolkit, revised, "")
+    child_asset = child / "assets/input.glb"
+    assert bakes.count(child_asset) == 1
+    directory = child / revised
+    display = source_view_geometry(json.loads((directory / "source_model.json").read_bytes()))
+    display["sim_inspection"] = json.loads((directory / "sim_inspection.json").read_bytes())
+    fresh_html = build_viewer_html(display, mesh_path=child_asset)
+    assert (directory / "viewer.html").read_bytes() == fresh_html.encode()
+    assert bakes.count(child_asset) == 2
+
+    new_toolkit = runner.Toolkit(child)
+    new_toolkit.revision_mesh_cache.payload(child_asset, frame)
+    assert bakes.count(child_asset) == 3
+    translated = toolkit.revision_mesh_cache.payload(child_asset, {**frame, "translation_m": [7, 3, 0]})
+    assert translated["mesh_frame"]["translation_m"] == [7, 3, 0] and bakes.count(child_asset) == 4
+    with pytest.raises(ValueError, match="source_refs"):
+        toolkit.revision_mesh_cache.payload(child_asset, {**frame, "source_refs": []})
+    with child_asset.open("ab") as stream:
+        stream.write(b"changed asset")
+    with pytest.raises(ValueError, match="GLB"):
+        toolkit.revision_mesh_cache.payload(child_asset, {**frame, "translation_m": [7, 3, 0]})
+
+
 def test_simple_polygon_reaches_shared_mesh_tools_and_saved_handoff(tmp_path, monkeypatch):
     from test_source_simple_polygon import proposal
     from test_bim_agent_tools import _full_delivery_result

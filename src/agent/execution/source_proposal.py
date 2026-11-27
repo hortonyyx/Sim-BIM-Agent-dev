@@ -234,6 +234,7 @@ def compile_source_proposal(proposal: dict, *, provenance: dict | None = None,
 
 def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | None = None,
                            mesh_path: Path | None = None,
+                           revision_mesh_cache=None,
                            locale: str = "zh-CN",
                            inspection_builder=None,
                            vertical_continuity_policy: str | None = None) -> dict:
@@ -262,7 +263,7 @@ def export_source_proposal(proposal: dict, out_dir: Path, *, provenance: dict | 
             timings["display_geometry_seconds"] = perf_counter() - checkpoint
             checkpoint = perf_counter()
             from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
-            viewer = build_viewer_html(display, mesh_path=mesh_path, locale=locale)
+            viewer = build_viewer_html(display, mesh_path=mesh_path, locale=locale, revision_mesh_cache=revision_mesh_cache)
             (out_dir / "viewer.html").write_text(viewer, encoding="utf-8", newline="\n")
             timings["viewer_seconds"] = perf_counter() - checkpoint
     except Exception as exc:

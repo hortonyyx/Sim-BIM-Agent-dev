@@ -306,6 +306,10 @@ class Toolkit:
         self.run = run.resolve()
         self.manifest = json.loads((self.run / "inputs.json").read_bytes())
         self.readonly = readonly
+        self.revision_mesh_cache = None
+        if not readonly and self.manifest.get("model_revision") and self.manifest.get("mesh_input"):
+            from scripts.tool_scripts.render_geometry_viewer import RevisionMeshCache
+            self.revision_mesh_cache = RevisionMeshCache()
 
     def candidate_budget(self):
         limit = self.manifest.get("max_candidates")
@@ -1115,6 +1119,7 @@ class Toolkit:
             inspection_builder=(lambda source: initial_snapshot(self, source, parent)) if needs_inspection else None,
             locale=self.manifest.get("locale", "zh-CN"),
             mesh_path=self.run/'assets'/'input.glb' if proposal.get('mesh_frame') else None,
+            revision_mesh_cache=self.revision_mesh_cache,
             vertical_continuity_policy=self.manifest.get('vertical_continuity_policy'))
         stage("export_seconds")
         if operations is not None:

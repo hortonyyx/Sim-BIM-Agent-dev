@@ -5,6 +5,7 @@ from collections import Counter
 from functools import lru_cache
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -13,7 +14,8 @@ import tempfile
 from scripts.tool_scripts.bim_agent_inference import _source
 from src.agent.execution.handoff_transaction import handoff_writer
 from src.agent.geometry.sim_components import MATERIAL_SCOPE
-from src.agent.geometry.sim_component_topology import physical_families
+from src.agent.geometry.sim_component_topology import Plane, physical_families
+from src.agent.geometry.source_bim import EPS, _parts
 
 
 POLICY = "object_evidence_v1"
@@ -302,8 +304,62 @@ def _object_shapes(source):
         for bid, other in ((left, right), (right, left)):
             shapes["boundaries"][bid].setdefault("contacts", {})[other] = contact["regions"]
     # The compiler can hold coordinate tuples before JSON export; their saved form is a list.
-    return {group: {key: json.dumps(shape, sort_keys=True, separators=(",", ":"))
-                    for key, shape in rows.items()} for group, rows in shapes.items()}
+    return json.loads(json.dumps(shapes))
+
+
+def _carried_construction(group, before, after, fields):
+    """Keep properties of a surviving construction, independently of spatial confidence."""
+    carried = {k: v for k, v in fields.items() if k != "spatial"}
+    if not carried or group == "spaces":
+        return {}
+    if group == "openings":
+        # The same aperture can be resized. Changed kind, owners or hosts require new evidence.
+        identity = ("kind", "space_ids", "host_boundary_id", "hosts")
+        return carried if all(before.get(k) == after.get(k) for k in identity) else {}
+    identity = ("geometry_type", "space_id", "kind", "enclosure")
+    if any(before.get(k) != after.get(k) for k in identity):
+        return {}
+    old_plane, plane = Plane(before), Plane(after)
+    dx = dy = 0.0
+    if plane.direction is None:
+        # Moving a room partition can change the adjacent room above/below a slab.
+        # Its own space, face type, elevation and overlap still identify the same construction.
+        if abs(old_plane.origin[2] - plane.origin[2]) > EPS:
+            return {}
+    else:
+        if (math.dist(old_plane.direction, plane.direction) > EPS
+                or set(before.get("adjacent_space_ids", [])) != set(after.get("adjacent_space_ids", []))
+                or set(before.get("counterpart_ids", [])) != set(after.get("counterpart_ids", []))):
+            return {}
+        nx, ny = -plane.direction[1], plane.direction[0]
+        distance = ((plane.origin[0] - old_plane.origin[0]) * nx
+                    + (plane.origin[1] - old_plane.origin[1]) * ny)
+        dx, dy = nx * distance, ny * distance
+
+    def shifted(row):
+        if abs(dx) <= EPS and abs(dy) <= EPS:
+            return row
+        def ring(points):
+            return [[x + dx, y + dy, z] for x, y, z in points]
+        return {**row, "vertices": ring(row["vertices"]), "holes": [ring(h) for h in row.get("holes", [])]}
+
+    host = plane.shape(after)
+    if host.intersection(plane.shape(shifted(before))).area <= EPS ** 2:
+        return {}
+    if "thickness_regions" in carried:
+        regions = []
+        for old_region in carried.pop("thickness_regions"):
+            region = shifted(old_region)
+            shape = plane.shape(region)
+            if host.buffer(EPS).covers(shape):
+                regions.append(region)
+            else:
+                for part in _parts(host.intersection(shape)):
+                    regions.append({"vertices": plane.lift(part.exterior), "holes": [plane.lift(h) for h in part.interiors],
+                                    "thickness": region["thickness"]})
+        if regions:
+            carried["thickness_regions"] = regions
+    return carried
 
 
 def inherited_records(toolkit, source, parent):
@@ -317,8 +373,18 @@ def inherited_records(toolkit, source, parent):
                     return records
             old_shapes, current_shapes = _object_shapes(old), _object_shapes(source)
             for group, rows in _load(old, directory, draft=True).items():
-                records[group] = {k: v for k, v in rows.items()
-                                  if k in current_shapes[group] and current_shapes[group][k] == old_shapes[group].get(k)}
+                for identity, fields in rows.items():
+                    before = old_shapes[group].get(identity)
+                    after = current_shapes[group].get(identity)
+                    if before is None or after is None:
+                        continue
+                    if before == after:
+                        records[group][identity] = fields
+                        continue
+                    if toolkit.manifest.get("model_revision"):
+                        retained = _carried_construction(group, before, after, fields)
+                        if retained:
+                            records[group][identity] = retained
     return records
 
 
@@ -381,7 +447,7 @@ def finish_inspection(toolkit, candidate, text):
     """Called under the finish lock; replace the final viewer before its digest is attested."""
     directory = toolkit.candidate_path(candidate)
     required = toolkit.manifest.get("spatial_assessment_policy") == POLICY
-    if not (required or text or (directory / "sim_inspection_draft.json").exists()
+    if not (required or toolkit.manifest.get("model_revision") or text or (directory / "sim_inspection_draft.json").exists()
             or (directory / "sim_inspection.json").exists()):
         return False
     from scripts.tool_scripts.render_geometry_viewer import build_viewer_html
@@ -392,10 +458,14 @@ def finish_inspection(toolkit, candidate, text):
     if text:
         records = apply_rules(toolkit, source, records, json.loads(text))
     assessment = snapshot(toolkit, source, records, complete=required, check_evidence=True)
+    if toolkit.manifest.get("model_revision"):
+        from src.agent.model_revision import require_revision_change
+        require_revision_change(toolkit, source, assessment)
     display = source_view_geometry(source)
     display["sim_inspection"] = assessment
     mesh_path = toolkit.run / "assets" / "input.glb" if source.get("mesh_frame") else None
-    html = build_viewer_html(display, mesh_path=mesh_path, locale=toolkit.manifest.get("locale", "en"))
+    html = build_viewer_html(display, mesh_path=mesh_path, locale=toolkit.manifest.get("locale", "en"),
+                             revision_mesh_cache=toolkit.revision_mesh_cache)
     _write_json(directory / "sim_inspection_draft.json", {
         "schema_version": SCHEMA, "material_scope": MATERIAL_SCOPE,
         "source_model_sha256": source["source_model_sha256"], "declarations": records})

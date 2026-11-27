@@ -66,7 +66,11 @@ def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
         oak = {"kind": "opening", "type": "door", "material": {
             "en": "The door leaf has a solid oak core.", "zh": "门扇芯材为实心橡木。",
             "source": "from user", "source_refs": ["brief"]}}
-        packet = {"rules": [boundary, opening, oak]}
+        host_id = source["openings"][0]["host_boundary_id"]
+        wall_construction = {"kind": "boundary", "ids": [host_id],
+            "material": {"en": "Concrete", "zh": "混凝土", "source": "from user", "source_refs": ["brief"]},
+            "thickness": {"value_mm": 200, "source": "from user", "source_refs": ["brief"]}}
+        packet = {"rules": [boundary, opening, oak, wall_construction]}
         published = bim.finish_to(tmp_path / "delivery", candidate, reviews=reviews, inspection=packet)
         public = Path(published["viewer"])
         assert [p.name for p in public.parent.iterdir()] == ["Sim-BIM.html"]
@@ -115,6 +119,19 @@ def test_partial_rules_revision_and_attested_single_html(tmp_path, monkeypatch):
         assert door["id"] not in retained["openings"]
         assert door["host_boundary_id"] not in retained["boundaries"]
         assert retained["spaces"] == inherited["spaces"]
+        with monkeypatch.context() as patch:
+            patch.setitem(toolkit.manifest, "model_revision", {"parentCandidate": candidate})
+            carried = inherited_records(toolkit, moved, candidate)
+            assert carried["openings"][door["id"]] == {"material": oak["material"]}
+            assert carried["boundaries"][host_id] == {
+                key: wall_construction[key] for key in ("material", "thickness")}
+            updated = apply_rules(toolkit, moved, carried, {"rules": [
+                {"kind": "boundary", "ids": [host_id],
+                 "thickness": {**wall_construction["thickness"], "value_mm": 320}}]})
+            assert updated["boundaries"][host_id]["thickness"]["value_mm"] == 320
+            assert updated["boundaries"][host_id]["material"] == wall_construction["material"]
+            door["kind"] = "window"
+            assert door["id"] not in inherited_records(toolkit, moved, candidate)["openings"]
         revised = bim.call("revise_bim", candidate=candidate, operations_json=[{
             "op": "set_notes", "assumptions": ["Recording fixture scope."], "unresolved": []}]).require_ok()
         inherited_save = json.loads((run / revised["candidate"] / "sim_inspection.json").read_bytes())
@@ -140,6 +157,32 @@ def test_evidence_and_selectors_reject_wrong_origin_unknown_ids_and_missing_refs
         with pytest.raises(ValueError):
             apply_rules(toolkit, source, rows, {"rules": [rule, {**rule, **update}]})
         assert rows == _empty()
+
+
+def test_revision_keeps_construction_on_moved_partition_and_lengthened_wall():
+    from scripts.tool_scripts.bim_agent_inspection import _carried_construction
+
+    def ring(lo, hi, y):
+        return [[lo, y, 0], [hi, y, 0], [hi, y, 3], [lo, y, 3]]
+
+    wall = {"id": "corridor/wall/4", "space_id": "corridor", "geometry_type": "wall",
+            "kind": "physical", "enclosure": "physical", "vertices": ring(0, 4, 0),
+            "adjacent_space_ids": ["service"], "counterpart_ids": ["service/wall/0"]}
+    thickness = {"value_mm": 160, "source": "from user", "source_refs": ["brief"]}
+    region = {"vertices": ring(2, 4, 0), "thickness": {**thickness, "value_mm": 200}}
+    fields = {"material": {"en": "Masonry", "zh": "砌体", "source": "from user", "source_refs": ["brief"]},
+              "thickness": thickness, "thickness_regions": [region], "spatial": {"grade": 4}}
+    retained = _carried_construction("boundaries", wall, {**wall, "vertices": ring(0, 5, 0.1)}, fields)
+    assert "spatial" not in retained and retained["thickness"] == thickness and retained["material"] == fields["material"]
+    assert retained["thickness_regions"][0]["vertices"] == ring(2, 4, 0.1)
+    assert region["vertices"] == ring(2, 4, 0)
+    shorter = _carried_construction("boundaries", wall, {**wall, "vertices": ring(0, 3, 0)}, fields)
+    assert shorter["thickness_regions"][0]["thickness"] == region["thickness"]
+    assert {p[0] for p in shorter["thickness_regions"][0]["vertices"]} == {2, 3}
+    for other in ({"space_id": "other"}, {"geometry_type": "floor"}, {"kind": "virtual"},
+                  {"counterpart_ids": ["other/wall/1"]}, {"vertices": ring(4, 7, 0)},
+                  {"vertices": list(reversed(wall["vertices"][:2])) + list(reversed(wall["vertices"][2:]))}):
+        assert _carried_construction("boundaries", wall, {**wall, **other}, fields) == {}
 
 
 def test_construction_filters_preserve_spatial_coverage_and_reject_null(tmp_path):

@@ -11,6 +11,7 @@ import uuid
 from src.agent.runtime_configuration import load_configuration
 from src.agent.runtime_entry import prepare_inputs
 from src.workbench import runs
+from src.workbench import custom_connections as custom
 from src.workbench.server import Workbench, create_app
 from src.workbench.storage import read_json, save_json
 
@@ -29,9 +30,9 @@ def workbench(tmp_path, monkeypatch):
     (tmp_path / "resources/app.asar").touch()
     monkeypatch.setenv("SIM_BIM_DSH_EXECUTABLE", str(executable))
     backend = Workbench()
-    monkeypatch.setattr(backend.connections, "view", lambda _: [
+    monkeypatch.setattr(backend.connections, "view", lambda locale: [
         {"provider": s["provider"], "connected": True, "models": [{"id": s["model"], "name": s["model"]}]}
-        for s in [COORD, WORKER]])
+        for s in [COORD, WORKER]] + custom.custom_catalog(locale, ()))
     client = TestClient(create_app(backend, warm=False), base_url=ORIGIN, headers={"Origin": ORIGIN})
     root = tmp_path / "workspace"
     assert client.post("/api/workspace", json={"path": str(root)}).json()["workspace"] == str(root)
@@ -307,6 +308,23 @@ def test_text_only_block_and_output_resolution(workbench):
         assert client.get(base + "Sim-BIM.html", params=query).content == revised
 
 
+def completed_parent(parent, first):
+    candidate = parent / "production/private/dsh/work/bim/candidate_03"
+    model_id = "a" * 64
+    save_json(candidate / "source_model.json", {"source_model_sha256": model_id, "spaces": [], "boundaries": [],
+        "floors": [{"id": "F1"}], "openings": [{"id": "W1"}], "coordinate_system": {"north_axis": {"value_deg": 315}}})
+    save_json(candidate / "sim_inspection.json", {})
+    viewer = parent / "Sim-BIM.html"
+    viewer.write_bytes(b"<html>parent</html>")
+    hashes = {"candidate_03/" + name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
+              (("viewer.html", viewer), ("source_model.json", candidate / "source_model.json"),
+               ("sim_inspection.json", candidate / "sim_inspection.json"))}
+    save_json(parent / "production/control/terminal.json", {"delivered": True, "proof": {"origin": "domain_tool",
+              "tool_name": "finish_bim", "candidate": "candidate_03", "artifact_sha256": hashes}})
+    save_json(parent / "status.json", {**first, "status": "completed"})
+    return model_id, viewer
+
+
 def test_revision_admission_reuses_frozen_parent_and_is_idempotent(workbench, monkeypatch):
     from src.agent import model_revision
 
@@ -320,19 +338,7 @@ def test_revision_admission_reuses_frozen_parent_and_is_idempotent(workbench, mo
         "coordinator": COORD, "workers": [], "blocks": [{"id": block["id"], "assetIds": [block["assets"][0]["id"]]}]}).raise_for_status()
     first = client.post("/api/runs", json={"workspace": str(root), "revision": 2}).json()["run"]
     parent = runs.run_dir(root, first["id"])
-    candidate = parent / "production/private/dsh/work/bim/candidate_03"
-    model_id = "a" * 64
-    save_json(candidate / "source_model.json", {"source_model_sha256": model_id, "spaces": [], "boundaries": [],
-        "floors": [{"id": "F1"}], "openings": [{"id": "W1"}]})
-    save_json(candidate / "sim_inspection.json", {})
-    viewer = parent / "Sim-BIM.html"
-    viewer.write_bytes(b"<html>parent</html>")
-    hashes = {"candidate_03/" + name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
-              (("viewer.html", viewer), ("source_model.json", candidate / "source_model.json"),
-               ("sim_inspection.json", candidate / "sim_inspection.json"))}
-    save_json(parent / "production/control/terminal.json", {"delivered": True, "proof": {"origin": "domain_tool",
-              "tool_name": "finish_bim", "candidate": "candidate_03", "artifact_sha256": hashes}})
-    save_json(parent / "status.json", {**first, "status": "completed"})
+    model_id, viewer = completed_parent(parent, first)
     monkeypatch.setattr(model_revision, "freeze_revision_parent", lambda *args, **kwargs: "e" * 64)
     target = {"kind": "surface", "id": "W1", "label": "W1", "zone": "", "surface": "W1", "point": [1, 2, 3]}
     note = {"id": "one", "text": "Raise the sill of this window.", "targets": [target]}
@@ -343,6 +349,9 @@ def test_revision_admission_reuses_frozen_parent_and_is_idempotent(workbench, mo
         return client.post("/api/revisions", json={**body, **changes})
     assert submit(workspaceTag="other").status_code == 409
     assert submit(parentModelId="0" * 64).status_code == 409
+    unchanged = submit(draft={"notes": [], "instructions": "", "northAngle": 45})
+    assert unchanged.status_code == 400 and "这个北向" in unchanged.json()["error"]
+    assert len(launched) == 1 and len(list((root / "runs").glob("run-*"))) == 1
     assert submit(draft={**draft, "notes": [{**note, "targets": [{**target, "id": "stale"}]}]}).status_code == 409
     # Edits use the original material even if it changed in the working project's material folder.
     next((root / "materials").rglob("plan.png")).write_bytes(png("blue"))
@@ -360,6 +369,63 @@ def test_revision_admission_reuses_frozen_parent_and_is_idempotent(workbench, mo
     viewer.write_bytes(b"changed")
     assert submit(requestId=str(uuid.uuid4())).status_code == 409
     assert len(launched) == 2
+
+
+def test_revision_freezes_current_connections_for_original_models(workbench, monkeypatch):
+    from src.agent import model_revision
+
+    client, root = workbench
+    monkeypatch.setattr(runs, "launch_prepared", lambda directory, locale, started: started)
+    monkeypatch.setattr(model_revision, "freeze_revision_parent", lambda *args, **kwargs: "e" * 64)
+    coordinator, first_coord = custom.save_custom({"label": "Coordinator", "baseUrl": "http://localhost:8000/v1",
+                                                   "modelIds": ["vision"]})
+    worker, first_worker = custom.save_custom({"label": "Worker", "baseUrl": "http://localhost:8001/v1",
+                                              "modelIds": ["reader"]})
+    routes = {"coordinator": {"provider": coordinator, "model": "vision"},
+              "workers": [{"provider": worker, "model": "reader"}]}
+    block = client.post("/api/blocks", data={"workspace": str(root), "revision": 0},
+                        files={"files": ("plan.png", png("white"))}).json()["project"]["blocks"][0]
+    client.post("/api/project", json={"workspace": str(root), "revision": 1, "taskBrief": "Build.", **routes,
+        "blocks": [{"id": block["id"], "assetIds": [block["assets"][0]["id"]]}]}).raise_for_status()
+    first = client.post("/api/runs", json={"workspace": str(root), "revision": 2,
+        "connectionRevisions": {coordinator: first_coord, worker: first_worker}}).json()["run"]
+    parent = runs.run_dir(root, first["id"])
+    model_id, _ = completed_parent(parent, first)
+    parent_config = (parent / "case.json").read_bytes()
+    original_edit = {"workspaceTag": runs.workspace_tag(root), "parentRunId": parent.name, "parentModelId": model_id,
+                     "draft": {"notes": [], "instructions": "Raise the window sill.", "northAngle": None},
+                     "requestId": str(uuid.uuid4())}
+
+    _, next_coord = custom.save_custom({"baseUrl": "http://localhost:8002/v1", "contextWindow": 32768,
+        "outputTokens": 2048, "apiKey": "new-local-test-key"}, provider=coordinator)
+    _, next_worker = custom.save_custom({"outputTokens": 512}, provider=worker)
+    response = client.post("/api/revisions", json=original_edit)
+    response.raise_for_status()
+    child_id = response.json()["run"]["id"]
+    child = runs.run_dir(root, child_id)
+    frozen_child = (child / "case.json").read_bytes()
+    case = json.loads(frozen_child)["cases"][0]
+    assert {"provider": case["provider"], "model": case["model"]} == routes["coordinator"]
+    assert case["workers"] == routes["workers"]
+    assert case["connection_revisions"] == {coordinator: next_coord, worker: next_worker}
+    assert (case["context_tokens"], case["output_tokens"], case["worker"]["output_tokens"]) == (32768, 2048, 512)
+
+    _, latest_coord = custom.save_custom({"contextWindow": 65536, "outputTokens": 4096}, provider=coordinator)
+    assert client.post("/api/revisions", json=original_edit).json()["run"]["id"] == child_id
+    another = client.post("/api/revisions", json={**original_edit, "requestId": str(uuid.uuid4())}).json()["run"]
+    another_case = read_json(runs.run_dir(root, another["id"]) / "case.json")["cases"][0]
+    assert another_case["connection_revisions"] == {coordinator: latest_coord, worker: next_worker}
+    assert another_case["context_tokens"] == 65536 and another_case["output_tokens"] == 4096
+    custom.save_custom({"modelIds": ["other-reader"]}, provider=worker)
+    unavailable = client.post("/api/revisions", json={**original_edit, "requestId": str(uuid.uuid4())})
+    assert unavailable.status_code == 400
+    assert len(list((root / "runs").glob("run-*"))) == 3
+    assert (parent / "case.json").read_bytes() == parent_config and (child / "case.json").read_bytes() == frozen_child
+    assert custom.custom_connection(coordinator, revision=first_coord)["base_url"] == "http://localhost:8000/v1"
+    frozen = custom.custom_connection(coordinator, revision=next_coord)
+    assert (frozen["base_url"], frozen["api_key"], frozen["context_window"]) == (
+        "http://localhost:8002/v1", "new-local-test-key", 32768)
+    assert custom.custom_connection(worker, revision=next_worker)["output_tokens"] == 512
 
 
 def test_recover_unreadable_workspace_and_reject_stale_language(workbench):

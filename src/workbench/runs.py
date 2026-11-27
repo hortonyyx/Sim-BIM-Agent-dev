@@ -238,6 +238,12 @@ def execute(directory):
             message = "运行未完成，请查看工作区本次运行的 run.log。" if locale == "zh-CN" else "Run did not complete. See run.log in the run folder."
             if locale == "en" and isinstance(exc, ValueError):
                 message = f"{exc} See run.log for details."
+            if "parentRunId" in inputs:
+                from src.agent.model_revision import UNCHANGED_REVISION
+                if inside(directory, "production/private/dsh/work/bim/" + UNCHANGED_REVISION).is_file():
+                    message = ("最近一次交付对比未发现相对父版本的可见变化。本次没有交付新版本。"
+                               if locale == "zh-CN" else "The last delivery comparison found no visible change "
+                               "from the parent. This run did not deliver a new version.")
             result = {"id": identity, "status": "failed", "message": message}
         if "parentRunId" in inputs:
             result["parentRunId"] = inputs["parentRunId"]

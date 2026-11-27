@@ -8,6 +8,7 @@ import tempfile
 import uuid
 
 from src.agent.viewer_publication import VIEWER_FILENAME
+from src.agent_runtime.providers import is_custom_provider
 from . import runs
 from .storage import InputError, checked_name, inside, locked, read_json, save_json
 
@@ -111,6 +112,11 @@ def _verified_parent(parent, model_id, edits):
     actual = _digest(viewer)
     if actual != original and not _known_presentation(parent, candidate, model_id, actual, original):
         raise invalid
+    if not edits["notes"] and not edits["instructions"] and edits["northAngle"] is not None:
+        from src.agent.model_revision import north_axis_degrees
+        if north_axis_degrees(model) == (-edits["northAngle"]) % 360:
+            raise InputError("当前模型已经使用这个北向，无需创建新版本。",
+                             "The model already uses this north bearing. No new version is needed.")
     return bim, {"parentRun": parent.name, "parentCandidate": candidate, "parentModelId": model_id,
                  "parentSourceSha256": hashes[candidate + "/source_model.json"], "parentViewerSha256": actual,
                  "draft": edits}
@@ -152,7 +158,7 @@ def _existing(root, request_id, parent, model_id, edits):
     return None
 
 
-def begin_revision(root, body, catalog):
+def begin_revision(root, body, connection_view):
     from src.agent.model_revision import freeze_revision_parent
     if body.get("workspaceTag") != runs.workspace_tag(root):
         raise InputError("当前工作区已切换，请重新打开原模型。", "The workspace changed. Reopen the original model.", 409)
@@ -173,7 +179,11 @@ def begin_revision(root, body, catalog):
         local = not edits["notes"] and not edits["instructions"]
         executable = parent_case.get("dsh_executable") if local else runs.workbench_executable()
         if not local:
-            runs.model_connections(original, catalog, parent_case.get("connection_revisions", {}))
+            catalog = connection_view(original["locale"])
+            selected = {route["provider"] for route in [original["coordinator"], *original["workers"]]}
+            current_revisions = {row["provider"]: row["revision"] for row in catalog
+                                 if row["provider"] in selected and is_custom_provider(row["provider"])}
+            connections = runs.model_connections(original, catalog, current_revisions)
         directory = runs.new_run_directory(root)
         with tempfile.TemporaryDirectory(dir=directory.parent, prefix=".preparing-edit-") as staging:
             prepared = Path(staging) / "run"
@@ -186,10 +196,18 @@ def begin_revision(root, body, catalog):
             except (ValueError, KeyError, OSError) as exc:
                 raise InputError("无法读取原版本的建模记录。请检查原运行文件是否完整。",
                                  "The parent modelling records could not be read. Check the original run files.", 409) from exc
-            # Keep the parent's locally frozen model and transport choices; rebuild all storage and executable paths.
+            # Retain the parent's model choices and run policy. Each model-backed edit pins its own transport.
             case = {key: parent_case[key] for key in (
                 "provider", "model", "workers", "worker", "reasoning_effort", "output_tokens", "context_tokens",
                 "image_history_batches", "max_candidates", "limits", "connection_revisions") if key in parent_case}
+            if not local and current_revisions:
+                configured = runs.configuration(directory, original, materials, blocks, executable=executable,
+                                                connections=connections)["cases"][0]
+                case["connection_revisions"] = configured["connection_revisions"]
+                if case["provider"] in current_revisions:
+                    case.update(context_tokens=configured["context_tokens"], output_tokens=configured["output_tokens"])
+                if any(worker["provider"] in current_revisions for worker in original["workers"]):
+                    case["worker"] = {**case.get("worker", {}), "output_tokens": configured["worker"]["output_tokens"]}
             case.update(case_id=directory.name, mode="orchestrator", runtime="dsh", output="production",
                         materials=materials, blocks=blocks, locale=original["locale"], scope=original["taskBrief"],
                         thickness_candidates_mm=original.get("thicknessCandidatesMm", {}), revision=revision)

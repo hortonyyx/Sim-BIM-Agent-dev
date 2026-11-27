@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from threading import Lock
 
 from scripts.tool_scripts.bim_display_language import (
     room_role, room_type_labels, viewer_markup, viewer_messages, viewer_script,
@@ -1619,8 +1620,33 @@ def _selection_names(data: dict, geo: dict, has_source_digest: bool) -> None:
         region["edge_ranks"] = _edge_ranks(_ring_edges([region["verts"], *region.get("holes", [])]))
 
 
+class RevisionMeshCache:
+    """Keep the last textured payload in memory for one revision's tool session."""
+
+    def __init__(self):
+        self._entry = None
+        self._lock = Lock()
+
+    def payload(self, path, frame):
+        from src.agent.geometry.mesh_observation import MeshObservation
+
+        path = Path(path).resolve()
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        # The in-process bake function identifies the renderer version. Nothing survives a restart.
+        key = (path, digest, json.dumps(frame, sort_keys=True), MeshObservation.viewer_payload)
+        with self._lock:
+            if self._entry is not None and self._entry[0] == key:
+                return self._entry[1]
+            mesh = MeshObservation(path).viewer_payload(frame)
+            if mesh["mesh_sha256"] == digest:
+                self._entry = (key, mesh)
+            return mesh
+
+
 def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | None = None,
-                      mesh_path: Path | None = None, locale: str = "zh-CN") -> str:
+                      mesh_path: Path | None = None, locale: str = "zh-CN",
+                      revision_mesh_cache: RevisionMeshCache | None = None) -> str:
     three_js = (_VENDOR / "three.min.js").read_text(encoding="utf-8")
     orbit_js = (_VENDOR / "OrbitControls.js").read_text(encoding="utf-8")
     from src.agent.geometry.openings import visible_wall_parts
@@ -1659,9 +1685,11 @@ def build_viewer_html(data: dict, *, title: str | None = None, roles: dict | Non
     geo["metrics"] = viewer_metrics(source)
     if mesh_path is not None:
         from src.agent.geometry.mesh_observation import MeshObservation
-        mesh = MeshObservation(mesh_path).viewer_payload(source.get("mesh_frame"))
-        mesh["mesh_frame"] = _fields(mesh["mesh_frame"], ("mesh_sha256", "yaw_degrees", "translation_m"))
-        geo["textured_mesh"] = mesh
+        frame = source.get("mesh_frame")
+        mesh = (MeshObservation(mesh_path).viewer_payload(frame) if revision_mesh_cache is None else
+                revision_mesh_cache.payload(mesh_path, frame))
+        geo["textured_mesh"] = {**mesh, "mesh_frame": _fields(mesh["mesh_frame"],
+                                                            ("mesh_sha256", "yaw_degrees", "translation_m"))}
     spaces = {row["id"]: row for row in source.get("spaces", [])}
     source_floors = {row["id"]: row for row in source.get("floors", [])}
     zone_map = source.get("derived", {}).get("zones", {})
